@@ -26,7 +26,7 @@
       "title": "Durable records and selective verification",
       "date": "2026-05-25",
       "tags": ["closed-loop", "retention", "verification-selection"],
-      "affectedPaths": ["Docs/ClosedLoop/", "script/verify_changed.sh", "script/closed_loop_records.sh"],
+      "affectedPaths": ["Docs/ClosedLoop/", "Docs/Verification.md", "script/verify_changed.sh", "script/closed_loop_records.sh"],
       "path": "Docs/ClosedLoop/records/CL-0002-durable-records-and-selective-verification.md",
       "references": ["CL-0001"],
       "supersedes": [],
@@ -38,7 +38,7 @@
     {
       "id": "RUN-20260525-CL0002",
       "type": "run",
-      "status": "in-review",
+      "status": "completed",
       "retentionClass": "audit",
       "title": "Closed-Loop persistence and verification workflow implementation",
       "date": "2026-05-25",

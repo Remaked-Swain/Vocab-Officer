@@ -4,7 +4,7 @@
 | --- | --- |
 | Status | active |
 | Date | 2026-05-25 (Asia/Seoul) |
-| Scope | `Docs/ClosedLoop/`, `script/verify_changed.sh`, Closed-Loop operation |
+| Scope | `Docs/ClosedLoop/`, `Docs/Verification.md`, `script/verify_changed.sh`, `script/closed_loop_records.sh`, Closed-Loop operation |
 | Agents | Director, Executor, Monitor, Recorder |
 | Archive review | 2026-08-23 |
 
@@ -33,6 +33,8 @@ proof quality.
 | Read/archive/delete behavior was undefined. | Define scoped loading, protected classes, archive reviews and index tombstones. |
 | Tests were selected manually without an executable impact map. | Add `script/verify_changed.sh` as the single executable map with class-level XCTest selection and escalation rules. |
 | Raw results had no retention boundary. | Keep compact evidence in records while build/result artifacts remain regenerable and Git-ignored. |
+| Index state and verifier policy could drift from declared records. | Align index statuses, make the executable verifier authoritative and require its self-test. |
+| Deletion guard did not enforce retention and tombstone invariants. | Validate metadata and references, block protected deletion and enforce retention/tombstone rules. |
 
 ## Evidence
 
@@ -40,6 +42,16 @@ proof quality.
 - `script/verify_changed.sh --plan` fixtures demonstrate that documentation-only
   changes do not invoke application XCTest.
 - Syntax checks and focused command-plan checks validate the workflow script.
+- Durable source-control preservation is established by baseline commit
+  `50b417f` (`Create Vocab app and durable closed-loop workflow`).
+- `script/verify_changed.sh --self-test` passed with the executable impact
+  selection policy as its single source of truth.
+- `script/closed_loop_records.sh validate` passed after strict metadata,
+  status-drift and reference checks were introduced.
+- `script/closed_loop_records.sh can-delete CL-0001 'expired duplicate record'`
+  was blocked because `CL-0001` is an active protected permanent decision.
+- Reciprocal supersede-link validation rejects one-sided replacement metadata
+  before archive or deletion review.
 
 ## Verification Selected For This Decision
 

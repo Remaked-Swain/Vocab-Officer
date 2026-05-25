@@ -18,9 +18,12 @@ task.
 
 ## Record Contract
 
+Decision records use `active`, `superseded`, `archived`, or `deleted`. Run
+records use `in-review`, `completed`, `archived`, or `deleted`.
+
 Each record must contain:
 
-- decision ID and status (`active`, `superseded`, `archived`, `deleted`)
+- record ID and applicable status
 - date, affected scope and agents involved
 - accepted decision and relevant constraints
 - verification evidence and known limitations
@@ -54,7 +57,7 @@ result bundles remain excluded from Git; records store only compact evidence
 paths and outcomes.
 
 Use `script/closed_loop_records.sh validate` before closing a loop, and
-`script/closed_loop_records.sh can-delete <ID>` before any deletion. Deletion
+`script/closed_loop_records.sh can-delete <ID> <reason>` before any deletion. Deletion
 still requires Director and Monitor approval in a new recorded change.
 
 ## Verification Selection

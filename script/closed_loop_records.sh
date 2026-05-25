@@ -51,7 +51,15 @@ data.fetch("records").each do |record|
     abort("unknown reference #{reference} from #{record.fetch("id")}") unless ids[reference]
   end
   replacement = record["supersededBy"]
-  abort("unknown superseding record #{replacement}") if replacement && !ids[replacement]
+  if replacement
+    abort("unknown superseding record #{replacement}") unless ids[replacement]
+    newer = data.fetch("records").find { |entry| entry.fetch("id") == replacement }
+    abort("supersede link is not reciprocal: #{record.fetch("id")} -> #{replacement}") unless newer.fetch("supersedes").include?(record.fetch("id"))
+  end
+  record.fetch("supersedes").each do |older_id|
+    older = data.fetch("records").find { |entry| entry.fetch("id") == older_id }
+    abort("supersede link is not reciprocal: #{record.fetch("id")} supersedes #{older_id}") unless older["supersededBy"] == record.fetch("id")
+  end
 end
 puts "Closed-Loop index valid: #{ids.length} records"
 ' "$ROOT_DIR" "$INDEX" "$ROOT_DIR/Docs/ClosedLoop/INDEX.md"

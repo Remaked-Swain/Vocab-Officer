@@ -7,7 +7,7 @@ only when its scope applies to the current change.
 | --- | --- | --- | --- | --- | --- |
 | CL-0001 | active | 2026-05-25 | vocabulary rules, persistence, backup, UI foundation | [Vocab MVP implementation](records/CL-0001-vocab-mvp-implementation.md) | retain while app exists |
 | CL-0002 | active | 2026-05-25 | Closed-Loop operations, record retention, targeted verification | [Durable records and selective verification](records/CL-0002-durable-records-and-selective-verification.md) | 2026-08-23 |
-| RUN-20260525-CL0002 | in-review | 2026-05-25 | workflow implementation evidence | [Run record](runs/RUN-20260525-CL0002.md) | finalize after monitor review |
+| RUN-20260525-CL0002 | completed | 2026-05-25 | workflow implementation evidence | [Run record](runs/RUN-20260525-CL0002.md) | completed after Monitor and Director approval |
 
 ## Load Rules
 
