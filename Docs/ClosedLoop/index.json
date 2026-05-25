@@ -1,0 +1,56 @@
+{
+  "schemaVersion": 1,
+  "records": [
+    {
+      "id": "CL-0001",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Vocab MVP implementation",
+      "date": "2026-05-25",
+      "tags": ["grading", "mastery", "backup", "restore", "deletion", "performance-limitation"],
+      "affectedPaths": ["Vocab/", "VocabTests/", "Vocab.xcodeproj/"],
+      "path": "Docs/ClosedLoop/records/CL-0001-vocab-mvp-implementation.md",
+      "references": [],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["large-fixture p95 performance acceptance not measured"]
+    },
+    {
+      "id": "CL-0002",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "audit",
+      "title": "Durable records and selective verification",
+      "date": "2026-05-25",
+      "tags": ["closed-loop", "retention", "verification-selection"],
+      "affectedPaths": ["Docs/ClosedLoop/", "script/verify_changed.sh", "script/closed_loop_records.sh"],
+      "path": "Docs/ClosedLoop/records/CL-0002-durable-records-and-selective-verification.md",
+      "references": ["CL-0001"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": []
+    },
+    {
+      "id": "RUN-20260525-CL0002",
+      "type": "run",
+      "status": "in-review",
+      "retentionClass": "audit",
+      "title": "Closed-Loop persistence and verification workflow implementation",
+      "date": "2026-05-25",
+      "tags": ["closed-loop", "process-change"],
+      "affectedPaths": ["Docs/ClosedLoop/", "Docs/Verification.md", "script/"],
+      "path": "Docs/ClosedLoop/runs/RUN-20260525-CL0002.md",
+      "references": ["CL-0001", "CL-0002"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": false,
+      "unresolvedLimitations": []
+    }
+  ]
+}
