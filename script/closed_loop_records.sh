@@ -60,6 +60,22 @@ data.fetch("records").each do |record|
     older = data.fetch("records").find { |entry| entry.fetch("id") == older_id }
     abort("supersede link is not reciprocal: #{record.fetch("id")} supersedes #{older_id}") unless older["supersededBy"] == record.fetch("id")
   end
+  record.fetch("partiallySupersedes", []).each do |link|
+    older = data.fetch("records").find { |entry| entry.fetch("id") == link.fetch("id") }
+    abort("unknown partial supersession #{link.fetch("id")} from #{record.fetch("id")}") unless older
+    reciprocal = older.fetch("partiallySupersededBy", []).any? do |entry|
+      entry["id"] == record.fetch("id") && entry["scope"] == link.fetch("scope")
+    end
+    abort("partial supersession link is not reciprocal: #{record.fetch("id")} -> #{link.fetch("id")}") unless reciprocal
+  end
+  record.fetch("partiallySupersededBy", []).each do |link|
+    newer = data.fetch("records").find { |entry| entry.fetch("id") == link.fetch("id") }
+    abort("unknown partial replacement #{link.fetch("id")} for #{record.fetch("id")}") unless newer
+    reciprocal = newer.fetch("partiallySupersedes", []).any? do |entry|
+      entry["id"] == record.fetch("id") && entry["scope"] == link.fetch("scope")
+    end
+    abort("partial replacement link is not reciprocal: #{record.fetch("id")} -> #{link.fetch("id")}") unless reciprocal
+  end
 end
 puts "Closed-Loop index valid: #{ids.length} records"
 ' "$ROOT_DIR" "$INDEX" "$ROOT_DIR/Docs/ClosedLoop/INDEX.md"

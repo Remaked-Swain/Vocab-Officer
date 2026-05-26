@@ -156,21 +156,6 @@ final class ReviewStateRecord {
 }
 
 @Model
-final class ManagedBackupRecord {
-    @Attribute(.unique) var id: UUID
-    var createdAt: Date
-    var fileURL: String
-    var schemaVersion: Int
-
-    init(fileURL: String, createdAt: Date = .now, schemaVersion: Int = 1) {
-        self.id = UUID()
-        self.fileURL = fileURL
-        self.createdAt = createdAt
-        self.schemaVersion = schemaVersion
-    }
-}
-
-@Model
 final class AnonymousAggregateRecord {
     @Attribute(.unique) var id: UUID
     var seoulDay: String

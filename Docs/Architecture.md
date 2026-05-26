@@ -11,9 +11,9 @@ It targets macOS 14 or newer using SwiftUI and SwiftData.
 | Layer | Responsibility |
 | --- | --- |
 | `Domain` | Pure policies: directions, judgement, failure history, active review, mastery, session composition |
-| `Application` | Coordinates daily intake, sessions, final answer commits, deletion and restoration |
+| `Application` | Coordinates daily intake, sessions, final answer commits and deletion |
 | `Data` | SwiftData persistence records and indexed summary state |
-| `Infrastructure` | Normalization, Seoul calendar, JSON backup/scrub and measurement helpers |
+| `Infrastructure` | Normalization, Seoul calendar and measurement helpers |
 | `Presentation` | Native macOS views, keyboard flows, confirmation and warnings |
 
 The Domain layer must not import SwiftUI or SwiftData. UI does not decide
@@ -42,15 +42,16 @@ grading, mastery or deletion policy.
   Seoul-day English-to-Korean successes, Korean-to-English has three distinct
   Seoul-day successes, and no wrong/unknown answer occurred in the last 14
   Seoul days.
+- The intake screen supports a local paste flow for either
+  `number-headword-meanings` lines or tab-separated `headword<TAB>meanings`
+  lines. Parsed drafts still pass through the same atomic daily-set policy;
+  pasted vocabulary is never written to repository files by the app.
 
 ## Deletion Contract
 
 Mastered status does not delete a word. The user must explicitly request
-deletion and type confirmation text after seeing this limitation:
+deletion and type confirmation text. Deletion removes identifiable word data
+from the local app store while retaining aggregate counts that cannot be linked
+back to the word.
 
-> Vocab can remove identifiable data from the app and backups it manages. It
-> cannot find or delete JSON copies exported elsewhere.
-
-Deletion removes identifiable word data and related managed-backup entries,
-while retaining aggregate counts that cannot be linked back to the word.
-
+The app does not expose JSON import, JSON export or managed-backup features.

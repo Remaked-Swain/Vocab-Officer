@@ -5,6 +5,42 @@ import XCTest
 
 @MainActor
 final class LearningCoordinatorTests: XCTestCase {
+    func testPasteParserPreservesHyphenatedTermAndMultipleMeanings() throws {
+        let drafts = try DailyIntakePasteParser.parse(
+            """
+            ```markdown
+            0001-well-known-널리 알려진
+            sample\t표본, 예시
+            ```
+            """
+        )
+
+        XCTAssertEqual(drafts.count, 2)
+        XCTAssertEqual(drafts[0].term, "well-known")
+        XCTAssertEqual(drafts[0].meanings, "널리 알려진")
+        XCTAssertEqual(drafts[1].term, "sample")
+        XCTAssertEqual(drafts[1].meanings, "표본, 예시")
+    }
+
+    func testPastedOneHundredWordsUseAtomicDailySetSave() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let input = (0..<100).map { index in
+            String(format: "%04d-term%d-뜻%d, 추가뜻%d", index + 1, index, index, index)
+        }.joined(separator: "\n")
+
+        let drafts = try DailyIntakePasteParser.parse(input)
+        try coordinator.saveDailySet(drafts, date: testDate)
+
+        XCTAssertEqual(drafts.count, 100)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 100)
+        XCTAssertEqual(try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first).meanings.count, 2)
+    }
+
+    func testPasteParserRejectsMalformedRow() {
+        XCTAssertThrowsError(try DailyIntakePasteParser.parse("형식이 없는 단어 행"))
+    }
+
     func testDailySetRejectsNinetyNineAndAcceptsExactlyOneHundredWords() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)
@@ -78,75 +114,6 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<AnonymousAggregateRecord>()).reduce(0) { $0 + $1.deletedMasteredCount }, 1)
     }
 
-    func testJSONRestoreReplacesWordsSessionsAttemptsAndDailySetData() async throws {
-        let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
-        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
-        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
-        let firstQuestion = try XCTUnwrap(generated.1.first)
-        let originalCreatedAt = firstQuestion.word.createdAt
-        let originalMeaningID = firstQuestion.word.meanings[0].id
-        try coordinator.commit(answer: firstQuestion.word.meanings[0].text, result: .correct, automatic: .correct, matchedMeaningID: firstQuestion.word.meanings[0].id, question: firstQuestion, session: generated.0, date: testDate)
-        let service = BackupService(modelContainer: context.container)
-        let data = try await service.externalExportData()
-
-        let extra = WordRecord(term: "temporary")
-        context.insert(extra)
-        try context.save()
-        try await service.restore(from: data)
-        let verified = ModelContext(context.container)
-
-        XCTAssertEqual(try verified.fetch(FetchDescriptor<WordRecord>()).count, 100)
-        XCTAssertEqual(try verified.fetch(FetchDescriptor<DailySetRecord>()).count, 1)
-        XCTAssertEqual(try verified.fetch(FetchDescriptor<TestSessionRecord>()).count, 1)
-        let restoredAttempt = try XCTUnwrap(verified.fetch(FetchDescriptor<AttemptRecord>()).first)
-        let restoredWord = try XCTUnwrap(restoredAttempt.word)
-        XCTAssertEqual(restoredWord.createdAt, originalCreatedAt)
-        XCTAssertEqual(restoredWord.meanings[0].id, originalMeaningID)
-        XCTAssertEqual(restoredAttempt.matchedMeaningID, originalMeaningID)
-        XCTAssertFalse(try verified.fetch(FetchDescriptor<WordRecord>()).contains { $0.term == "temporary" })
-    }
-
-    func testLegacySchemaOneBackupRestoresWithoutStaleMeaningReference() async throws {
-        let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
-        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
-        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
-        let question = try XCTUnwrap(generated.1.first)
-        try coordinator.commit(answer: question.word.meanings[0].text, result: .correct, automatic: .correct, matchedMeaningID: question.word.meanings[0].id, question: question, session: generated.0, date: testDate)
-        let service = BackupService(modelContainer: context.container)
-        let current = try await service.externalExportData()
-        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: current) as? [String: Any])
-        json["schemaVersion"] = 1
-        json["dailySets"] = nil
-        json["sessions"] = nil
-        json["words"] = (try XCTUnwrap(json["words"] as? [[String: Any]])).map { stored in
-            var word = stored
-            word["createdAt"] = nil
-            word["meanings"] = ((word["meanings"] as? [[String: Any]]) ?? []).map { storedMeaning in
-                var meaning = storedMeaning
-                meaning["id"] = nil
-                return meaning
-            }
-            return word
-        }
-        json["attempts"] = ((json["attempts"] as? [[String: Any]]) ?? []).map { storedAttempt in
-            var attempt = storedAttempt
-            attempt["id"] = nil
-            attempt["sessionID"] = nil
-            attempt["questionIndex"] = nil
-            attempt["answeredAt"] = nil
-            return attempt
-        }
-
-        try await service.restore(from: JSONSerialization.data(withJSONObject: json))
-        let verified = ModelContext(context.container)
-        let restoredAttempt = try XCTUnwrap(verified.fetch(FetchDescriptor<AttemptRecord>()).first)
-
-        XCTAssertNil(restoredAttempt.matchedMeaningID)
-        XCTAssertEqual(try verified.fetch(FetchDescriptor<WordRecord>()).count, 100)
-    }
-
     private var testDate: Date {
         ISO8601DateFormatter().date(from: "2026-05-25T01:00:00Z")!
     }
@@ -164,8 +131,7 @@ final class LearningCoordinatorTests: XCTestCase {
             TestSessionRecord.self,
             AttemptRecord.self,
             ReviewStateRecord.self,
-            AnonymousAggregateRecord.self,
-            ManagedBackupRecord.self
+            AnonymousAggregateRecord.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
         return ModelContext(try ModelContainer(for: schema, configurations: [configuration]))

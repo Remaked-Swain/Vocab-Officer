@@ -7,6 +7,60 @@ struct WordDraft: Identifiable {
     var meanings = ""
 }
 
+enum DailyIntakePasteParser {
+    static func parse(_ text: String) throws -> [WordDraft] {
+        let lines = text.components(separatedBy: .newlines)
+            .enumerated()
+            .filter {
+                let value = $0.element.trimmingCharacters(in: .whitespacesAndNewlines)
+                return !value.isEmpty && !value.hasPrefix("```")
+            }
+        guard !lines.isEmpty else { throw PasteIntakeError.empty }
+
+        return try lines.map { offset, line in
+            let lineNumber = offset + 1
+            if line.contains("\t") {
+                let fields = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
+                guard fields.count == 2 else { throw PasteIntakeError.invalidLine(lineNumber) }
+                return try draft(term: String(fields[0]), meanings: String(fields[1]), line: lineNumber)
+            }
+
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            let pattern = #"^\s*(?:\d+\s*-\s*)?([A-Za-z][A-Za-z0-9' -]*?)\s*-\s*((?:[가-힣~(]|약\s).*)\s*$"#
+            let expression = try NSRegularExpression(pattern: pattern)
+            guard let match = expression.firstMatch(in: line, range: range),
+                  let termRange = Range(match.range(at: 1), in: line),
+                  let meaningsRange = Range(match.range(at: 2), in: line) else {
+                throw PasteIntakeError.invalidLine(lineNumber)
+            }
+            return try draft(term: String(line[termRange]), meanings: String(line[meaningsRange]), line: lineNumber)
+        }
+    }
+
+    private static func draft(term: String, meanings: String, line: Int) throws -> WordDraft {
+        let trimmedTerm = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedMeanings = meanings.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTerm.isEmpty, !trimmedMeanings.isEmpty else {
+            throw PasteIntakeError.invalidLine(line)
+        }
+        return WordDraft(term: trimmedTerm, meanings: trimmedMeanings)
+    }
+}
+
+enum PasteIntakeError: LocalizedError {
+    case empty
+    case invalidLine(Int)
+
+    var errorDescription: String? {
+        switch self {
+        case .empty:
+            "붙여넣은 텍스트가 없습니다."
+        case .invalidLine(let line):
+            "\(line)번째 줄 형식을 확인하세요. '번호-영단어-뜻' 또는 탭 구분 형식을 사용합니다."
+        }
+    }
+}
+
 enum SessionMode: String, CaseIterable, Identifiable {
     case today = "오늘 신규"
     case review = "복습"

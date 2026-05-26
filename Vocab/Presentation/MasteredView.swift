@@ -16,15 +16,18 @@ struct MasteredView: View {
         List(mastered) { word in
             HStack {
                 VStack(alignment: .leading) {
-                    Text(word.term).font(.headline)
+                    Text(word.term).font(.title3.weight(.semibold))
                     Text(word.meanings.map(\.text).joined(separator: ", "))
+                        .font(.body)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Button("영구 삭제", role: .destructive) {
                     pendingDeletion = word
                 }
+                .controlSize(.large)
             }
+            .padding(.vertical, 5)
         }
         .overlay {
             if mastered.isEmpty {
@@ -34,6 +37,7 @@ struct MasteredView: View {
         .navigationTitle("Mastered")
         .alert("Mastered 단어 영구 삭제", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } })) {
             TextField("DELETE 입력", text: $confirmationText)
+                .font(.body)
             Button("취소", role: .cancel) {
                 pendingDeletion = nil
                 confirmationText = ""
@@ -43,7 +47,7 @@ struct MasteredView: View {
             }
             .disabled(confirmationText != "DELETE")
         } message: {
-            Text("앱 데이터와 앱이 관리하는 백업에서 식별 가능한 학습 이력을 제거합니다. 외부로 복사한 JSON 파일은 앱이 찾거나 삭제할 수 없습니다.")
+            Text("이 단어와 식별 가능한 학습 이력을 앱 저장소에서 영구 삭제합니다.")
         }
         .safeAreaInset(edge: .bottom) {
             if let notice {
@@ -57,18 +61,11 @@ struct MasteredView: View {
 
     private func performDeletion() {
         guard let word = pendingDeletion else { return }
-        let container = context.container
-        let wordID = word.id
-        Task {
-            do {
-                let backup = BackupService(modelContainer: container)
-                _ = try await backup.createManagedBackup()
-                try await backup.scrubManagedBackups(removing: wordID)
-                try LearningCoordinator(context: context).deleteMastered(word)
-                notice = "식별 데이터 삭제와 앱 관리 백업 scrub을 완료했습니다."
-            } catch {
-                notice = error.localizedDescription
-            }
+        do {
+            try LearningCoordinator(context: context).deleteMastered(word)
+            notice = "식별 가능한 학습 이력을 앱 저장소에서 삭제했습니다."
+        } catch {
+            notice = error.localizedDescription
         }
         pendingDeletion = nil
         confirmationText = ""

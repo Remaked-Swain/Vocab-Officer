@@ -13,8 +13,7 @@ struct VocabApp: App {
                 TestSessionRecord.self,
                 AttemptRecord.self,
                 ReviewStateRecord.self,
-                AnonymousAggregateRecord.self,
-                ManagedBackupRecord.self
+                AnonymousAggregateRecord.self
             )
         } catch {
             fatalError("Unable to prepare local learning data: \(error.localizedDescription)")
@@ -31,15 +30,6 @@ struct VocabApp: App {
         Settings {
             SettingsView()
                 .modelContainer(container)
-        }
-
-        .commands {
-            CommandGroup(after: .newItem) {
-                Button("새 학습 세트") {}
-                    .keyboardShortcut("n", modifiers: .command)
-                Button("테스트 시작") {}
-                    .keyboardShortcut("t", modifiers: .command)
-            }
         }
     }
 }

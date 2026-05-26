@@ -14,6 +14,7 @@ struct TestSetupView: View {
             Text("테스트")
                 .font(.largeTitle.weight(.semibold))
             Text("한 회차는 최대 20개의 고유 단어로 구성되며 필요한 만큼 반복할 수 있습니다.")
+                .font(.body)
                 .foregroundStyle(.secondary)
 
             Form {
@@ -31,6 +32,7 @@ struct TestSetupView: View {
                 .pickerStyle(.segmented)
             }
             .formStyle(.grouped)
+            .controlSize(.large)
             .frame(maxWidth: 620)
 
             if mode == .mixed {
@@ -45,6 +47,7 @@ struct TestSetupView: View {
             Button("20문항 테스트 시작", action: start)
                 .keyboardShortcut(.return, modifiers: .command)
                 .buttonStyle(.borderedProminent)
+                .controlSize(.large)
 
             Spacer()
         }
@@ -109,7 +112,9 @@ struct TestRunnerView: View {
 
             TextField("답안을 입력하세요", text: $answer)
                 .textFieldStyle(.roundedBorder)
-                .font(.title3)
+                .font(.title2)
+                .controlSize(.large)
+                .frame(minHeight: 48)
                 .onSubmit(submitForJudgement)
                 .disabled(judgeResult != nil)
 
@@ -119,6 +124,7 @@ struct TestRunnerView: View {
                 HStack {
                     Button("제출", action: submitForJudgement)
                         .buttonStyle(.borderedProminent)
+                        .controlSize(.large)
                     Button("모름") {
                         judgeResult = JudgeResult(automaticResult: .unknown, matchedMeaningID: nil, isTypoSuggestion: false)
                         chosenResult = .unknown
@@ -126,6 +132,7 @@ struct TestRunnerView: View {
                             ? question.word.meanings.first(where: \.isCore)?.id
                             : nil
                     }
+                    .controlSize(.large)
                 }
             }
             if let notice {
@@ -163,6 +170,7 @@ struct TestRunnerView: View {
                 }
                 Button(index + 1 == questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
                     .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
             }
             .padding(8)
         }

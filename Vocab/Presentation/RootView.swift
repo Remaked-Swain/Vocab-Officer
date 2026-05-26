@@ -28,6 +28,8 @@ struct RootView: View {
         NavigationSplitView {
             List(NavigationItem.allCases, selection: $selection) { item in
                 Label(item.rawValue, systemImage: item.symbol)
+                    .font(.body)
+                    .padding(.vertical, 5)
                     .tag(item)
             }
             .listStyle(.sidebar)
@@ -61,9 +63,10 @@ struct SettingsView: View {
             }
             Toggle("근접 오타 후보 제시", isOn: $showTypoSuggestions)
             LabeledContent("학습 날짜 기준", value: "Asia/Seoul")
-            BackupSettingsSection()
         }
+        .font(.body)
+        .controlSize(.large)
         .padding(24)
-        .frame(width: 420)
+        .frame(width: 480)
     }
 }

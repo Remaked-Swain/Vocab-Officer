@@ -15,9 +15,17 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$app_plan" == *"-only-testing:VocabTests/StudyPoliciesTests"* ]]
   [[ "$app_plan" == *"-only-testing:VocabTests/LearningCoordinatorTests"* ]]
 
-  backup_plan="$("$0" --plan Vocab/Infrastructure/BackupService.swift)"
-  [[ "$backup_plan" == *"CODE_SIGNING_ALLOWED=NO test"* ]]
-  [[ "$backup_plan" != *"-only-testing:"* ]]
+  data_plan="$("$0" --plan Vocab/Data/Records.swift)"
+  [[ "$data_plan" == *"CODE_SIGNING_ALLOWED=NO test"* ]]
+  [[ "$data_plan" != *"-only-testing:"* ]]
+
+  deletion_plan="$("$0" --plan Vocab/Presentation/MasteredView.swift)"
+  [[ "$deletion_plan" == *"CODE_SIGNING_ALLOWED=NO test"* ]]
+  [[ "$deletion_plan" != *"-only-testing:"* ]]
+
+  intake_ui_plan="$("$0" --plan Vocab/Presentation/TodayIntakeView.swift)"
+  [[ "$intake_ui_plan" == *"xcodebuild"* ]]
+  [[ "$intake_ui_plan" == *"build"* ]]
 
   process_plan="$("$0" --plan Docs/ClosedLoop/README.md script/verify_changed.sh)"
   [[ "$process_plan" == *"bash -n"* ]]
@@ -83,7 +91,7 @@ for file in "${changed_files[@]}"; do
       run_application=true
       run_domain=true
       ;;
-    Vocab/Data/*|Vocab/Infrastructure/BackupService.swift)
+    Vocab/Data/*|Vocab/Presentation/MasteredView.swift)
       run_full=true
       ;;
     VocabTests/Application/*)

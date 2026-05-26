@@ -13,14 +13,16 @@ struct ReviewView: View {
         List(candidates) { word in
             HStack {
                 VStack(alignment: .leading) {
-                    Text(word.term).font(.headline)
+                    Text(word.term).font(.title3.weight(.semibold))
                     Text(word.meanings.map(\.text).joined(separator: ", "))
+                        .font(.body)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
                 Text("체크 \(word.reviewState?.failureCheck ?? 0)")
                 Text("우선도 \(word.reviewState?.activePriority ?? 0)")
             }
+            .padding(.vertical, 5)
         }
         .overlay {
             if candidates.isEmpty {
@@ -43,13 +45,15 @@ struct LibraryView: View {
     var body: some View {
         List(filtered) { word in
             VStack(alignment: .leading, spacing: 4) {
-                Text(word.term).font(.headline)
+                Text(word.term).font(.title3.weight(.semibold))
                 Text(word.meanings.map(\.text).joined(separator: ", "))
+                    .font(.body)
                     .foregroundStyle(.secondary)
                 Text(word.statusRaw.capitalized)
                     .font(.caption)
                     .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
             }
+            .padding(.vertical, 5)
         }
         .searchable(text: $searchText, prompt: "영단어 검색")
         .navigationTitle("단어장")
@@ -64,6 +68,7 @@ struct HistoryView: View {
             HStack {
                 VStack(alignment: .leading) {
                     Text(attempt.prompt)
+                        .font(.body)
                     Text(attempt.directionRaw)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -75,6 +80,7 @@ struct HistoryView: View {
                 }
                 Text(attempt.finalJudgementRaw)
             }
+            .padding(.vertical, 5)
         }
         .navigationTitle("학습 기록")
     }

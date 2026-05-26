@@ -34,7 +34,7 @@ that cannot be reliably reconnected.
 
 - Debug XCTest: 17 passed, 0 failed.
 - XCTest result bundle:
-  `/Users/swainyun/Desktop/Project/Vocab/test-build/Logs/Test/Test-Vocab-2026.05.25_22-37-20-+0900.xcresult`
+  `test-build/Logs/Test/Test-Vocab-2026.05.25_22-37-20-+0900.xcresult`
 - Release build succeeded.
 - `script/build_and_run.sh --verify` succeeded.
 - Monitor found no remaining blocking code issue after correction flows and
@@ -44,3 +44,8 @@ that cannot be reliably reconnected.
 
 The large-fixture p95 performance acceptance in `Docs/Performance.md` was not
 measured. Performance scope may be reopened when measurement is performed.
+## Active Override
+
+`CL-0003` removes the JSON import/export and app-managed backup creation,
+restore and scrub portions of this record. Its remaining intake, testing,
+correction, mastery and deletion contracts stay active.
