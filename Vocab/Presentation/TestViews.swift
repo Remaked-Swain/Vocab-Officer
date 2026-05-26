@@ -3,10 +3,11 @@ import SwiftUI
 
 struct TestSetupView: View {
     @Environment(\.modelContext) private var context
+    @Query(sort: \DailySetRecord.createdAt) private var sets: [DailySetRecord]
     @State private var mode: SessionMode = .mixed
     @State private var direction: PracticeDirection = .enToKo
-    @State private var activeSession: TestSessionRecord?
-    @State private var questions: [SessionQuestion] = []
+    @State private var selectedSetID: UUID?
+    @State private var activeRun: TestRun?
     @State private var error: String?
 
     var body: some View {
@@ -30,12 +31,24 @@ struct TestSetupView: View {
                     }
                 }
                 .pickerStyle(.segmented)
+                if mode == .set {
+                    Picker("테스트 대상 세트", selection: $selectedSetID) {
+                        ForEach(Array(sets.enumerated()), id: \.element.id) { offset, set in
+                            Text("\(set.seoulDay) 세트")
+                                .tag(Optional(set.id))
+                        }
+                    }
+                }
             }
             .formStyle(.grouped)
             .controlSize(.large)
             .frame(maxWidth: 620)
 
-            if mode == .mixed {
+            if mode == .set {
+                Text("아직 시험하지 않은 과거 세트도 선택하여 20문항씩 학습할 수 있습니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            } else if mode == .mixed {
                 Text("혼합은 복습 10개와 오늘 미출제 신규 10개를 우선하고, 부족하면 반대 풀에서 보충합니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -52,33 +65,39 @@ struct TestSetupView: View {
             Spacer()
         }
         .padding(32)
-        .sheet(item: $activeSession) { session in
-            TestRunnerView(session: session, questions: questions)
+        .onAppear {
+            if selectedSetID == nil {
+                selectedSetID = sets.first?.id
+            }
+        }
+        .sheet(item: $activeRun) { run in
+            TestRunnerView(run: run)
                 .frame(minWidth: 720, minHeight: 560)
         }
     }
 
     private func start() {
         do {
-            let result = try LearningCoordinator(context: context).generateSession(mode: mode, direction: direction)
-            guard !result.1.isEmpty else {
-                error = "선택한 모드에 출제 가능한 단어가 없습니다."
-                return
-            }
-            questions = result.1
-            activeSession = result.0
+            let result = try LearningCoordinator(context: context).generateSession(mode: mode, direction: direction, setID: selectedSetID)
+            activeRun = TestRun(session: result.0, questions: result.1)
             error = nil
         } catch let caughtError {
-            error = caughtError.localizedDescription
+            activeRun = nil
+            self.error = caughtError.localizedDescription
         }
     }
+}
+
+struct TestRun: Identifiable {
+    let session: TestSessionRecord
+    let questions: [SessionQuestion]
+    var id: UUID { session.id }
 }
 
 struct TestRunnerView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
-    let session: TestSessionRecord
-    let questions: [SessionQuestion]
+    let run: TestRun
     @State private var index = 0
     @State private var answer = ""
     @State private var judgeResult: JudgeResult?
@@ -87,22 +106,33 @@ struct TestRunnerView: View {
     @State private var addAlias = false
     @State private var notice: String?
 
-    private var question: SessionQuestion { questions[index] }
+    private var question: SessionQuestion? {
+        run.questions.indices.contains(index) ? run.questions[index] : nil
+    }
 
     var body: some View {
+        if let question {
+            content(question)
+        } else {
+            ContentUnavailableView("출제 문항이 없습니다", systemImage: "exclamationmark.triangle")
+                .padding(30)
+        }
+    }
+
+    private func content(_ question: SessionQuestion) -> some View {
         VStack(alignment: .leading, spacing: 24) {
             HStack {
-                Text(session.modeRaw)
+                Text(run.session.modeRaw)
                     .font(.headline)
-                if session.wasReduced {
-                    Label("축소 세션: \(questions.count)문항", systemImage: "info.circle")
+                if run.session.wasReduced {
+                    Label("축소 세션: \(run.questions.count)문항", systemImage: "info.circle")
                         .foregroundStyle(.orange)
                 }
                 Spacer()
-                Text("\(index + 1) / \(questions.count)")
+                Text("\(index + 1) / \(run.questions.count)")
                     .monospacedDigit()
             }
-            ProgressView(value: Double(index), total: Double(questions.count))
+            ProgressView(value: Double(index), total: Double(run.questions.count))
             Text(question.direction.rawValue)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -119,7 +149,7 @@ struct TestRunnerView: View {
                 .disabled(judgeResult != nil)
 
             if let judgeResult {
-                resultPanel(judgeResult)
+                resultPanel(judgeResult, question: question)
             } else {
                 HStack {
                     Button("제출", action: submitForJudgement)
@@ -129,7 +159,7 @@ struct TestRunnerView: View {
                         judgeResult = JudgeResult(automaticResult: .unknown, matchedMeaningID: nil, isTypoSuggestion: false)
                         chosenResult = .unknown
                         correctedMeaningID = question.direction == .enToKo
-                            ? question.word.meanings.first(where: \.isCore)?.id
+                            ? question.word.meanings.first(where: \.isTrackableCoreMeaning)?.id
                             : nil
                     }
                     .controlSize(.large)
@@ -144,10 +174,22 @@ struct TestRunnerView: View {
     }
 
     @ViewBuilder
-    private func resultPanel(_ result: JudgeResult) -> some View {
+    private func resultPanel(_ result: JudgeResult, question: SessionQuestion) -> some View {
         GroupBox {
             VStack(alignment: .leading, spacing: 12) {
                 Label("자동 판정: \(result.automaticResult.rawValue)", systemImage: result.automaticResult == .correct ? "checkmark.circle" : "exclamationmark.circle")
+                if result.automaticResult != .unknown {
+                    LabeledContent("원문") {
+                        Text(question.word.term).fontWeight(.semibold)
+                    }
+                    LabeledContent("등록 의미") {
+                        Text(question.word.meanings.map(\.text).joined(separator: ", "))
+                            .multilineTextAlignment(.trailing)
+                    }
+                    LabeledContent("입력 답안") {
+                        Text(answer.isEmpty ? "(입력 없음)" : answer)
+                    }
+                }
                 if result.isTypoSuggestion {
                     Text("근접 오타일 수 있습니다. 자동 정답 처리하지 않으며 직접 보정해야 합니다.")
                         .foregroundStyle(.orange)
@@ -161,14 +203,14 @@ struct TestRunnerView: View {
                 if (chosenResult ?? result.automaticResult) == .correct && result.automaticResult != .correct {
                     if question.direction == .enToKo {
                         Picker("확인한 핵심 뜻", selection: $correctedMeaningID) {
-                            ForEach(question.word.meanings.filter(\.isCore)) { meaning in
+                            ForEach(question.word.meanings.filter(\.isTrackableCoreMeaning)) { meaning in
                                 Text(meaning.text).tag(Optional(meaning.id))
                             }
                         }
                     }
                     Toggle("이 답안을 이후 허용 답안으로 추가", isOn: $addAlias)
                 }
-                Button(index + 1 == questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
+                Button(index + 1 == run.questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
             }
@@ -177,14 +219,15 @@ struct TestRunnerView: View {
     }
 
     private func submitForJudgement() {
+        guard let question else { return }
         let result = LearningCoordinator(context: context).judge(answer: answer, for: question)
         judgeResult = result
         chosenResult = result.automaticResult
-        correctedMeaningID = question.direction == .enToKo ? question.word.meanings.first(where: \.isCore)?.id : nil
+        correctedMeaningID = question.direction == .enToKo ? question.word.meanings.first(where: \.isTrackableCoreMeaning)?.id : nil
     }
 
     private func commitAndAdvance() {
-        guard let judgeResult else { return }
+        guard let judgeResult, let question else { return }
         let final = chosenResult ?? judgeResult.automaticResult
         if final == .correct,
            judgeResult.automaticResult != .correct,
@@ -204,9 +247,9 @@ struct TestRunnerView: View {
             let finalMeaningID = final == .correct && question.direction == .enToKo
                 ? (judgeResult.matchedMeaningID ?? correctedMeaningID)
                 : judgeResult.matchedMeaningID
-            try LearningCoordinator(context: context).commit(answer: answer, result: final, automatic: judgeResult.automaticResult, matchedMeaningID: finalMeaningID, question: question, session: session, correction: final == judgeResult.automaticResult ? nil : (addAlias ? "acceptedAlias" : "oneTimeCorrection"))
-            if index + 1 == questions.count {
-                session.completedAt = .now
+            try LearningCoordinator(context: context).commit(answer: answer, result: final, automatic: judgeResult.automaticResult, matchedMeaningID: finalMeaningID, question: question, session: run.session, correction: final == judgeResult.automaticResult ? nil : (addAlias ? "acceptedAlias" : "oneTimeCorrection"))
+            if index + 1 == run.questions.count {
+                run.session.completedAt = .now
                 try context.save()
                 dismiss()
             } else {

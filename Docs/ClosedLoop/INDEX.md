@@ -12,6 +12,8 @@ only when its scope applies to the current change.
 | RUN-20260526-CL0003 | completed | 2026-05-26 | feature removal and 2026-05-25 intake execution | [Run record](runs/RUN-20260526-CL0003.md) | completed after Monitor, Director and Recorder approval |
 | CL-0004 | active | 2026-05-26 | in-app paste intake, accessibility and repository publishing hygiene | [In-app paste intake and publish hygiene](records/CL-0004-in-app-paste-and-publish-hygiene.md) | retain while feature or public repository exists |
 | RUN-20260526-CL0004 | completed | 2026-05-26 | accessible paste intake and repository hygiene execution | [Run record](runs/RUN-20260526-CL0004.md) | completed after Director, Monitor and Recorder approval |
+| CL-0005 | active | 2026-05-26 | selected-set testing, study cards, judgement transparency and local installation | [Study cards, selected-set testing and local installation](records/CL-0005-study-cards-selected-set-testing-and-installation.md) | retain while feature exists |
+| RUN-20260526-CL0005 | completed | 2026-05-26 | defect repair, card study and installation evidence | [Run record](runs/RUN-20260526-CL0005.md) | completed after Director, Monitor and Recorder approval |
 
 ## Load Rules
 
@@ -21,6 +23,8 @@ only when its scope applies to the current change.
   `CL-0003`; it overrides the removed backup portions of `CL-0001`.
 - Daily intake UI, paste-format handling or public repository hygiene work
   must load `CL-0004`.
+- Selected-set testing, test presentation safety, learning cards, judgement
+  acknowledgement or local app installation work must load `CL-0005`.
 - Any future Closed-Loop task must apply `CL-0002`; reading its full record is
   required only when changing workflow, retention or verification rules.
 - Superseded or archived records are read only when investigating regression,

@@ -3,6 +3,7 @@ import SwiftUI
 enum NavigationItem: String, CaseIterable, Identifiable {
     case intake = "오늘 입력"
     case test = "테스트"
+    case study = "학습 카드"
     case review = "복습"
     case mastered = "Mastered"
     case library = "단어장"
@@ -13,6 +14,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         switch self {
         case .intake: "square.and.pencil"
         case .test: "checkmark.rectangle"
+        case .study: "rectangle.stack"
         case .review: "arrow.clockwise.circle"
         case .mastered: "graduationcap"
         case .library: "books.vertical"
@@ -39,6 +41,7 @@ struct RootView: View {
                 switch selection ?? .intake {
                 case .intake: TodayIntakeView()
                 case .test: TestSetupView()
+                case .study: StudyCardsView()
                 case .review: ReviewView()
                 case .mastered: MasteredView()
                 case .library: LibraryView()

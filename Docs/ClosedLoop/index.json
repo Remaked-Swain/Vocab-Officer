@@ -123,6 +123,40 @@
       "retentionUntil": null,
       "protected": false,
       "unresolvedLimitations": []
+    },
+    {
+      "id": "CL-0005",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Study cards, selected-set testing and local installation",
+      "date": "2026-05-26",
+      "tags": ["testing", "crash-fix", "study-cards", "judgement", "installation"],
+      "affectedPaths": ["Vocab/Application/", "Vocab/Presentation/", "VocabTests/", "script/", "Docs/"],
+      "path": "Docs/ClosedLoop/records/CL-0005-study-cards-selected-set-testing-and-installation.md",
+      "references": ["CL-0001", "CL-0002", "CL-0003", "CL-0004"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": []
+    },
+    {
+      "id": "RUN-20260526-CL0005",
+      "type": "run",
+      "status": "completed",
+      "retentionClass": "audit",
+      "title": "Selected-set testing, study cards and installation",
+      "date": "2026-05-26",
+      "tags": ["testing", "crash-fix", "study-cards", "installation"],
+      "affectedPaths": ["Vocab/Application/", "Vocab/Presentation/", "VocabTests/", "script/", "Docs/"],
+      "path": "Docs/ClosedLoop/runs/RUN-20260526-CL0005.md",
+      "references": ["CL-0001", "CL-0002", "CL-0003", "CL-0004", "CL-0005"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": false,
+      "unresolvedLimitations": []
     }
   ]
 }

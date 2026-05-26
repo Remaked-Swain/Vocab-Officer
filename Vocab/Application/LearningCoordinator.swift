@@ -63,6 +63,7 @@ enum PasteIntakeError: LocalizedError {
 
 enum SessionMode: String, CaseIterable, Identifiable {
     case today = "오늘 신규"
+    case set = "세트 선택"
     case review = "복습"
     case mixed = "혼합"
     var id: String { rawValue }
@@ -98,6 +99,16 @@ struct JudgeResult {
     let automaticResult: FinalResult
     let matchedMeaningID: UUID?
     let isTypoSuggestion: Bool
+}
+
+extension MeaningRecord {
+    var isIndividuallyTrackable: Bool {
+        !text.contains { ",/\n".contains($0) }
+    }
+
+    var isTrackableCoreMeaning: Bool {
+        isCore && isIndividuallyTrackable
+    }
 }
 
 @MainActor
@@ -151,14 +162,17 @@ final class LearningCoordinator {
         try context.save()
     }
 
-    func generateSession(mode: SessionMode, direction: PracticeDirection, date: Date = .now) throws -> (TestSessionRecord, [SessionQuestion]) {
+    func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now) throws -> (TestSessionRecord, [SessionQuestion]) {
         let day = SeoulCalendar.day(for: date)
         let words = try context.fetch(FetchDescriptor<WordRecord>())
             .filter { $0.deletedAt == nil && $0.statusRaw == "active" }
-        let todayIDs: Set<UUID> = Set((try context.fetch(FetchDescriptor<DailySetRecord>(predicate: #Predicate { $0.seoulDay == day })).first?.items ?? []).map(\.wordID))
-        let alreadyPresentedIDs: Set<UUID> = Set(try context.fetch(FetchDescriptor<TestSessionRecord>(predicate: #Predicate { $0.seoulDay == day })).flatMap(\.wordIDs))
-        let today = words.filter { todayIDs.contains($0.id) && !alreadyPresentedIDs.contains($0.id) }
-            + words.filter { todayIDs.contains($0.id) && alreadyPresentedIDs.contains($0.id) }
+        let sets = try context.fetch(FetchDescriptor<DailySetRecord>())
+        let todayIDs: Set<UUID> = Set(sets.first(where: { $0.seoulDay == day })?.items.map(\.wordID) ?? [])
+        let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
+        let alreadyPresentedTodayIDs: Set<UUID> = Set(sessions.filter { $0.seoulDay == day }.flatMap(\.wordIDs))
+        let allPresentedIDs: Set<UUID> = Set(sessions.flatMap(\.wordIDs))
+        let today = words.filter { todayIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }
+            + words.filter { todayIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }
         let review = words.filter { record in
             guard let state = record.reviewState else { return false }
             return state.activePriority > 0
@@ -167,6 +181,17 @@ final class LearningCoordinator {
         switch mode {
         case .today:
             selected = Array(today.prefix(20))
+        case .set:
+            guard let setID, let selectedSet = sets.first(where: { $0.id == setID }) else {
+                throw LearningError.setRequired
+            }
+            let wordsByID = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
+            let setWords = selectedSet.items
+                .sorted { $0.orderIndex < $1.orderIndex }
+                .compactMap { wordsByID[$0.wordID] }
+            let prioritized = setWords.filter { !allPresentedIDs.contains($0.id) }
+                + setWords.filter { allPresentedIDs.contains($0.id) }
+            selected = Array(prioritized.prefix(20))
         case .review:
             selected = Array(review.prefix(20))
         case .mixed:
@@ -174,6 +199,7 @@ final class LearningCoordinator {
             appendUnique(from: today, to: &selected, limit: 20)
             appendUnique(from: review, to: &selected, limit: 20)
         }
+        guard !selected.isEmpty else { throw LearningError.noSessionCandidates }
         let session = TestSessionRecord(directionRaw: direction.rawValue, modeRaw: mode.rawValue, seoulDay: day, wordIDs: selected.map(\.id), wasReduced: selected.count < 20)
         context.insert(session)
         try context.save()
@@ -184,7 +210,7 @@ final class LearningCoordinator {
         let normalized = question.direction == .enToKo ? TextNormalizer.normalizeKorean(answer) : TextNormalizer.normalizeEnglish(answer)
         switch question.direction {
         case .enToKo:
-            for meaning in question.word.meanings {
+            for meaning in question.word.meanings where meaning.isIndividuallyTrackable {
                 let answers = [meaning.normalizedText] + meaning.aliases.map(TextNormalizer.normalizeKorean)
                 if answers.contains(normalized) {
                     return JudgeResult(automaticResult: .correct, matchedMeaningID: meaning.id, isTypoSuggestion: false)
@@ -244,7 +270,7 @@ final class LearningCoordinator {
         case .correct:
             if direction == .enToKo {
                 state.enToKoStreak += 1
-                if let matchedMeaningID, let meaning = word.meanings.first(where: { $0.id == matchedMeaningID && $0.isCore }), !meaning.successDays.contains(day) {
+                if let matchedMeaningID, let meaning = word.meanings.first(where: { $0.id == matchedMeaningID && $0.isTrackableCoreMeaning }), !meaning.successDays.contains(day) {
                     meaning.successDays.append(day)
                 }
             } else {
@@ -261,10 +287,12 @@ final class LearningCoordinator {
     }
 
     private func masterySatisfied(for word: WordRecord, at date: Date) -> Bool {
-        let coreSatisfied = word.meanings.filter(\.isCore).allSatisfy { Set($0.successDays).count >= 3 }
+        let coreMeanings = word.meanings.filter(\.isCore)
+        guard !coreMeanings.isEmpty, coreMeanings.allSatisfy(\.isTrackableCoreMeaning) else { return false }
+        let coreSatisfied = coreMeanings.allSatisfy { Set($0.successDays).count >= 3 }
         let kToESatisfied = Set(word.reviewState?.koToEnSuccessDays ?? []).count >= 3
         let noRecentFailure = word.reviewState?.latestWrongAt.map { $0 < SeoulCalendar.daysAgo(14, from: date) } ?? true
-        return !word.meanings.filter(\.isCore).isEmpty && coreSatisfied && kToESatisfied && noRecentFailure
+        return coreSatisfied && kToESatisfied && noRecentFailure
     }
 
     private static func prioritySort(_ lhs: WordRecord, _ rhs: WordRecord) -> Bool {
@@ -293,6 +321,8 @@ enum LearningError: LocalizedError {
     case existingTermDoesNotCountAsNew
     case meaningRequired
     case onlyMasteredCanBeDeleted
+    case setRequired
+    case noSessionCandidates
 
     var errorDescription: String? {
         switch self {
@@ -302,6 +332,8 @@ enum LearningError: LocalizedError {
         case .existingTermDoesNotCountAsNew: "기존 단어의 수정은 오늘 신규 100개에 포함되지 않습니다."
         case .meaningRequired: "각 표제어에 뜻을 하나 이상 입력해야 합니다."
         case .onlyMasteredCanBeDeleted: "Mastered 단어만 삭제할 수 있습니다."
+        case .setRequired: "테스트할 입력 세트를 선택하세요."
+        case .noSessionCandidates: "선택한 범위에 출제 가능한 단어가 없습니다."
         }
     }
 }

@@ -68,6 +68,68 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertTrue(Set(first.wordIDs).isDisjoint(with: Set(second.wordIDs)))
     }
 
+    func testOlderUntestedSetCanBeSelectedAfterNewerSetExists() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let nextDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
+        let followingDate = ISO8601DateFormatter().date(from: "2026-05-27T01:00:00Z")!
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "older"), date: testDate)
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "newer"), date: nextDate)
+        let olderSet = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-25" })
+
+        let generated = try coordinator.generateSession(mode: .set, direction: .enToKo, setID: olderSet.id, date: nextDate)
+        let second = try coordinator.generateSession(mode: .set, direction: .enToKo, setID: olderSet.id, date: followingDate)
+
+        XCTAssertEqual(generated.1.count, 20)
+        XCTAssertTrue(generated.1.allSatisfy { $0.word.term.hasPrefix("older-") })
+        XCTAssertEqual(second.1.count, 20)
+        XCTAssertTrue(Set(generated.1.map(\.word.id)).isDisjoint(with: Set(second.1.map(\.word.id))))
+    }
+
+    func testEmptyReviewPoolDoesNotPersistEmptySession() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+
+        XCTAssertThrowsError(try coordinator.generateSession(mode: .review, direction: .enToKo, date: testDate))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<TestSessionRecord>()).isEmpty)
+    }
+
+    func testRuntimeJudgeAcceptsAnyStoredKoreanMeaning() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        var values = drafts(count: 100, prefix: "entry")
+        values[0] = WordDraft(term: "example", meanings: "첫 의미, 둘째 의미, 셋째 의미")
+        try coordinator.saveDailySet(values, date: testDate)
+        let set = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first)
+        let generated = try coordinator.generateSession(mode: .set, direction: .enToKo, setID: set.id, date: testDate)
+        let question = try XCTUnwrap(generated.1.first { $0.word.term == "example" })
+
+        let result = coordinator.judge(answer: "둘째 의미", for: question)
+
+        XCTAssertEqual(result.automaticResult, .correct)
+        XCTAssertEqual(result.matchedMeaningID, question.word.meanings.first { $0.text == "둘째 의미" }?.id)
+    }
+
+    func testDelimitedLegacyMeaningCannotEarnAutomaticOrCorrectedMasteryCredit() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
+        let question = try XCTUnwrap(generated.1.first)
+        let legacyMeaning = MeaningRecord(text: "첫 의미, 둘째 의미", isCore: true)
+        legacyMeaning.word = question.word
+        question.word.meanings.append(legacyMeaning)
+
+        let result = coordinator.judge(answer: "첫 의미, 둘째 의미", for: question)
+        XCTAssertEqual(result.automaticResult, .incorrect)
+
+        try coordinator.commit(answer: "사용자 보정", result: .correct, automatic: .incorrect, matchedMeaningID: legacyMeaning.id, question: question, session: generated.0, correction: "oneTimeCorrection", date: testDate)
+
+        XCTAssertTrue(legacyMeaning.successDays.isEmpty)
+        XCTAssertEqual(question.word.statusRaw, "active")
+    }
+
     func testInvalidMeaningInCompleteSetDoesNotPartiallyInsertWords() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)
@@ -118,8 +180,8 @@ final class LearningCoordinatorTests: XCTestCase {
         ISO8601DateFormatter().date(from: "2026-05-25T01:00:00Z")!
     }
 
-    private func drafts(count: Int) -> [WordDraft] {
-        (0..<count).map { WordDraft(term: "term-\($0)", meanings: "뜻-\($0)") }
+    private func drafts(count: Int, prefix: String = "term") -> [WordDraft] {
+        (0..<count).map { WordDraft(term: "\(prefix)-\($0)", meanings: "뜻-\($0)") }
     }
 
     private func makeContext() throws -> ModelContext {

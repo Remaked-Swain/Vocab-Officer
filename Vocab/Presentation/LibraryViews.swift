@@ -1,6 +1,99 @@
 import SwiftData
 import SwiftUI
 
+struct StudyCardsView: View {
+    @Query(sort: \DailySetRecord.createdAt) private var sets: [DailySetRecord]
+    @Query private var words: [WordRecord]
+    @State private var selectedSetID: UUID?
+
+    private var selectedSet: DailySetRecord? {
+        sets.first { $0.id == selectedSetID } ?? sets.first
+    }
+
+    private var wordsByID: [UUID: WordRecord] {
+        Dictionary(uniqueKeysWithValues: words.filter { $0.deletedAt == nil }.map { ($0.id, $0) })
+    }
+
+    private var selectedWords: [WordRecord] {
+        selectedSet?.items
+            .sorted { $0.orderIndex < $1.orderIndex }
+            .compactMap { wordsByID[$0.wordID] } ?? []
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("학습 카드")
+                .font(.largeTitle.weight(.semibold))
+            Text("입력한 세트별로 카드를 클릭하거나 Return 키를 눌러 원문과 의미를 뒤집어 확인하세요.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+
+            Picker("학습 세트", selection: Binding(
+                get: { selectedSet?.id },
+                set: { selectedSetID = $0 }
+            )) {
+                ForEach(sets) { set in
+                    Text("\(set.seoulDay) 세트  (\(set.items.count)개)")
+                        .tag(Optional(set.id))
+                }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.large)
+
+            if selectedWords.isEmpty {
+                ContentUnavailableView("학습할 세트가 없습니다", systemImage: "rectangle.stack")
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
+                        ForEach(selectedWords) { word in
+                            FlipWordCard(word: word)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .padding(28)
+        .navigationTitle("학습 카드")
+    }
+}
+
+private struct FlipWordCard: View {
+    let word: WordRecord
+    @State private var showsMeaning = false
+
+    var body: some View {
+        Button {
+            withAnimation(.snappy(duration: 0.25)) {
+                showsMeaning.toggle()
+            }
+        } label: {
+            ZStack {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(.regularMaterial)
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(.quaternary, lineWidth: 1)
+                VStack(spacing: 10) {
+                    Text(showsMeaning ? "의미" : "English")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(showsMeaning ? word.meanings.map(\.text).joined(separator: ", ") : word.term)
+                        .font(showsMeaning ? .body : .title3.weight(.semibold))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.primary)
+                }
+                .padding(16)
+            }
+            .frame(minHeight: 126)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(word.term)
+        .accessibilityValue(showsMeaning ? word.meanings.map(\.text).joined(separator: ", ") : "영단어 앞면")
+        .accessibilityHint("눌러서 카드 앞뒤를 전환합니다")
+    }
+}
+
 struct ReviewView: View {
     @Query private var words: [WordRecord]
 
