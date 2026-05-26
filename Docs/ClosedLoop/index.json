@@ -110,7 +110,7 @@
     {
       "id": "RUN-20260526-CL0004",
       "type": "run",
-      "status": "in-review",
+      "status": "completed",
       "retentionClass": "audit",
       "title": "Accessible paste intake and repository hygiene",
       "date": "2026-05-26",

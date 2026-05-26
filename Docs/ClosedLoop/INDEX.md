@@ -11,7 +11,7 @@ only when its scope applies to the current change.
 | CL-0003 | active | 2026-05-26 | local data entry, JSON/managed-backup removal | [Local-only intake without JSON backup features](records/CL-0003-local-intake-without-json-backup.md) | retain while app exists |
 | RUN-20260526-CL0003 | completed | 2026-05-26 | feature removal and 2026-05-25 intake execution | [Run record](runs/RUN-20260526-CL0003.md) | completed after Monitor, Director and Recorder approval |
 | CL-0004 | active | 2026-05-26 | in-app paste intake, accessibility and repository publishing hygiene | [In-app paste intake and publish hygiene](records/CL-0004-in-app-paste-and-publish-hygiene.md) | retain while feature or public repository exists |
-| RUN-20260526-CL0004 | in-review | 2026-05-26 | accessible paste intake and repository hygiene execution | [Run record](runs/RUN-20260526-CL0004.md) | finalize after validation and agent approval |
+| RUN-20260526-CL0004 | completed | 2026-05-26 | accessible paste intake and repository hygiene execution | [Run record](runs/RUN-20260526-CL0004.md) | completed after Director, Monitor and Recorder approval |
 
 ## Load Rules
 
