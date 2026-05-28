@@ -116,6 +116,30 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertTrue(Set(generated.1.map(\.word.id)).isDisjoint(with: Set(previouslyPresentedIDs)))
     }
 
+    func testMixedSessionKeepsTodayMajorityAndIncludesHistoricalUntestedWords() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let nextDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "older"), date: testDate)
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "today"), date: nextDate)
+        let words = try context.fetch(FetchDescriptor<WordRecord>())
+        let todayIDs = Set(try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-26" }).items.map(\.wordID))
+        for word in words.filter({ todayIDs.contains($0.id) }).prefix(8) {
+            let state = word.reviewState ?? ReviewStateRecord()
+            state.failureCheck = 1
+            state.activePriority = 1
+            word.reviewState = state
+        }
+
+        let generated = try coordinator.generateSession(mode: .mixed, direction: .enToKo, date: nextDate)
+        let selectedIDs = Set(generated.1.map(\.word.id))
+
+        XCTAssertEqual(generated.1.count, 20)
+        XCTAssertGreaterThanOrEqual(generated.1.filter { $0.word.term.hasPrefix("today-") }.count, 12)
+        XCTAssertGreaterThanOrEqual(generated.1.filter { $0.word.term.hasPrefix("older-") }.count, 1)
+        XCTAssertEqual(selectedIDs.count, 20)
+    }
+
     func testOlderUntestedSetCanBeSelectedAfterNewerSetExists() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)

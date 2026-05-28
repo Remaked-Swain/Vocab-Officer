@@ -195,6 +195,11 @@ final class LearningCoordinator {
             fairOrder(words.filter { todayIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
                 + fairOrder(words.filter { todayIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
         )
+        let historicalSetIDs = Set(sets.filter { $0.seoulDay < day }.flatMap(\.items).map(\.wordID))
+        let unverifiedBacklog = fairOrder(
+            words.filter { historicalSetIDs.contains($0.id) && !allPresentedIDs.contains($0.id) },
+            exposure: exposure
+        )
         let review = words.filter { record in
             guard let state = record.reviewState else { return false }
             return record.statusRaw == "active" && state.activePriority > 0
@@ -218,9 +223,12 @@ final class LearningCoordinator {
         case .review:
             selected = Array(orderedReview.prefix(20))
         case .mixed:
-            selected = Array(orderedReview.prefix(10))
+            selected = Array(today.prefix(12))
+            appendUnique(from: orderedReview, to: &selected, limit: min(18, 20))
+            appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
             appendUnique(from: today, to: &selected, limit: 20)
             appendUnique(from: orderedReview, to: &selected, limit: 20)
+            appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
         }
         guard !selected.isEmpty else { throw LearningError.noSessionCandidates }
         let session = TestSessionRecord(directionRaw: direction.rawValue, modeRaw: mode.rawValue, seoulDay: day, wordIDs: selected.map(\.id), wasReduced: selected.count < 20)
