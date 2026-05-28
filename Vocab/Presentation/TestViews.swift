@@ -3,7 +3,7 @@ import SwiftUI
 
 struct TestSetupView: View {
     @Environment(\.modelContext) private var context
-    @Query(sort: \DailySetRecord.createdAt) private var sets: [DailySetRecord]
+    @Query(sort: \DailySetRecord.createdAt, order: .reverse) private var sets: [DailySetRecord]
     @State private var mode: SessionMode = .mixed
     @State private var direction: PracticeDirection = .enToKo
     @State private var selectedSetID: UUID?

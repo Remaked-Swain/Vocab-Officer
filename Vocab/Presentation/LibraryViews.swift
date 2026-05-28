@@ -2,7 +2,7 @@ import SwiftData
 import SwiftUI
 
 struct StudyCardsView: View {
-    @Query(sort: \DailySetRecord.createdAt) private var sets: [DailySetRecord]
+    @Query(sort: \DailySetRecord.createdAt, order: .reverse) private var sets: [DailySetRecord]
     @Query private var words: [WordRecord]
     @State private var selectedSetID: UUID?
 
@@ -14,10 +14,12 @@ struct StudyCardsView: View {
         Dictionary(uniqueKeysWithValues: words.filter { $0.deletedAt == nil }.map { ($0.id, $0) })
     }
 
-    private var selectedWords: [WordRecord] {
+    private var selectedEntries: [StudyCardEntry] {
         selectedSet?.items
             .sorted { $0.orderIndex < $1.orderIndex }
-            .compactMap { wordsByID[$0.wordID] } ?? []
+            .compactMap { item in
+                wordsByID[item.wordID].map { StudyCardEntry(item: item, word: $0) }
+            } ?? []
     }
 
     var body: some View {
@@ -40,13 +42,13 @@ struct StudyCardsView: View {
             .pickerStyle(.segmented)
             .controlSize(.large)
 
-            if selectedWords.isEmpty {
+            if selectedEntries.isEmpty {
                 ContentUnavailableView("학습할 세트가 없습니다", systemImage: "rectangle.stack")
             } else {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
-                        ForEach(selectedWords) { word in
-                            FlipWordCard(word: word)
+                        ForEach(selectedEntries) { entry in
+                            FlipWordCard(word: entry.word)
                         }
                     }
                     .padding(.vertical, 4)
@@ -55,6 +57,16 @@ struct StudyCardsView: View {
         }
         .padding(28)
         .navigationTitle("학습 카드")
+    }
+}
+
+private struct StudyCardEntry: Identifiable {
+    let id: UUID
+    let word: WordRecord
+
+    init(item: DailySetItemRecord, word: WordRecord) {
+        id = item.id
+        self.word = word
     }
 }
 
