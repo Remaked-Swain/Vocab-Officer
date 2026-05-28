@@ -196,7 +196,7 @@ final class LearningCoordinator {
         )
         let review = words.filter { record in
             guard let state = record.reviewState else { return false }
-            return state.activePriority > 0
+            return record.statusRaw == "active" && state.activePriority > 0
         }.sorted(by: Self.prioritySort)
         var selected: [WordRecord] = []
         switch mode {
@@ -302,6 +302,9 @@ final class LearningCoordinator {
                 state.activePriority = max(state.activePriority - 1, 0)
                 state.enToKoStreak = 0
                 state.koToEnStreak = 0
+            } else if state.enToKoStreak >= 3 {
+                state.activePriority = max(state.activePriority - 1, 0)
+                state.enToKoStreak = 0
             }
         }
         if masterySatisfied(for: word, at: date) { word.statusRaw = "mastered" }

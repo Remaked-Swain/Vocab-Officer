@@ -78,6 +78,23 @@ final class StudyPoliciesTests: XCTestCase {
         XCTAssertFalse(state.isMastered)
     }
 
+    func testEnglishToKoreanOnlyRoutineCanReduceReviewPriority() {
+        let word = makeWord()
+        let attempts = [
+            attempt(word, .enToKo, .incorrect, "2026-05-25T00:00:00Z"),
+            attempt(word, .enToKo, .correct, "2026-05-25T00:01:00Z", matchedMeaningID: word.coreMeanings[0].id),
+            attempt(word, .enToKo, .correct, "2026-05-25T00:02:00Z", matchedMeaningID: word.coreMeanings[0].id),
+            attempt(word, .enToKo, .correct, "2026-05-25T00:03:00Z", matchedMeaningID: word.coreMeanings[0].id)
+        ]
+
+        let state = policy.state(for: word, attempts: attempts)
+
+        XCTAssertEqual(state.failureCheck, 1)
+        XCTAssertEqual(state.activePriority, 0)
+        XCTAssertEqual(state.enToKoStreak, 0)
+        XCTAssertEqual(state.koToEnStreak, 0)
+    }
+
     func testMasteryRequiresSuccessOnThreeDistinctSeoulDaysForEachDirection() {
         let word = makeWord()
         let attempts = [

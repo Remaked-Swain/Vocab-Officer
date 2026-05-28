@@ -157,6 +157,23 @@
       "retentionUntil": null,
       "protected": false,
       "unresolvedLimitations": []
+    },
+    {
+      "id": "CL-0006",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "English-to-Korean review decay",
+      "date": "2026-05-28",
+      "tags": ["review", "scheduler", "active-priority", "failure-check", "english-to-korean"],
+      "affectedPaths": ["Vocab/Domain/", "Vocab/Application/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0006-english-to-korean-review-decay.md",
+      "references": ["CL-0001", "CL-0002", "CL-0005"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": []
     }
   ]
 }

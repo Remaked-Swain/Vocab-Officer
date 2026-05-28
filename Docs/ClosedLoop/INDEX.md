@@ -14,6 +14,7 @@ only when its scope applies to the current change.
 | RUN-20260526-CL0004 | completed | 2026-05-26 | accessible paste intake and repository hygiene execution | [Run record](runs/RUN-20260526-CL0004.md) | completed after Director, Monitor and Recorder approval |
 | CL-0005 | active | 2026-05-26 | selected-set testing, study cards, judgement transparency and local installation | [Study cards, selected-set testing and local installation](records/CL-0005-study-cards-selected-set-testing-and-installation.md) | retain while feature exists |
 | RUN-20260526-CL0005 | completed | 2026-05-26 | defect repair, card study and installation evidence | [Run record](runs/RUN-20260526-CL0005.md) | completed after Director, Monitor and Recorder approval |
+| CL-0006 | active | 2026-05-28 | English-to-Korean review priority decay and review eligibility | [English-to-Korean review decay](records/CL-0006-english-to-korean-review-decay.md) | retain while scheduler exists |
 
 ## Load Rules
 
@@ -25,6 +26,8 @@ only when its scope applies to the current change.
   must load `CL-0004`.
 - Selected-set testing, test presentation safety, learning cards, judgement
   acknowledgement or local app installation work must load `CL-0005`.
+- Review priority, failure checks, review session eligibility or scheduler work
+  must load `CL-0006`.
 - Any future Closed-Loop task must apply `CL-0002`; reading its full record is
   required only when changing workflow, retention or verification rules.
 - Superseded or archived records are read only when investigating regression,
