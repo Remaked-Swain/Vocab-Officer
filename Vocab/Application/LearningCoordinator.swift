@@ -188,16 +188,18 @@ final class LearningCoordinator {
         let sets = try context.fetch(FetchDescriptor<DailySetRecord>())
         let todayIDs: Set<UUID> = Set(sets.first(where: { $0.seoulDay == day })?.items.map(\.wordID) ?? [])
         let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
+        let exposure = presentationStats(from: sessions)
         let alreadyPresentedTodayIDs: Set<UUID> = Set(sessions.filter { $0.seoulDay == day }.flatMap(\.wordIDs))
         let allPresentedIDs: Set<UUID> = Set(sessions.flatMap(\.wordIDs))
         let today = uniqueWords(
-            words.filter { todayIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }
-                + words.filter { todayIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }
+            fairOrder(words.filter { todayIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
+                + fairOrder(words.filter { todayIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
         )
         let review = words.filter { record in
             guard let state = record.reviewState else { return false }
             return record.statusRaw == "active" && state.activePriority > 0
-        }.sorted(by: Self.prioritySort)
+        }
+        let orderedReview = reviewOrder(review, exposure: exposure)
         var selected: [WordRecord] = []
         switch mode {
         case .today:
@@ -210,15 +212,15 @@ final class LearningCoordinator {
             let setWords = uniqueWords(selectedSet.items
                 .sorted { $0.orderIndex < $1.orderIndex }
                 .compactMap { wordsByID[$0.wordID] })
-            let prioritized = setWords.filter { !allPresentedIDs.contains($0.id) }
-                + setWords.filter { allPresentedIDs.contains($0.id) }
+            let prioritized = fairOrder(setWords.filter { !allPresentedIDs.contains($0.id) }, exposure: exposure)
+                + fairOrder(setWords.filter { allPresentedIDs.contains($0.id) }, exposure: exposure)
             selected = Array(prioritized.prefix(20))
         case .review:
-            selected = Array(review.prefix(20))
+            selected = Array(orderedReview.prefix(20))
         case .mixed:
-            selected = Array(review.prefix(10))
+            selected = Array(orderedReview.prefix(10))
             appendUnique(from: today, to: &selected, limit: 20)
-            appendUnique(from: review, to: &selected, limit: 20)
+            appendUnique(from: orderedReview, to: &selected, limit: 20)
         }
         guard !selected.isEmpty else { throw LearningError.noSessionCandidates }
         let session = TestSessionRecord(directionRaw: direction.rawValue, modeRaw: mode.rawValue, seoulDay: day, wordIDs: selected.map(\.id), wasReduced: selected.count < 20)
@@ -319,11 +321,57 @@ final class LearningCoordinator {
         return coreSatisfied && kToESatisfied && noRecentFailure
     }
 
-    private static func prioritySort(_ lhs: WordRecord, _ rhs: WordRecord) -> Bool {
-        let l = lhs.reviewState
-        let r = rhs.reviewState
-        if (l?.activePriority ?? 0) != (r?.activePriority ?? 0) { return (l?.activePriority ?? 0) > (r?.activePriority ?? 0) }
-        return (l?.latestWrongAt ?? .distantPast) > (r?.latestWrongAt ?? .distantPast)
+    private struct PresentationStats {
+        var count = 0
+        var lastPresentedAt: Date?
+    }
+
+    private func presentationStats(from sessions: [TestSessionRecord]) -> [UUID: PresentationStats] {
+        var stats: [UUID: PresentationStats] = [:]
+        for session in sessions.sorted(by: { $0.startedAt < $1.startedAt }) {
+            for id in session.wordIDs {
+                stats[id, default: PresentationStats()].count += 1
+                stats[id, default: PresentationStats()].lastPresentedAt = session.startedAt
+            }
+        }
+        return stats
+    }
+
+    private func fairOrder(_ candidates: [WordRecord], exposure: [UUID: PresentationStats]) -> [WordRecord] {
+        let randomRank = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, Int.random(in: Int.min...Int.max)) })
+        return candidates.sorted { lhs, rhs in
+            let l = exposure[lhs.id] ?? PresentationStats()
+            let r = exposure[rhs.id] ?? PresentationStats()
+            if l.count != r.count { return l.count < r.count }
+            if l.lastPresentedAt != r.lastPresentedAt {
+                return (l.lastPresentedAt ?? .distantPast) < (r.lastPresentedAt ?? .distantPast)
+            }
+            return (randomRank[lhs.id] ?? 0) < (randomRank[rhs.id] ?? 0)
+        }
+    }
+
+    private func reviewOrder(_ candidates: [WordRecord], exposure: [UUID: PresentationStats]) -> [WordRecord] {
+        let randomRank = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, Int.random(in: Int.min...Int.max)) })
+        return candidates.sorted { lhs, rhs in
+            let l = lhs.reviewState
+            let r = rhs.reviewState
+            if (l?.activePriority ?? 0) != (r?.activePriority ?? 0) {
+                return (l?.activePriority ?? 0) > (r?.activePriority ?? 0)
+            }
+            if (l?.failureCheck ?? 0) != (r?.failureCheck ?? 0) {
+                return (l?.failureCheck ?? 0) > (r?.failureCheck ?? 0)
+            }
+            let le = exposure[lhs.id] ?? PresentationStats()
+            let re = exposure[rhs.id] ?? PresentationStats()
+            if le.count != re.count { return le.count < re.count }
+            if le.lastPresentedAt != re.lastPresentedAt {
+                return (le.lastPresentedAt ?? .distantPast) < (re.lastPresentedAt ?? .distantPast)
+            }
+            if (l?.latestWrongAt ?? .distantPast) != (r?.latestWrongAt ?? .distantPast) {
+                return (l?.latestWrongAt ?? .distantPast) > (r?.latestWrongAt ?? .distantPast)
+            }
+            return (randomRank[lhs.id] ?? 0) < (randomRank[rhs.id] ?? 0)
+        }
     }
 
     private func appendUnique(from candidates: [WordRecord], to selected: inout [WordRecord], limit: Int) {

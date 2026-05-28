@@ -95,6 +95,27 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertTrue(Set(first.wordIDs).isDisjoint(with: Set(second.wordIDs)))
     }
 
+    func testReviewSessionPrefersLessPresentedWordsWithinSamePriority() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let words = try context.fetch(FetchDescriptor<WordRecord>())
+        for word in words {
+            let state = word.reviewState ?? ReviewStateRecord()
+            state.failureCheck = 1
+            state.activePriority = 1
+            word.reviewState = state
+        }
+        let previouslyPresentedIDs = Array(words.prefix(20).map(\.id))
+        context.insert(TestSessionRecord(directionRaw: PracticeDirection.enToKo.rawValue, modeRaw: SessionMode.review.rawValue, seoulDay: "2026-05-24", wordIDs: previouslyPresentedIDs, wasReduced: false, startedAt: testDate.addingTimeInterval(-86_400)))
+        try context.save()
+
+        let generated = try coordinator.generateSession(mode: .review, direction: .enToKo, date: testDate)
+
+        XCTAssertEqual(generated.1.count, 20)
+        XCTAssertTrue(Set(generated.1.map(\.word.id)).isDisjoint(with: Set(previouslyPresentedIDs)))
+    }
+
     func testOlderUntestedSetCanBeSelectedAfterNewerSetExists() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)
@@ -128,9 +149,8 @@ final class LearningCoordinatorTests: XCTestCase {
         var values = drafts(count: 100, prefix: "entry")
         values[0] = WordDraft(term: "example", meanings: "첫 의미, 둘째 의미, 셋째 의미")
         try coordinator.saveDailySet(values, date: testDate)
-        let set = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first)
-        let generated = try coordinator.generateSession(mode: .set, direction: .enToKo, setID: set.id, date: testDate)
-        let question = try XCTUnwrap(generated.1.first { $0.word.term == "example" })
+        let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "example" })
+        let question = SessionQuestion(word: word, direction: .enToKo, index: 0)
 
         let result = coordinator.judge(answer: "둘째 의미", for: question)
 
