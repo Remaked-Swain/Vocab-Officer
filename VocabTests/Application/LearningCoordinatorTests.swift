@@ -269,6 +269,43 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<AnonymousAggregateRecord>()).reduce(0) { $0 + $1.deletedMasteredCount }, 1)
     }
 
+    func testDirectWordDeletionRemovesLinksAndAttempts() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
+        let question = try XCTUnwrap(generated.1.first)
+
+        try coordinator.commit(answer: "오답", result: .incorrect, automatic: .incorrect, matchedMeaningID: nil, question: question, session: generated.0, date: testDate)
+        try coordinator.deleteWords([question.word])
+
+        XCTAssertFalse(try context.fetch(FetchDescriptor<WordRecord>()).contains { $0.id == question.word.id })
+        XCTAssertFalse(try context.fetch(FetchDescriptor<DailySetRecord>()).flatMap(\.items).contains { $0.wordID == question.word.id })
+        XCTAssertFalse(try context.fetch(FetchDescriptor<TestSessionRecord>()).flatMap(\.wordIDs).contains(question.word.id))
+        XCTAssertTrue(try context.fetch(FetchDescriptor<AttemptRecord>()).isEmpty)
+    }
+
+    func testDiscardDailySetDeletesOnlyWordsUniqueToThatSet() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let nextDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
+        var firstDay = drafts(count: 100, prefix: "day1")
+        firstDay[0] = WordDraft(term: "shared", meanings: "공유뜻")
+        var secondDay = drafts(count: 100, prefix: "day2")
+        secondDay[0] = WordDraft(term: "shared", meanings: "공유뜻, 추가뜻")
+        try coordinator.saveDailySet(firstDay, date: testDate)
+        try coordinator.saveDailySet(secondDay, date: nextDate)
+        let discardedSet = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-26" })
+        let shared = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "shared" })
+
+        try coordinator.discardDailySet(discardedSet)
+
+        XCTAssertNil(try context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-26" })
+        XCTAssertNotNil(try context.fetch(FetchDescriptor<WordRecord>()).first { $0.id == shared.id })
+        XCTAssertFalse(try context.fetch(FetchDescriptor<WordRecord>()).contains { $0.term.hasPrefix("day2-") })
+        XCTAssertEqual(try context.fetch(FetchDescriptor<DailySetRecord>()).first?.items.count, 100)
+    }
+
     private var testDate: Date {
         ISO8601DateFormatter().date(from: "2026-05-25T01:00:00Z")!
     }

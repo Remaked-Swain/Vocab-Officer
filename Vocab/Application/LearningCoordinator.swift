@@ -286,6 +286,34 @@ final class LearningCoordinator {
         try context.save()
     }
 
+    func deleteWords(_ words: [WordRecord]) throws {
+        var deletedIDs = Set<UUID>()
+        for word in words where deletedIDs.insert(word.id).inserted {
+            try deleteWordRecord(word)
+        }
+        try context.save()
+    }
+
+    func discardDailySet(_ set: DailySetRecord) throws {
+        let allItems = try context.fetch(FetchDescriptor<DailySetItemRecord>())
+        let wordsByID = Dictionary(uniqueKeysWithValues: try context.fetch(FetchDescriptor<WordRecord>()).map { ($0.id, $0) })
+        var deletedWordIDs = Set<UUID>()
+
+        for item in set.items {
+            let isLinkedOutsideSet = allItems.contains { other in
+                other.wordID == item.wordID && other.set?.id != set.id
+            }
+            if !isLinkedOutsideSet, let word = wordsByID[item.wordID], deletedWordIDs.insert(word.id).inserted {
+                try deleteWordRecord(word)
+            } else {
+                context.delete(item)
+            }
+        }
+
+        context.delete(set)
+        try context.save()
+    }
+
     private func apply(result: FinalResult, matchedMeaningID: UUID?, direction: PracticeDirection, to word: WordRecord, date: Date) {
         let state = word.reviewState ?? ReviewStateRecord()
         word.reviewState = state
@@ -386,6 +414,19 @@ final class LearningCoordinator {
         for word in candidates where selected.count < limit && !selected.contains(where: { $0.id == word.id }) {
             selected.append(word)
         }
+    }
+
+    private func deleteWordRecord(_ word: WordRecord) throws {
+        for set in try context.fetch(FetchDescriptor<DailySetRecord>()) {
+            for item in set.items where item.wordID == word.id {
+                context.delete(item)
+            }
+            set.items.removeAll { $0.wordID == word.id }
+        }
+        for session in try context.fetch(FetchDescriptor<TestSessionRecord>()) {
+            session.wordIDs.removeAll { $0 == word.id }
+        }
+        context.delete(word)
     }
 
     private func uniqueWords(_ words: [WordRecord]) -> [WordRecord] {

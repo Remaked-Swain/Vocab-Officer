@@ -2,9 +2,13 @@ import SwiftData
 import SwiftUI
 
 struct StudyCardsView: View {
+    @Environment(\.modelContext) private var context
     @Query(sort: \DailySetRecord.createdAt, order: .reverse) private var sets: [DailySetRecord]
     @Query private var words: [WordRecord]
     @State private var selectedSetID: UUID?
+    @State private var showingDiscardConfirmation = false
+    @State private var message: String?
+    @State private var isError = false
 
     private var selectedSet: DailySetRecord? {
         sets.first { $0.id == selectedSetID } ?? sets.first
@@ -42,6 +46,12 @@ struct StudyCardsView: View {
             .pickerStyle(.segmented)
             .controlSize(.large)
 
+            if let message {
+                Label(message, systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(isError ? .red : .green)
+            }
+
             if selectedEntries.isEmpty {
                 ContentUnavailableView("학습할 세트가 없습니다", systemImage: "rectangle.stack")
             } else {
@@ -57,6 +67,39 @@ struct StudyCardsView: View {
         }
         .padding(28)
         .navigationTitle("학습 카드")
+        .toolbar {
+            ToolbarItem {
+                Button("선택 세트 폐기", role: .destructive) {
+                    showingDiscardConfirmation = true
+                }
+                .disabled(selectedSet == nil)
+            }
+        }
+        .confirmationDialog(
+            "선택한 단어 세트를 폐기할까요?",
+            isPresented: $showingDiscardConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("세트 폐기", role: .destructive) {
+                discardSelectedSet()
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("이 세트에만 포함된 단어는 단어장과 기록에서 삭제됩니다. 다른 세트에도 포함된 단어는 해당 세트 연결만 제거됩니다.")
+        }
+    }
+
+    private func discardSelectedSet() {
+        guard let selectedSet else { return }
+        do {
+            try LearningCoordinator(context: context).discardDailySet(selectedSet)
+            selectedSetID = sets.first { $0.id != selectedSet.id }?.id
+            message = "\(selectedSet.seoulDay) 세트를 폐기했습니다."
+            isError = false
+        } catch {
+            message = error.localizedDescription
+            isError = true
+        }
     }
 }
 
@@ -139,29 +182,80 @@ struct ReviewView: View {
 }
 
 struct LibraryView: View {
+    @Environment(\.modelContext) private var context
     @Query(sort: \WordRecord.normalizedTerm) private var words: [WordRecord]
     @State private var searchText = ""
+    @State private var selection = Set<UUID>()
+    @State private var showingDeleteConfirmation = false
+    @State private var message: String?
+    @State private var isError = false
 
     private var filtered: [WordRecord] {
         if searchText.isEmpty { return words.filter { $0.deletedAt == nil } }
         return words.filter { $0.deletedAt == nil && $0.normalizedTerm.contains(TextNormalizer.normalizeEnglish(searchText)) }
     }
 
+    private var selectedWords: [WordRecord] {
+        words.filter { selection.contains($0.id) && $0.deletedAt == nil }
+    }
+
     var body: some View {
-        List(filtered) { word in
-            VStack(alignment: .leading, spacing: 4) {
-                Text(word.term).font(.title3.weight(.semibold))
-                Text(word.meanings.map(\.text).joined(separator: ", "))
-                    .font(.body)
-                    .foregroundStyle(.secondary)
-                Text(word.statusRaw.capitalized)
-                    .font(.caption)
-                    .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
+        VStack(alignment: .leading, spacing: 10) {
+            if let message {
+                Label(message, systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle")
+                    .font(.body.weight(.medium))
+                    .foregroundStyle(isError ? .red : .green)
+                    .padding(.horizontal)
             }
-            .padding(.vertical, 5)
+
+            List(filtered, selection: $selection) { word in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(word.term).font(.title3.weight(.semibold))
+                    Text(word.meanings.map(\.text).joined(separator: ", "))
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    Text(word.statusRaw.capitalized)
+                        .font(.caption)
+                        .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
+                }
+                .padding(.vertical, 5)
+            }
         }
         .searchable(text: $searchText, prompt: "영단어 검색")
         .navigationTitle("단어장")
+        .toolbar {
+            ToolbarItem {
+                Button("선택 단어 삭제", role: .destructive) {
+                    showingDeleteConfirmation = true
+                }
+                .disabled(selectedWords.isEmpty)
+            }
+        }
+        .confirmationDialog(
+            "선택한 단어를 삭제할까요?",
+            isPresented: $showingDeleteConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("\(selectedWords.count)개 단어 삭제", role: .destructive) {
+                deleteSelection()
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("선택한 단어와 뜻, 시도 기록, 세트 및 테스트 세션 연결이 삭제됩니다. 이 작업은 앱 안에서 되돌릴 수 없습니다.")
+        }
+    }
+
+    private func deleteSelection() {
+        let targets = selectedWords
+        do {
+            try LearningCoordinator(context: context).deleteWords(targets)
+            selection.removeAll()
+            message = "\(targets.count)개 단어를 삭제했습니다."
+            isError = false
+        } catch {
+            message = error.localizedDescription
+            isError = true
+        }
     }
 }
 

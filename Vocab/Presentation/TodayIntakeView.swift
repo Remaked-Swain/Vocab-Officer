@@ -1,9 +1,13 @@
+import AppKit
 import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
+import Vision
 
 struct TodayIntakeView: View {
     private enum IntakeMode: String, CaseIterable, Identifiable {
         case paste = "붙여넣기"
+        case image = "이미지 OCR"
         case manual = "직접 입력"
 
         var id: String { rawValue }
@@ -15,6 +19,8 @@ struct TodayIntakeView: View {
     @State private var drafts = (0..<100).map { _ in WordDraft() }
     @State private var message: String?
     @State private var isError = false
+    @State private var isImportingImage = false
+    @State private var isRecognizingText = false
 
     private var filledCount: Int {
         drafts.filter { !$0.term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
@@ -67,6 +73,8 @@ struct TodayIntakeView: View {
             switch mode {
             case .paste:
                 pasteEntry
+            case .image:
+                imageEntry
             case .manual:
                 manualEntry
             }
@@ -81,6 +89,65 @@ struct TodayIntakeView: View {
                 }
                 .controlSize(.large)
             }
+        }
+    }
+
+    private var imageEntry: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            GroupBox("단어장 캡쳐본에서 텍스트 추출") {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("이미지를 선택하면 macOS Vision OCR로 로컬에서 텍스트를 추출합니다. 저장 전 반드시 100개 인식 결과를 직접 검수하세요.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button(isRecognizingText ? "텍스트 추출 중..." : "이미지 선택") {
+                            isImportingImage = true
+                        }
+                        .controlSize(.large)
+                        .disabled(isRecognizingText)
+                        if isRecognizingText {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+                    TextEditor(text: $pastedText)
+                        .font(.system(.title3, design: .monospaced))
+                        .scrollContentBackground(.hidden)
+                        .padding(10)
+                        .frame(minHeight: 320)
+                        .background(.background, in: RoundedRectangle(cornerRadius: 10))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 10)
+                                .stroke(.quaternary, lineWidth: 1)
+                        }
+                        .accessibilityLabel("OCR 추출 결과 검수 입력창")
+                    Label(pasteStatus.0, systemImage: pasteStatus.1 ? "checkmark.circle.fill" : "info.circle")
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(pasteStatus.1 ? .green : .secondary)
+                }
+                .padding(10)
+            }
+
+            HStack {
+                Text("\(pastedDrafts.count) / 100")
+                    .font(.title2.monospacedDigit().weight(.semibold))
+                    .accessibilityLabel("인식된 신규 단어 \(pastedDrafts.count)개")
+                Spacer()
+                Button("검수한 100개 저장") {
+                    save(pastedDrafts)
+                }
+                .keyboardShortcut(.return, modifiers: .command)
+                .controlSize(.large)
+                .buttonStyle(.borderedProminent)
+                .disabled(!pasteStatus.1)
+            }
+        }
+        .fileImporter(
+            isPresented: $isImportingImage,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: false
+        ) { result in
+            handleImageImport(result)
         }
     }
 
@@ -180,6 +247,67 @@ struct TodayIntakeView: View {
         } catch {
             message = error.localizedDescription
             isError = true
+        }
+    }
+
+    private func handleImageImport(_ result: Result<[URL], Error>) {
+        do {
+            guard let url = try result.get().first else { return }
+            isRecognizingText = true
+            Task {
+                do {
+                    let text = try await recognizeText(from: url)
+                    await MainActor.run {
+                        pastedText = text
+                        message = "OCR 텍스트를 추출했습니다. 저장 전 원본 캡쳐본과 대조하세요."
+                        isError = false
+                        isRecognizingText = false
+                    }
+                } catch {
+                    await MainActor.run {
+                        message = error.localizedDescription
+                        isError = true
+                        isRecognizingText = false
+                    }
+                }
+            }
+        } catch {
+            message = error.localizedDescription
+            isError = true
+        }
+    }
+
+    private func recognizeText(from url: URL) async throws -> String {
+        try await Task.detached(priority: .userInitiated) {
+            guard let image = NSImage(contentsOf: url),
+                  let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+                throw OCRError.unreadableImage
+            }
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate
+            request.recognitionLanguages = ["en-US", "ko-KR"]
+            request.usesLanguageCorrection = true
+            let handler = VNImageRequestHandler(cgImage: cgImage)
+            try handler.perform([request])
+            let lines = (request.results ?? [])
+                .compactMap { $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            guard !lines.isEmpty else { throw OCRError.noText }
+            return lines.joined(separator: "\n")
+        }.value
+    }
+}
+
+private enum OCRError: LocalizedError {
+    case unreadableImage
+    case noText
+
+    var errorDescription: String? {
+        switch self {
+        case .unreadableImage:
+            "이미지를 읽을 수 없습니다."
+        case .noText:
+            "이미지에서 텍스트를 찾지 못했습니다."
         }
     }
 }
