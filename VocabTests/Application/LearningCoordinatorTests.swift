@@ -55,6 +55,33 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertTrue(set.isComplete)
     }
 
+    func testRepeatedHeadwordsReuseSingleWordAndMergeNewMeanings() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let nextDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
+        var firstDay = drafts(count: 100, prefix: "day1")
+        firstDay[0] = WordDraft(term: "shared", meanings: "기존뜻")
+        var secondDay = drafts(count: 100, prefix: "day2")
+        secondDay[10] = WordDraft(term: "shared", meanings: "기존뜻, 새뜻")
+        secondDay[11] = WordDraft(term: "SHARED", meanings: "또다른뜻")
+
+        try coordinator.saveDailySet(firstDay, date: testDate)
+        try coordinator.saveDailySet(secondDay, date: nextDate)
+
+        let words = try context.fetch(FetchDescriptor<WordRecord>())
+        let shared = try XCTUnwrap(words.first { $0.normalizedTerm == "shared" })
+        XCTAssertEqual(words.count, 198)
+        XCTAssertEqual(Set(shared.meanings.map(\.text)), ["기존뜻", "새뜻", "또다른뜻"])
+
+        let secondSet = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-26" })
+        XCTAssertEqual(secondSet.items.count, 100)
+        XCTAssertEqual(secondSet.items.filter { $0.wordID == shared.id }.count, 2)
+
+        let generated = try coordinator.generateSession(mode: .set, direction: .enToKo, setID: secondSet.id, date: nextDate)
+        XCTAssertEqual(generated.1.count, 20)
+        XCTAssertEqual(Set(generated.1.map(\.word.id)).count, generated.1.count)
+    }
+
     func testTodaySessionPrioritizesWordsNotPreviouslyPresentedThatDay() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)

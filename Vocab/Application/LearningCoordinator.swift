@@ -124,17 +124,18 @@ final class LearningCoordinator {
         guard validDrafts.count == 100 else {
             throw LearningError.dailySetRequiresExactly100
         }
-        let normalized = validDrafts.map { TextNormalizer.normalizeEnglish($0.term) }
-        guard Set(normalized).count == 100 else { throw LearningError.duplicateNewWord }
         let day = SeoulCalendar.day(for: date)
         let existingSet = try context.fetch(FetchDescriptor<DailySetRecord>(predicate: #Predicate { $0.seoulDay == day })).first
         guard existingSet == nil else { throw LearningError.dailySetAlreadyExists }
         let allWords = try context.fetch(FetchDescriptor<WordRecord>())
-        let activeTerms = Set(allWords.filter { $0.deletedAt == nil }.map(\.normalizedTerm))
-        guard normalized.allSatisfy({ !activeTerms.contains($0) }) else { throw LearningError.existingTermDoesNotCountAsNew }
+        var wordsByNormalizedTerm: [String: WordRecord] = [:]
+        for word in allWords where word.deletedAt == nil {
+            wordsByNormalizedTerm[word.normalizedTerm] = word
+        }
         let prepared = validDrafts.map { draft in
             (
                 draft: draft,
+                normalizedTerm: TextNormalizer.normalizeEnglish(draft.term),
                 meanings: draft.meanings.components(separatedBy: CharacterSet(charactersIn: ",/\n"))
                     .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                     .filter { !$0.isEmpty }
@@ -144,17 +145,35 @@ final class LearningCoordinator {
 
         let set = DailySetRecord(seoulDay: day, createdAt: date)
         for (index, preparedDraft) in prepared.enumerated() {
-            let word = WordRecord(term: preparedDraft.draft.term, createdAt: date)
-            word.reviewState = ReviewStateRecord()
+            let word: WordRecord
+            let isNewHeadword: Bool
+            if let existingWord = wordsByNormalizedTerm[preparedDraft.normalizedTerm] {
+                word = existingWord
+                isNewHeadword = false
+                if word.reviewState == nil {
+                    word.reviewState = ReviewStateRecord()
+                }
+            } else {
+                let newWord = WordRecord(term: preparedDraft.draft.term, createdAt: date)
+                newWord.reviewState = ReviewStateRecord()
+                context.insert(newWord)
+                wordsByNormalizedTerm[preparedDraft.normalizedTerm] = newWord
+                word = newWord
+                isNewHeadword = true
+            }
+
+            var existingMeanings = Set(word.meanings.map(\.normalizedText))
             for value in preparedDraft.meanings {
+                let normalizedMeaning = TextNormalizer.normalizeKorean(value)
+                guard !existingMeanings.contains(normalizedMeaning) else { continue }
                 let meaning = MeaningRecord(text: value)
                 meaning.word = word
                 word.meanings.append(meaning)
+                existingMeanings.insert(normalizedMeaning)
             }
-            let item = DailySetItemRecord(orderIndex: index, entryKind: "newHeadword", wordID: word.id)
+            let item = DailySetItemRecord(orderIndex: index, entryKind: isNewHeadword ? "newHeadword" : "reusedHeadword", wordID: word.id)
             item.set = set
             set.items.append(item)
-            context.insert(word)
             context.insert(item)
         }
         set.completedAt = date
@@ -171,8 +190,10 @@ final class LearningCoordinator {
         let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
         let alreadyPresentedTodayIDs: Set<UUID> = Set(sessions.filter { $0.seoulDay == day }.flatMap(\.wordIDs))
         let allPresentedIDs: Set<UUID> = Set(sessions.flatMap(\.wordIDs))
-        let today = words.filter { todayIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }
-            + words.filter { todayIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }
+        let today = uniqueWords(
+            words.filter { todayIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }
+                + words.filter { todayIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }
+        )
         let review = words.filter { record in
             guard let state = record.reviewState else { return false }
             return state.activePriority > 0
@@ -186,9 +207,9 @@ final class LearningCoordinator {
                 throw LearningError.setRequired
             }
             let wordsByID = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
-            let setWords = selectedSet.items
+            let setWords = uniqueWords(selectedSet.items
                 .sorted { $0.orderIndex < $1.orderIndex }
-                .compactMap { wordsByID[$0.wordID] }
+                .compactMap { wordsByID[$0.wordID] })
             let prioritized = setWords.filter { !allPresentedIDs.contains($0.id) }
                 + setWords.filter { allPresentedIDs.contains($0.id) }
             selected = Array(prioritized.prefix(20))
@@ -308,6 +329,13 @@ final class LearningCoordinator {
         }
     }
 
+    private func uniqueWords(_ words: [WordRecord]) -> [WordRecord] {
+        var seen = Set<UUID>()
+        return words.filter { word in
+            seen.insert(word.id).inserted
+        }
+    }
+
     private func typoCandidate(_ answer: String, for question: SessionQuestion) -> Bool {
         let target = question.direction == .enToKo ? question.word.meanings.first?.text ?? "" : question.word.term
         return abs(answer.count - target.count) <= 1 && answer != target
@@ -317,8 +345,6 @@ final class LearningCoordinator {
 enum LearningError: LocalizedError {
     case dailySetRequiresExactly100
     case dailySetAlreadyExists
-    case duplicateNewWord
-    case existingTermDoesNotCountAsNew
     case meaningRequired
     case onlyMasteredCanBeDeleted
     case setRequired
@@ -328,8 +354,6 @@ enum LearningError: LocalizedError {
         switch self {
         case .dailySetRequiresExactly100: "오늘의 완료 세트는 신규 단어 100개가 필요합니다."
         case .dailySetAlreadyExists: "오늘의 완료 세트가 이미 저장되어 있습니다."
-        case .duplicateNewWord: "오늘 입력에 중복 표제어가 있습니다."
-        case .existingTermDoesNotCountAsNew: "기존 단어의 수정은 오늘 신규 100개에 포함되지 않습니다."
         case .meaningRequired: "각 표제어에 뜻을 하나 이상 입력해야 합니다."
         case .onlyMasteredCanBeDeleted: "Mastered 단어만 삭제할 수 있습니다."
         case .setRequired: "테스트할 입력 세트를 선택하세요."

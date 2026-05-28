@@ -42,7 +42,7 @@ struct TodayIntakeView: View {
                 VStack(alignment: .leading) {
                     Text("오늘 입력")
                         .font(.largeTitle.weight(.semibold))
-                    Text("신규 표제어 100개와 여러 한국어 뜻을 등록하세요.")
+                    Text("오늘 학습할 100개 항목을 등록하세요. 기존 표제어는 같은 단어에 새 뜻만 누적됩니다.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
