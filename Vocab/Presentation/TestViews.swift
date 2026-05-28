@@ -187,6 +187,9 @@ struct TestRunnerView: View {
         .onAppear {
             focus = .answer
         }
+        .onKeyPress(.tab) {
+            cycleFinalJudgement() ? .handled : .ignored
+        }
     }
 
     @ViewBuilder
@@ -234,7 +237,7 @@ struct TestRunnerView: View {
                     Toggle("이 답안을 이후 허용 답안으로 추가", isOn: $addAlias)
                         .focused($focus, equals: .addAlias)
                 }
-                Text("Return으로 제출·확정하고, Tab으로 판정과 보정 항목을 이동할 수 있습니다.")
+                Text("Return으로 제출·확정하고, Tab으로 최종 판정을 전환할 수 있습니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button(index + 1 == run.questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
@@ -254,6 +257,17 @@ struct TestRunnerView: View {
         chosenResult = result.automaticResult
         correctedMeaningID = question.direction == .enToKo ? question.word.meanings.first(where: \.isTrackableCoreMeaning)?.id : nil
         focus = result.automaticResult == .incorrect ? .finalJudgement : .advance
+    }
+
+    private func cycleFinalJudgement() -> Bool {
+        guard let judgeResult else { return false }
+        let order: [FinalResult] = [.correct, .incorrect, .unknown]
+        let current = chosenResult ?? judgeResult.automaticResult
+        guard let index = order.firstIndex(of: current) else { return false }
+        chosenResult = order[(index + 1) % order.count]
+        focus = .finalJudgement
+        notice = nil
+        return true
     }
 
     private func commitAndAdvance() {
