@@ -29,7 +29,7 @@ final class OCRVocabularyFormatterTests: XCTestCase {
     func testSortsMultipleImagesByVocabularyNumber() throws {
         let output = try OCRVocabularyFormatter.formatPages([
             [
-                token("0521", x: 0.119, y: 0.714),
+                token("10001", x: 0.119, y: 0.714),
                 token("master", x: 0.206, y: 0.733),
                 token("주인, 명인, 정복하다", x: 0.206, y: 0.714)
             ],
@@ -44,7 +44,7 @@ final class OCRVocabularyFormatterTests: XCTestCase {
             output,
             """
             0501-pill-알약
-            0521-master-주인, 명인, 정복하다
+            10001-master-주인, 명인, 정복하다
             """
         )
     }

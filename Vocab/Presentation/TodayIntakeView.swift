@@ -37,7 +37,12 @@ struct TodayIntakeView: View {
         }
         do {
             let count = try DailyIntakePasteParser.parse(pastedText).count
-            return (count == 100 ? "100개가 확인되었습니다. 바로 저장할 수 있습니다." : "\(count)개가 인식되었습니다. 정확히 100개가 필요합니다.", count == 100)
+            if count == 100 {
+                return ("100개가 확인되었습니다. 바로 저장할 수 있습니다.", true)
+            }
+            let missingNumbers = missingNumberHint(from: pastedText)
+            let suffix = missingNumbers.isEmpty ? "" : " 누락 의심 번호: \(missingNumbers.joined(separator: ", "))"
+            return ("\(count)개가 인식되었습니다. 정확히 100개가 필요합니다.\(suffix)", false)
         } catch {
             return (error.localizedDescription, false)
         }
@@ -249,6 +254,24 @@ struct TodayIntakeView: View {
             message = error.localizedDescription
             isError = true
         }
+    }
+
+    private func missingNumberHint(from text: String) -> [String] {
+        let numbers = text.components(separatedBy: .newlines).compactMap { line -> Int? in
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let match = trimmed.range(of: #"^\d{4,}(?=\s*-)"#, options: .regularExpression) else {
+                return nil
+            }
+            return Int(trimmed[match])
+        }
+        guard numbers.count >= 2 else { return [] }
+        let sorted = Array(Set(numbers)).sorted()
+        var missing: [Int] = []
+        for pair in zip(sorted, sorted.dropFirst()) where pair.1 - pair.0 > 1 {
+            missing.append(contentsOf: (pair.0 + 1)..<pair.1)
+            if missing.count >= 8 { break }
+        }
+        return missing.prefix(8).map { String(format: "%0\(max(4, String(sorted[0]).count))d", $0) }
     }
 
     private func handleImageImport(_ result: Result<[URL], Error>) {

@@ -10,16 +10,22 @@ final class LearningCoordinatorTests: XCTestCase {
             """
             ```markdown
             0001-well-known-널리 알려진
+            0526-teenager-10대
+            10001-long-term-장기간의
             sample\t표본, 예시
             ```
             """
         )
 
-        XCTAssertEqual(drafts.count, 2)
+        XCTAssertEqual(drafts.count, 4)
         XCTAssertEqual(drafts[0].term, "well-known")
         XCTAssertEqual(drafts[0].meanings, "널리 알려진")
-        XCTAssertEqual(drafts[1].term, "sample")
-        XCTAssertEqual(drafts[1].meanings, "표본, 예시")
+        XCTAssertEqual(drafts[1].term, "teenager")
+        XCTAssertEqual(drafts[1].meanings, "10대")
+        XCTAssertEqual(drafts[2].term, "long-term")
+        XCTAssertEqual(drafts[2].meanings, "장기간의")
+        XCTAssertEqual(drafts[3].term, "sample")
+        XCTAssertEqual(drafts[3].meanings, "표본, 예시")
     }
 
     func testPastedOneHundredWordsUseAtomicDailySetSave() throws {

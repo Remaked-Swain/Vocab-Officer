@@ -79,7 +79,7 @@ enum OCRVocabularyFormatter {
     }
 
     private static func isNumber(_ value: String) -> Bool {
-        value.range(of: #"^\d{4}$"#, options: .regularExpression) != nil
+        value.range(of: #"^\d{4,}$"#, options: .regularExpression) != nil
     }
 
     private static func isEnglishTerm(_ value: String) -> Bool {
