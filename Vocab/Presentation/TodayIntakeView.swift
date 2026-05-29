@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
@@ -96,7 +97,7 @@ struct TodayIntakeView: View {
         VStack(alignment: .leading, spacing: 14) {
             GroupBox("단어장 캡쳐본에서 텍스트 추출") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("이미지를 선택하면 macOS Vision OCR로 로컬에서 텍스트를 추출합니다. 저장 전 반드시 100개 인식 결과를 직접 검수하세요.")
+                    Text("이미지를 여러 장 선택하면 macOS Vision OCR로 로컬에서 추출한 뒤 앱 입력 형식으로 정리합니다. 저장 전 반드시 100개 인식 결과를 직접 검수하세요.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                     HStack {
@@ -145,7 +146,7 @@ struct TodayIntakeView: View {
         .fileImporter(
             isPresented: $isImportingImage,
             allowedContentTypes: [.image],
-            allowsMultipleSelection: false
+            allowsMultipleSelection: true
         ) { result in
             handleImageImport(result)
         }
@@ -252,14 +253,15 @@ struct TodayIntakeView: View {
 
     private func handleImageImport(_ result: Result<[URL], Error>) {
         do {
-            guard let url = try result.get().first else { return }
+            let urls = try result.get()
+            guard !urls.isEmpty else { return }
             isRecognizingText = true
             Task {
                 do {
-                    let text = try await recognizeText(from: url)
+                    let text = try await recognizeText(from: urls)
                     await MainActor.run {
                         pastedText = text
-                        message = "OCR 텍스트를 추출했습니다. 저장 전 원본 캡쳐본과 대조하세요."
+                        message = "\(urls.count)장 이미지에서 OCR 텍스트를 추출했습니다. 저장 전 원본 캡쳐본과 대조하세요."
                         isError = false
                         isRecognizingText = false
                     }
@@ -277,25 +279,50 @@ struct TodayIntakeView: View {
         }
     }
 
-    private func recognizeText(from url: URL) async throws -> String {
+    private func recognizeText(from urls: [URL]) async throws -> String {
         try await Task.detached(priority: .userInitiated) {
-            guard let image = NSImage(contentsOf: url),
-                  let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
-                throw OCRError.unreadableImage
+            var pages: [[OCRTextToken]] = []
+            for url in urls {
+                try autoreleasepool {
+                    let imageTokens = try recognizeTokens(from: url)
+                    pages.append(imageTokens)
+                }
             }
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate
-            request.recognitionLanguages = ["en-US", "ko-KR"]
-            request.usesLanguageCorrection = true
-            let handler = VNImageRequestHandler(cgImage: cgImage)
-            try handler.perform([request])
-            let lines = (request.results ?? [])
-                .compactMap { $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) }
-                .filter { !$0.isEmpty }
-            guard !lines.isEmpty else { throw OCRError.noText }
-            return lines.joined(separator: "\n")
+            guard !pages.allSatisfy(\.isEmpty) else { throw OCRError.noText }
+            return try OCRVocabularyFormatter.formatPages(pages)
         }.value
     }
+}
+
+private func recognizeTokens(from url: URL) throws -> [OCRTextToken] {
+    guard let cgImage = downsampledCGImage(from: url) else {
+        throw OCRError.unreadableImage
+    }
+    let request = VNRecognizeTextRequest()
+    request.recognitionLevel = .accurate
+    request.recognitionLanguages = ["ko-KR", "en-US"]
+    request.usesLanguageCorrection = false
+    let handler = VNImageRequestHandler(cgImage: cgImage)
+    try handler.perform([request])
+    return (request.results ?? [])
+        .compactMap { observation in
+            guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty else {
+                return nil
+            }
+            return OCRTextToken(text: text, boundingBox: observation.boundingBox)
+        }
+}
+
+private func downsampledCGImage(from url: URL) -> CGImage? {
+    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+    let options: [CFString: Any] = [
+        kCGImageSourceCreateThumbnailFromImageAlways: true,
+        kCGImageSourceShouldCacheImmediately: false,
+        kCGImageSourceCreateThumbnailWithTransform: true,
+        kCGImageSourceThumbnailMaxPixelSize: 2_400
+    ]
+    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
 }
 
 private enum OCRError: LocalizedError {
