@@ -14,7 +14,7 @@ struct TestSetupView: View {
         VStack(alignment: .leading, spacing: 24) {
             Text("테스트")
                 .font(.largeTitle.weight(.semibold))
-            Text("한 회차는 최대 20개의 고유 단어로 구성되며 필요한 만큼 반복할 수 있습니다.")
+            Text("한 회차는 최대 20개의 고유 단어로 구성됩니다. 오늘 입력 세트가 없으면 가장 최근 세트를 오늘 기준 풀처럼 사용합니다.")
                 .font(.body)
                 .foregroundStyle(.secondary)
 
@@ -48,8 +48,12 @@ struct TestSetupView: View {
                 Text("아직 시험하지 않은 과거 세트도 선택하여 20문항씩 학습할 수 있습니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+            } else if mode == .review {
+                Text("복습 대상이 20개보다 적으면 가장 최근 세트에서 문항을 보충합니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             } else if mode == .mixed {
-                Text("혼합은 복습 10개와 오늘 미출제 신규 10개를 우선하고, 부족하면 반대 풀에서 보충합니다.")
+                Text("혼합은 최근 기준 세트 12개를 우선하고 복습·미검증 과거 세트로 보충합니다. 오늘 세트가 없으면 가장 최근 세트를 기준으로 삼습니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

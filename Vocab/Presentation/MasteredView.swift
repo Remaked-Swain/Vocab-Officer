@@ -13,25 +13,39 @@ struct MasteredView: View {
     }
 
     var body: some View {
-        List(mastered) { word in
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(word.term).font(.title3.weight(.semibold))
-                    Text(word.meanings.map(\.text).joined(separator: ", "))
-                        .font(.body)
+        VStack(alignment: .leading, spacing: 12) {
+            GroupBox("Mastered란?") {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("충분히 검증되어 일반 테스트·복습 출제에서 제외된 단어 보관함입니다.")
+                        .font(.body.weight(.medium))
+                    Text("모든 핵심 뜻의 영→한 정답 이력과 한→영 정답 이력이 여러 날짜에 쌓이고, 최근 오답이 없을 때 자동 진입합니다. 삭제는 암기 완료 후 사용자가 명시적으로 실행하는 별도 동작입니다.")
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                 }
-                Spacer()
-                Button("영구 삭제", role: .destructive) {
-                    pendingDeletion = word
-                }
-                .controlSize(.large)
+                .padding(6)
             }
-            .padding(.vertical, 5)
-        }
-        .overlay {
-            if mastered.isEmpty {
-                ContentUnavailableView("Mastered 단어가 없습니다", systemImage: "graduationcap")
+            .padding(.horizontal)
+
+            List(mastered) { word in
+                HStack {
+                    VStack(alignment: .leading) {
+                        Text(word.term).font(.title3.weight(.semibold))
+                        Text(word.meanings.map(\.text).joined(separator: ", "))
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Button("영구 삭제", role: .destructive) {
+                        pendingDeletion = word
+                    }
+                    .controlSize(.large)
+                }
+                .padding(.vertical, 5)
+            }
+            .overlay {
+                if mastered.isEmpty {
+                    ContentUnavailableView("Mastered 단어가 없습니다", systemImage: "graduationcap")
+                }
             }
         }
         .navigationTitle("Mastered")

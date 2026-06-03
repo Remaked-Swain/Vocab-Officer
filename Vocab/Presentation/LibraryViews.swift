@@ -7,6 +7,7 @@ struct StudyCardsView: View {
     @Query private var words: [WordRecord]
     @State private var selectedSetID: UUID?
     @State private var showingDiscardConfirmation = false
+    @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
 
@@ -58,7 +59,9 @@ struct StudyCardsView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
                         ForEach(selectedEntries) { entry in
-                            FlipWordCard(word: entry.word)
+                            FlipWordCard(word: entry.word) {
+                                editingWord = entry.word
+                            }
                         }
                     }
                     .padding(.vertical, 4)
@@ -86,6 +89,12 @@ struct StudyCardsView: View {
             Button("취소", role: .cancel) {}
         } message: {
             Text("이 세트에만 포함된 단어는 단어장과 기록에서 삭제됩니다. 다른 세트에도 포함된 단어는 해당 세트 연결만 제거됩니다.")
+        }
+        .sheet(item: $editingWord) { word in
+            WordEditSheet(word: word) { message, isError in
+                self.message = message
+                self.isError = isError
+            }
         }
     }
 
@@ -115,37 +124,65 @@ private struct StudyCardEntry: Identifiable {
 
 private struct FlipWordCard: View {
     let word: WordRecord
+    let onEdit: () -> Void
     @State private var showsMeaning = false
 
     var body: some View {
-        Button {
-            withAnimation(.snappy(duration: 0.25)) {
-                showsMeaning.toggle()
-            }
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(.regularMaterial)
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(.quaternary, lineWidth: 1)
-                VStack(spacing: 10) {
-                    Text(showsMeaning ? "의미" : "English")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(showsMeaning ? word.meanings.map(\.text).joined(separator: ", ") : word.term)
-                        .font(showsMeaning ? .body : .title3.weight(.semibold))
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.primary)
+        ZStack(alignment: .topTrailing) {
+            Button {
+                withAnimation(.bouncy(duration: 0.45, extraBounce: 0.12)) {
+                    showsMeaning.toggle()
                 }
-                .padding(16)
+            } label: {
+                ZStack {
+                    cardFace(title: "English", value: word.term, isBack: false)
+                        .opacity(showsMeaning ? 0 : 1)
+                        .rotation3DEffect(.degrees(showsMeaning ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.65)
+                    cardFace(title: "의미", value: word.meanings.map(\.text).joined(separator: ", "), isBack: true)
+                        .opacity(showsMeaning ? 1 : 0)
+                        .rotation3DEffect(.degrees(showsMeaning ? 0 : -180), axis: (x: 0, y: 1, z: 0), perspective: 0.65)
+                }
+                .scaleEffect(showsMeaning ? 1.025 : 1.0)
+                .shadow(color: showsMeaning ? .accentColor.opacity(0.24) : .black.opacity(0.08), radius: showsMeaning ? 18 : 8, y: 5)
+                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
-            .frame(minHeight: 126)
-            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .buttonStyle(.plain)
+
+            Button("수정") { onEdit() }
+                .font(.caption.weight(.semibold))
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(8)
         }
-        .buttonStyle(.plain)
+        .frame(minHeight: 146)
         .accessibilityLabel(word.term)
         .accessibilityValue(showsMeaning ? word.meanings.map(\.text).joined(separator: ", ") : "영단어 앞면")
         .accessibilityHint("눌러서 카드 앞뒤를 전환합니다")
+    }
+
+    private func cardFace(title: String, value: String, isBack: Bool) -> some View {
+        RoundedRectangle(cornerRadius: 18, style: .continuous)
+            .fill(LinearGradient(
+                colors: isBack ? [Color.accentColor.opacity(0.24), Color.green.opacity(0.10)] : [Color.primary.opacity(0.06), Color.secondary.opacity(0.08)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ))
+            .overlay {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(isBack ? Color.accentColor.opacity(0.45) : Color.secondary.opacity(0.22), lineWidth: 1.2)
+            }
+            .overlay {
+                VStack(spacing: 10) {
+                    Text(title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(value)
+                        .font(isBack ? .body.weight(.medium) : .title2.weight(.bold))
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.primary)
+                }
+                .padding(18)
+            }
     }
 }
 
@@ -187,6 +224,7 @@ struct LibraryView: View {
     @State private var searchText = ""
     @State private var selection = Set<UUID>()
     @State private var showingDeleteConfirmation = false
+    @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
 
@@ -209,14 +247,19 @@ struct LibraryView: View {
             }
 
             List(filtered, selection: $selection) { word in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(word.term).font(.title3.weight(.semibold))
-                    Text(word.meanings.map(\.text).joined(separator: ", "))
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                    Text(word.statusRaw.capitalized)
-                        .font(.caption)
-                        .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
+                HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(word.term).font(.title3.weight(.semibold))
+                        Text(word.meanings.map(\.text).joined(separator: ", "))
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                        Text(word.statusRaw.capitalized)
+                            .font(.caption)
+                            .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
+                    }
+                    Spacer()
+                    Button("수정") { editingWord = word }
+                        .controlSize(.large)
                 }
                 .padding(.vertical, 5)
             }
@@ -243,6 +286,12 @@ struct LibraryView: View {
         } message: {
             Text("선택한 단어와 뜻, 시도 기록, 세트 및 테스트 세션 연결이 삭제됩니다. 이 작업은 앱 안에서 되돌릴 수 없습니다.")
         }
+        .sheet(item: $editingWord) { word in
+            WordEditSheet(word: word) { message, isError in
+                self.message = message
+                self.isError = isError
+            }
+        }
     }
 
     private func deleteSelection() {
@@ -260,10 +309,22 @@ struct LibraryView: View {
 }
 
 struct HistoryView: View {
+    @Environment(\.modelContext) private var context
     @Query(sort: \AttemptRecord.answeredAt, order: .reverse) private var attempts: [AttemptRecord]
+    @State private var notice: String?
 
     var body: some View {
-        List(attempts) { attempt in
+        VStack(alignment: .leading, spacing: 10) {
+            Text("상세 로그는 학습 품질 계산용 요약 상태와 별개입니다. 최근 기록은 유지하고, 오래된 정답과 만료된 오답/모름은 정리해 앱 크기 증가를 제한합니다.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal)
+            if let notice {
+                Label(notice, systemImage: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+            }
+            List(attempts) { attempt in
             HStack {
                 VStack(alignment: .leading) {
                     Text(attempt.prompt)
@@ -281,6 +342,88 @@ struct HistoryView: View {
             }
             .padding(.vertical, 5)
         }
+        }
         .navigationTitle("학습 기록")
+        .toolbar {
+            ToolbarItem {
+                Button("오래된 기록 정리") { compactHistory() }
+                    .controlSize(.large)
+            }
+        }
+    }
+
+    private func compactHistory() {
+        do {
+            try LearningCoordinator(context: context).compactLearningHistory()
+            notice = "오래된 상세 로그를 정리했습니다."
+        } catch {
+            notice = error.localizedDescription
+        }
+    }
+}
+
+private struct WordEditSheet: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    let word: WordRecord
+    let onComplete: (String, Bool) -> Void
+    @State private var term: String
+    @State private var meaningsText: String
+    @State private var error: String?
+
+    init(word: WordRecord, onComplete: @escaping (String, Bool) -> Void) {
+        self.word = word
+        self.onComplete = onComplete
+        _term = State(initialValue: word.term)
+        _meaningsText = State(initialValue: word.meanings.map(\.text).joined(separator: ", "))
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("단어 직접 수정")
+                .font(.title.weight(.semibold))
+            Text("OCR 오인식이나 오입력된 낱개 카드를 수정합니다. 이 값은 단어장의 단일 진실 공급원(SOT)을 직접 바꾸며, Mastered 단어를 수정하면 다시 활성 단어가 됩니다.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            TextField("영단어", text: $term)
+                .textFieldStyle(.roundedBorder)
+                .font(.title3)
+                .controlSize(.large)
+            Text("한국어 뜻")
+                .font(.headline)
+            TextEditor(text: $meaningsText)
+                .font(.body)
+                .frame(minHeight: 130)
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(.quaternary) }
+            Text("쉼표, 슬래시 또는 줄바꿈으로 여러 뜻을 구분합니다.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("취소") { dismiss() }
+                    .controlSize(.large)
+                Button("SOT 수정 저장") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.return, modifiers: .command)
+            }
+        }
+        .padding(28)
+        .frame(minWidth: 460)
+    }
+
+    private func save() {
+        do {
+            try LearningCoordinator(context: context).updateWord(word, term: term, meaningsText: meaningsText)
+            onComplete("\(word.term)을 수정했습니다.", false)
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+            onComplete(error.localizedDescription, true)
+        }
     }
 }

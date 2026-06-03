@@ -7,6 +7,13 @@ struct WordDraft: Identifiable {
     var meanings = ""
 }
 
+enum LearningHistoryRetentionPolicy {
+    static let recentAttemptLimitPerWord = 40
+    static let keepAllAttemptsDays = 90
+    static let keepFailedAttemptsDays = 365
+    static let keepSessionDays = 180
+}
+
 enum DailyIntakePasteParser {
     static func parse(_ text: String) throws -> [WordDraft] {
         let lines = text.components(separatedBy: .newlines)
@@ -186,16 +193,18 @@ final class LearningCoordinator {
         let words = try context.fetch(FetchDescriptor<WordRecord>())
             .filter { $0.deletedAt == nil && $0.statusRaw == "active" }
         let sets = try context.fetch(FetchDescriptor<DailySetRecord>())
-        let todayIDs: Set<UUID> = Set(sets.first(where: { $0.seoulDay == day })?.items.map(\.wordID) ?? [])
+        let referenceSet = sets.first(where: { $0.seoulDay == day }) ?? sets.sorted { $0.createdAt > $1.createdAt }.first
+        let referenceIDs: Set<UUID> = Set(referenceSet?.items.map(\.wordID) ?? [])
+        compactSessionHistory(now: date)
         let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
         let exposure = presentationStats(from: sessions)
         let alreadyPresentedTodayIDs: Set<UUID> = Set(sessions.filter { $0.seoulDay == day }.flatMap(\.wordIDs))
         let allPresentedIDs: Set<UUID> = Set(sessions.flatMap(\.wordIDs))
-        let today = uniqueWords(
-            fairOrder(words.filter { todayIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
-                + fairOrder(words.filter { todayIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
+        let reference = uniqueWords(
+            fairOrder(words.filter { referenceIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
+                + fairOrder(words.filter { referenceIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
         )
-        let historicalSetIDs = Set(sets.filter { $0.seoulDay < day }.flatMap(\.items).map(\.wordID))
+        let historicalSetIDs = Set(sets.filter { $0.id != referenceSet?.id }.flatMap(\.items).map(\.wordID))
         let unverifiedBacklog = fairOrder(
             words.filter { historicalSetIDs.contains($0.id) && !allPresentedIDs.contains($0.id) },
             exposure: exposure
@@ -208,7 +217,7 @@ final class LearningCoordinator {
         var selected: [WordRecord] = []
         switch mode {
         case .today:
-            selected = Array(today.prefix(20))
+            selected = Array(reference.prefix(20))
         case .set:
             guard let setID, let selectedSet = sets.first(where: { $0.id == setID }) else {
                 throw LearningError.setRequired
@@ -222,11 +231,12 @@ final class LearningCoordinator {
             selected = Array(prioritized.prefix(20))
         case .review:
             selected = Array(orderedReview.prefix(20))
+            appendUnique(from: reference, to: &selected, limit: 20)
         case .mixed:
-            selected = Array(today.prefix(12))
+            selected = Array(reference.prefix(12))
             appendUnique(from: orderedReview, to: &selected, limit: min(18, 20))
             appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
-            appendUnique(from: today, to: &selected, limit: 20)
+            appendUnique(from: reference, to: &selected, limit: 20)
             appendUnique(from: orderedReview, to: &selected, limit: 20)
             appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
         }
@@ -264,6 +274,69 @@ final class LearningCoordinator {
         question.word.attempts.append(attempt)
         apply(result: result, matchedMeaningID: matchedMeaningID, direction: question.direction, to: question.word, date: date)
         context.insert(attempt)
+        compactAttempts(for: question.word, now: date)
+        try context.save()
+    }
+
+    func updateWord(_ word: WordRecord, term: String, meaningsText: String) throws {
+        let trimmedTerm = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTerm.isEmpty else { throw LearningError.termRequired }
+        let normalizedTerm = TextNormalizer.normalizeEnglish(trimmedTerm)
+        let duplicate = try context.fetch(FetchDescriptor<WordRecord>()).first {
+            $0.id != word.id && $0.deletedAt == nil && $0.normalizedTerm == normalizedTerm
+        }
+        guard duplicate == nil else { throw LearningError.duplicateHeadword }
+
+        let meaningValues = meaningsText.components(separatedBy: CharacterSet(charactersIn: ",/\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !meaningValues.isEmpty else { throw LearningError.meaningRequired }
+
+        let originalTerm = word.normalizedTerm
+        word.term = trimmedTerm
+        word.normalizedTerm = normalizedTerm
+
+        var existingByNormalized: [String: [MeaningRecord]] = [:]
+        for meaning in word.meanings {
+            existingByNormalized[meaning.normalizedText, default: []].append(meaning)
+        }
+        var revised: [MeaningRecord] = []
+        var seenMeanings = Set<String>()
+        for value in meaningValues {
+            let normalized = TextNormalizer.normalizeKorean(value)
+            guard seenMeanings.insert(normalized).inserted else { continue }
+            if var matches = existingByNormalized[normalized], let meaning = matches.first {
+                meaning.text = value
+                meaning.normalizedText = normalized
+                revised.append(meaning)
+                matches.removeFirst()
+                existingByNormalized[normalized] = matches
+            } else {
+                let meaning = MeaningRecord(text: value)
+                meaning.word = word
+                context.insert(meaning)
+                revised.append(meaning)
+            }
+        }
+        for removed in existingByNormalized.values.flatMap({ $0 }) {
+            context.delete(removed)
+        }
+        word.meanings = revised
+
+        if originalTerm != normalizedTerm {
+            word.reviewState?.koToEnSuccessDays = []
+        }
+        if word.statusRaw == "mastered" {
+            word.statusRaw = "active"
+        }
+        try context.save()
+    }
+
+    func compactLearningHistory(now: Date = .now) throws {
+        for word in try context.fetch(FetchDescriptor<WordRecord>()) where word.deletedAt == nil {
+            compactAttempts(for: word, now: now)
+        }
+        compactSessionHistory(now: now)
         try context.save()
     }
 
@@ -416,6 +489,40 @@ final class LearningCoordinator {
         }
     }
 
+    private func compactSessionHistory(now: Date) {
+        let cutoff = now.addingTimeInterval(-Double(LearningHistoryRetentionPolicy.keepSessionDays) * 86_400)
+        do {
+            for session in try context.fetch(FetchDescriptor<TestSessionRecord>()) where session.startedAt < cutoff {
+                context.delete(session)
+            }
+        } catch {
+            assertionFailure("Failed to compact session history: \(error)")
+        }
+    }
+
+    private func compactAttempts(for word: WordRecord, now: Date) {
+        let sorted = word.attempts.sorted { $0.answeredAt > $1.answeredAt }
+        let recentIDs = Set(sorted.prefix(LearningHistoryRetentionPolicy.recentAttemptLimitPerWord).map(\.id))
+        let keepAllCutoff = now.addingTimeInterval(-Double(LearningHistoryRetentionPolicy.keepAllAttemptsDays) * 86_400)
+        let keepFailedCutoff = now.addingTimeInterval(-Double(LearningHistoryRetentionPolicy.keepFailedAttemptsDays) * 86_400)
+        for attempt in sorted {
+            let isRecent = recentIDs.contains(attempt.id)
+            let isWithinRecentWindow = attempt.answeredAt >= keepAllCutoff
+            let isFailed = attempt.finalJudgementRaw != FinalResult.correct.rawValue
+            let isFailedWithinWindow = isFailed && attempt.answeredAt >= keepFailedCutoff
+            if !isRecent && !isWithinRecentWindow && !isFailedWithinWindow {
+                context.delete(attempt)
+            }
+        }
+        word.attempts.removeAll { attempt in
+            let isRecent = recentIDs.contains(attempt.id)
+            let isWithinRecentWindow = attempt.answeredAt >= keepAllCutoff
+            let isFailed = attempt.finalJudgementRaw != FinalResult.correct.rawValue
+            let isFailedWithinWindow = isFailed && attempt.answeredAt >= keepFailedCutoff
+            return !isRecent && !isWithinRecentWindow && !isFailedWithinWindow
+        }
+    }
+
     private func deleteWordRecord(_ word: WordRecord) throws {
         for set in try context.fetch(FetchDescriptor<DailySetRecord>()) {
             for item in set.items where item.wordID == word.id {
@@ -446,6 +553,8 @@ enum LearningError: LocalizedError {
     case dailySetRequiresExactly100
     case dailySetAlreadyExists
     case meaningRequired
+    case termRequired
+    case duplicateHeadword
     case onlyMasteredCanBeDeleted
     case setRequired
     case noSessionCandidates
@@ -455,6 +564,8 @@ enum LearningError: LocalizedError {
         case .dailySetRequiresExactly100: "오늘의 완료 세트는 신규 단어 100개가 필요합니다."
         case .dailySetAlreadyExists: "오늘의 완료 세트가 이미 저장되어 있습니다."
         case .meaningRequired: "각 표제어에 뜻을 하나 이상 입력해야 합니다."
+        case .termRequired: "영단어 표제어를 입력해야 합니다."
+        case .duplicateHeadword: "이미 존재하는 표제어입니다. 기존 단어를 직접 수정하세요."
         case .onlyMasteredCanBeDeleted: "Mastered 단어만 삭제할 수 있습니다."
         case .setRequired: "테스트할 입력 세트를 선택하세요."
         case .noSessionCandidates: "선택한 범위에 출제 가능한 단어가 없습니다."
