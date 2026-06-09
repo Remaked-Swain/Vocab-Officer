@@ -5,6 +5,45 @@ import XCTest
 
 @MainActor
 final class LearningCoordinatorTests: XCTestCase {
+
+    func testMeaningSplitterPreservesCommaInsideParentheses() {
+        let values = MeaningTextSplitter.split("(배, 기차에) 타다, 내리다，갈아타다")
+
+        XCTAssertEqual(values, ["(배, 기차에) 타다", "내리다", "갈아타다"])
+    }
+
+    func testDailySetPreservesParenthesizedCommaMeaning() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        var values = drafts(count: 100, prefix: "entry")
+        values[0] = WordDraft(term: "board", meanings: "(배, 기차에) 타다, 탑승하다")
+
+        try coordinator.saveDailySet(values, date: testDate)
+
+        let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "board" })
+        XCTAssertEqual(Set(word.meanings.map(\.text)), ["(배, 기차에) 타다", "탑승하다"])
+    }
+
+    func testSOTEditPreservesParenthesizedCommaMeaning() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "entry"), date: testDate)
+        let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "entry-0" })
+
+        try coordinator.updateWord(word, term: "entry-0", meaningsText: "기존뜻, (배, 기차에) 타다")
+
+        XCTAssertEqual(Set(word.meanings.map(\.text)), ["기존뜻", "(배, 기차에) 타다"])
+    }
+
+    func testLooseWordPreservesParenthesizedCommaMeaning() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+
+        let word = try coordinator.addLooseWord(term: "board", meaningsText: "(배, 기차에) 타다, 탑승하다", date: testDate)
+
+        XCTAssertEqual(Set(word.meanings.map(\.text)), ["(배, 기차에) 타다", "탑승하다"])
+    }
+
     func testPasteParserPreservesHyphenatedTermAndMultipleMeanings() throws {
         let drafts = try DailyIntakePasteParser.parse(
             """

@@ -421,7 +421,7 @@ private struct WordEditSheet: View {
                 .font(.body)
                 .frame(minHeight: 130)
                 .overlay { RoundedRectangle(cornerRadius: 8).stroke(.quaternary) }
-            Text("쉼표, 슬래시 또는 줄바꿈으로 여러 뜻을 구분합니다.")
+            Text("쉼표, 슬래시 또는 줄바꿈으로 여러 뜻을 구분합니다. 괄호 안 쉼표는 뜻의 일부로 보존합니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let error {
@@ -479,7 +479,7 @@ private struct LooseWordAddSheet: View {
                 .font(.body)
                 .frame(minHeight: 130)
                 .overlay { RoundedRectangle(cornerRadius: 8).stroke(.quaternary) }
-            Text("쉼표, 슬래시 또는 줄바꿈으로 여러 뜻을 구분합니다.")
+            Text("쉼표, 슬래시 또는 줄바꿈으로 여러 뜻을 구분합니다. 괄호 안 쉼표는 뜻의 일부로 보존합니다.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             if let error {

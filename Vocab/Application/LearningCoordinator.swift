@@ -7,6 +7,42 @@ struct WordDraft: Identifiable {
     var meanings = ""
 }
 
+enum MeaningTextSplitter {
+    static func split(_ text: String) -> [String] {
+        var values: [String] = []
+        var buffer = ""
+        var parenthesisDepth = 0
+
+        for character in text {
+            switch character {
+            case "(", "（":
+                parenthesisDepth += 1
+                buffer.append(character)
+            case ")", "）":
+                parenthesisDepth = max(parenthesisDepth - 1, 0)
+                buffer.append(character)
+            case ",", "，", "/", "\n":
+                if parenthesisDepth == 0 {
+                    append(buffer, to: &values)
+                    buffer.removeAll(keepingCapacity: true)
+                } else {
+                    buffer.append(character)
+                }
+            default:
+                buffer.append(character)
+            }
+        }
+        append(buffer, to: &values)
+        return values
+    }
+
+    private static func append(_ value: String, to values: inout [String]) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        values.append(trimmed)
+    }
+}
+
 enum LearningHistoryRetentionPolicy {
     static let recentAttemptLimitPerWord = 40
     static let keepAllAttemptsDays = 90
@@ -143,9 +179,7 @@ final class LearningCoordinator {
             (
                 draft: draft,
                 normalizedTerm: TextNormalizer.normalizeEnglish(draft.term),
-                meanings: draft.meanings.components(separatedBy: CharacterSet(charactersIn: ",/\n"))
-                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                    .filter { !$0.isEmpty }
+                meanings: MeaningTextSplitter.split(draft.meanings)
             )
         }
         guard prepared.allSatisfy({ !$0.meanings.isEmpty }) else { throw LearningError.meaningRequired }
@@ -193,9 +227,7 @@ final class LearningCoordinator {
         let trimmedTerm = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTerm.isEmpty else { throw LearningError.termRequired }
         let normalizedTerm = TextNormalizer.normalizeEnglish(trimmedTerm)
-        let meaningValues = meaningsText.components(separatedBy: CharacterSet(charactersIn: ",/\n"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        let meaningValues = MeaningTextSplitter.split(meaningsText)
         guard !meaningValues.isEmpty else { throw LearningError.meaningRequired }
 
         let existing = try context.fetch(FetchDescriptor<WordRecord>()).first {
@@ -326,9 +358,7 @@ final class LearningCoordinator {
         }
         guard duplicate == nil else { throw LearningError.duplicateHeadword }
 
-        let meaningValues = meaningsText.components(separatedBy: CharacterSet(charactersIn: ",/\n"))
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-            .filter { !$0.isEmpty }
+        let meaningValues = MeaningTextSplitter.split(meaningsText)
         guard !meaningValues.isEmpty else { throw LearningError.meaningRequired }
 
         let originalTerm = word.normalizedTerm

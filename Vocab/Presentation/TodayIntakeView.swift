@@ -224,7 +224,7 @@ struct TodayIntakeView: View {
                         .controlSize(.large)
                 }
                 .width(min: 220)
-                TableColumn("한국어 뜻 (쉼표로 구분)") { $draft in
+                TableColumn("한국어 뜻 (쉼표로 구분, 괄호 안 쉼표 제외)") { $draft in
                     TextField("뜻1, 뜻2", text: $draft.meanings)
                         .textFieldStyle(.roundedBorder)
                         .font(.body)
