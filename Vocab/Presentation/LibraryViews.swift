@@ -258,11 +258,11 @@ struct LibraryView: View {
     @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
-    @State private var page = 0
+    @State private var batch = 0
     @State private var canLoadMore = true
     @State private var isLoadingWords = false
 
-    private let pageSize = 250
+    private let batchSize = 150
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -273,54 +273,38 @@ struct LibraryView: View {
                     .padding(.horizontal)
             }
 
-            List(displayedWords, selection: $selection) { word in
-                HStack {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(word.term).font(.title3.weight(.semibold))
-                        Text(word.meanings.map(\.text).joined(separator: ", "))
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                        HStack(spacing: 8) {
-                            Text(word.statusRaw.capitalized)
-                                .font(.caption)
-                                .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
-                            if !linkedWordIDs.contains(word.id) {
-                                Text("낱개")
-                                    .font(.caption.weight(.semibold))
-                                    .foregroundStyle(.blue)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 2)
-                                    .background(.blue.opacity(0.12), in: Capsule())
+            List(selection: $selection) {
+                ForEach(displayedWords) { word in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(word.term).font(.title3.weight(.semibold))
+                            Text(word.meanings.map(\.text).joined(separator: ", "))
+                                .font(.body)
+                                .foregroundStyle(.secondary)
+                            HStack(spacing: 8) {
+                                Text(word.statusRaw.capitalized)
+                                    .font(.caption)
+                                    .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
+                                if !linkedWordIDs.contains(word.id) {
+                                    Text("낱개")
+                                        .font(.caption.weight(.semibold))
+                                        .foregroundStyle(.blue)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 2)
+                                        .background(.blue.opacity(0.12), in: Capsule())
+                                }
                             }
                         }
+                        Spacer()
+                        Button("수정") { editingWord = word }
+                            .controlSize(.large)
                     }
-                    Spacer()
-                    Button("수정") { editingWord = word }
-                        .controlSize(.large)
+                    .padding(.vertical, 5)
+                    .tag(word.id)
                 }
-                .padding(.vertical, 5)
+
+                libraryLoadingFooter
             }
-            HStack {
-                Spacer()
-                if isLoadingWords {
-                    ProgressView()
-                        .controlSize(.small)
-                } else if canLoadMore {
-                    Button("더 보기") {
-                        loadNextWordPage()
-                    }
-                    .controlSize(.large)
-                } else if displayedWords.isEmpty {
-                    Text("표시할 단어가 없습니다.")
-                        .foregroundStyle(.secondary)
-                } else {
-                    Text("표시된 단어 \(displayedWords.count)개")
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-            }
-            .font(.callout)
-            .padding(.vertical, 8)
         }
         .searchable(text: $searchText, prompt: "영단어 검색")
         .navigationTitle("단어장")
@@ -370,6 +354,35 @@ struct LibraryView: View {
         }
     }
 
+    private var libraryLoadingFooter: some View {
+        HStack {
+            Spacer()
+            if isLoadingWords {
+                ProgressView()
+                    .controlSize(.small)
+            } else if canLoadMore {
+                HStack(spacing: 8) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("더 불러오는 중...")
+                        .foregroundStyle(.secondary)
+                }
+                .onAppear {
+                    loadNextWordBatch()
+                }
+            } else if displayedWords.isEmpty {
+                Text("표시할 단어가 없습니다.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("표시된 단어 \(displayedWords.count)개")
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .font(.callout)
+        .padding(.vertical, 10)
+    }
+
     private func deleteSelection() {
         let ids = selection
         let targets: [WordRecord]
@@ -393,25 +406,25 @@ struct LibraryView: View {
     }
 
     private func reloadWordList() {
-        page = 0
+        batch = 0
         canLoadMore = true
         selection.removeAll()
         displayedWords = []
         linkedWordIDs = []
-        loadNextWordPage()
+        loadNextWordBatch()
     }
 
-    private func loadNextWordPage() {
+    private func loadNextWordBatch() {
         guard !isLoadingWords, canLoadMore else { return }
         isLoadingWords = true
         defer { isLoadingWords = false }
 
         do {
-            let fetched = try fetchWordPage(page: page)
-            if fetched.count < pageSize {
+            let fetched = try fetchWordBatch(batch: batch)
+            if fetched.count < batchSize {
                 canLoadMore = false
             }
-            page += 1
+            batch += 1
             displayedWords.append(contentsOf: fetched)
             refreshLinkedWordIDs(for: displayedWords)
         } catch {
@@ -421,7 +434,7 @@ struct LibraryView: View {
         }
     }
 
-    private func fetchWordPage(page: Int) throws -> [WordRecord] {
+    private func fetchWordBatch(batch: Int) throws -> [WordRecord] {
         let normalizedSearch = TextNormalizer.normalizeEnglish(searchText)
         var descriptor: FetchDescriptor<WordRecord>
         if normalizedSearch.isEmpty {
@@ -437,8 +450,8 @@ struct LibraryView: View {
                 sortBy: [SortDescriptor(\.normalizedTerm)]
             )
         }
-        descriptor.fetchLimit = pageSize
-        descriptor.fetchOffset = page * pageSize
+        descriptor.fetchLimit = batchSize
+        descriptor.fetchOffset = batch * batchSize
         return try context.fetch(descriptor)
     }
 
