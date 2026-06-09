@@ -274,7 +274,7 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(question.word.reviewState?.failureCheck, 1)
         XCTAssertEqual(question.word.reviewState?.activePriority, 1)
 
-        for offset in 1...3 {
+        for offset in 1...2 {
             let correctDate = testDate.addingTimeInterval(TimeInterval(offset * 60))
             try coordinator.commit(answer: "뜻-0", result: .correct, automatic: .correct, matchedMeaningID: meaningID, question: question, session: generated.0, date: correctDate)
         }

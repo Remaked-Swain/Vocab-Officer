@@ -204,7 +204,7 @@ public struct ProgressPolicy: Sendable {
                     state.activePriority = max(state.activePriority - 1, 0)
                     state.enToKoStreak = 0
                     state.koToEnStreak = 0
-                } else if state.enToKoStreak >= 3 {
+                } else if state.enToKoStreak >= 2 {
                     state.activePriority = max(state.activePriority - 1, 0)
                     state.enToKoStreak = 0
                 }

@@ -21,7 +21,7 @@ to decay through that real routine without requiring Korean-to-English sessions.
 - The previous balanced rule still applies: when English-to-Korean and
   Korean-to-English streaks both reach 2, reduce `activePriority` by 1 and reset
   both streaks.
-- New practical rule: when English-to-Korean streak reaches 3, reduce
+- New practical rule: when English-to-Korean streak reaches 2, reduce
   `activePriority` by 1 and reset only the English-to-Korean streak.
 - Review sessions must include only active words with `activePriority > 0`.
 

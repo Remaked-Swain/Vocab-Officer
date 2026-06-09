@@ -64,9 +64,9 @@ final class StudyPoliciesTests: XCTestCase {
         let attempts = [
             attempt(word, .enToKo, .incorrect, "2026-05-25T00:00:00Z"),
             attempt(word, .enToKo, .correct, "2026-05-25T00:01:00Z"),
-            attempt(word, .enToKo, .correct, "2026-05-25T00:02:00Z"),
+            attempt(word, .koToEn, .correct, "2026-05-25T00:02:00Z"),
             attempt(word, .koToEn, .correct, "2026-05-25T00:03:00Z"),
-            attempt(word, .koToEn, .correct, "2026-05-25T00:04:00Z")
+            attempt(word, .enToKo, .correct, "2026-05-25T00:04:00Z")
         ]
 
         let state = policy.state(for: word, attempts: attempts)
@@ -83,8 +83,7 @@ final class StudyPoliciesTests: XCTestCase {
         let attempts = [
             attempt(word, .enToKo, .incorrect, "2026-05-25T00:00:00Z"),
             attempt(word, .enToKo, .correct, "2026-05-25T00:01:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .enToKo, .correct, "2026-05-25T00:02:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .enToKo, .correct, "2026-05-25T00:03:00Z", matchedMeaningID: word.coreMeanings[0].id)
+            attempt(word, .enToKo, .correct, "2026-05-25T00:02:00Z", matchedMeaningID: word.coreMeanings[0].id)
         ]
 
         let state = policy.state(for: word, attempts: attempts)
