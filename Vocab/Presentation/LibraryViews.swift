@@ -4,27 +4,16 @@ import SwiftUI
 struct StudyCardsView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \DailySetRecord.createdAt, order: .reverse) private var sets: [DailySetRecord]
-    @Query private var words: [WordRecord]
     @State private var selectedSetID: UUID?
+    @State private var selectedEntries: [StudyCardEntry] = []
     @State private var showingDiscardConfirmation = false
     @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
+    @State private var isLoadingCards = false
 
     private var selectedSet: DailySetRecord? {
         sets.first { $0.id == selectedSetID } ?? sets.first
-    }
-
-    private var wordsByID: [UUID: WordRecord] {
-        Dictionary(uniqueKeysWithValues: words.filter { $0.deletedAt == nil }.map { ($0.id, $0) })
-    }
-
-    private var selectedEntries: [StudyCardEntry] {
-        selectedSet?.items
-            .sorted { $0.orderIndex < $1.orderIndex }
-            .compactMap { item in
-                wordsByID[item.wordID].map { StudyCardEntry(item: item, word: $0) }
-            } ?? []
     }
 
     var body: some View {
@@ -44,8 +33,9 @@ struct StudyCardsView: View {
                         .tag(Optional(set.id))
                 }
             }
-            .pickerStyle(.segmented)
+            .pickerStyle(.menu)
             .controlSize(.large)
+            .frame(maxWidth: 360, alignment: .leading)
 
             if let message {
                 Label(message, systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle")
@@ -53,7 +43,10 @@ struct StudyCardsView: View {
                     .foregroundStyle(isError ? .red : .green)
             }
 
-            if selectedEntries.isEmpty {
+            if isLoadingCards {
+                ProgressView("카드를 불러오는 중...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if selectedEntries.isEmpty {
                 ContentUnavailableView("학습할 세트가 없습니다", systemImage: "rectangle.stack")
             } else {
                 ScrollView {
@@ -70,6 +63,9 @@ struct StudyCardsView: View {
         }
         .padding(28)
         .navigationTitle("학습 카드")
+        .task(id: selectedSet?.id) {
+            loadSelectedEntries()
+        }
         .toolbar {
             ToolbarItem {
                 Button("선택 세트 폐기", role: .destructive) {
@@ -106,6 +102,39 @@ struct StudyCardsView: View {
             message = "\(selectedSet.seoulDay) 세트를 폐기했습니다."
             isError = false
         } catch {
+            message = error.localizedDescription
+            isError = true
+        }
+    }
+
+    private func loadSelectedEntries() {
+        guard let selectedSet else {
+            selectedEntries = []
+            return
+        }
+        isLoadingCards = true
+        defer { isLoadingCards = false }
+
+        let sortedItems = selectedSet.items.sorted { $0.orderIndex < $1.orderIndex }
+        let ids = Array(Set(sortedItems.map(\.wordID)))
+        guard !ids.isEmpty else {
+            selectedEntries = []
+            return
+        }
+
+        do {
+            let descriptor = FetchDescriptor<WordRecord>(
+                predicate: #Predicate { word in
+                    ids.contains(word.id) && word.deletedAt == nil
+                }
+            )
+            let fetchedWords = try context.fetch(descriptor)
+            let wordsByID = Dictionary(uniqueKeysWithValues: fetchedWords.map { ($0.id, $0) })
+            selectedEntries = sortedItems.compactMap { item in
+                wordsByID[item.wordID].map { StudyCardEntry(item: item, word: $0) }
+            }
+        } catch {
+            selectedEntries = []
             message = error.localizedDescription
             isError = true
         }
@@ -220,28 +249,20 @@ struct ReviewView: View {
 
 struct LibraryView: View {
     @Environment(\.modelContext) private var context
-    @Query(sort: \WordRecord.normalizedTerm) private var words: [WordRecord]
-    @Query private var setItems: [DailySetItemRecord]
     @State private var searchText = ""
+    @State private var displayedWords: [WordRecord] = []
+    @State private var linkedWordIDs = Set<UUID>()
     @State private var selection = Set<UUID>()
     @State private var showingDeleteConfirmation = false
     @State private var showingAddWord = false
     @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
+    @State private var page = 0
+    @State private var canLoadMore = true
+    @State private var isLoadingWords = false
 
-    private var filtered: [WordRecord] {
-        if searchText.isEmpty { return words.filter { $0.deletedAt == nil } }
-        return words.filter { $0.deletedAt == nil && $0.normalizedTerm.contains(TextNormalizer.normalizeEnglish(searchText)) }
-    }
-
-    private var selectedWords: [WordRecord] {
-        words.filter { selection.contains($0.id) && $0.deletedAt == nil }
-    }
-
-    private var setLinkedWordIDs: Set<UUID> {
-        Set(setItems.map(\.wordID))
-    }
+    private let pageSize = 250
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -252,7 +273,7 @@ struct LibraryView: View {
                     .padding(.horizontal)
             }
 
-            List(filtered, selection: $selection) { word in
+            List(displayedWords, selection: $selection) { word in
                 HStack {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(word.term).font(.title3.weight(.semibold))
@@ -263,7 +284,7 @@ struct LibraryView: View {
                             Text(word.statusRaw.capitalized)
                                 .font(.caption)
                                 .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
-                            if !setLinkedWordIDs.contains(word.id) {
+                            if !linkedWordIDs.contains(word.id) {
                                 Text("낱개")
                                     .font(.caption.weight(.semibold))
                                     .foregroundStyle(.blue)
@@ -279,9 +300,36 @@ struct LibraryView: View {
                 }
                 .padding(.vertical, 5)
             }
+            HStack {
+                Spacer()
+                if isLoadingWords {
+                    ProgressView()
+                        .controlSize(.small)
+                } else if canLoadMore {
+                    Button("더 보기") {
+                        loadNextWordPage()
+                    }
+                    .controlSize(.large)
+                } else if displayedWords.isEmpty {
+                    Text("표시할 단어가 없습니다.")
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("표시된 단어 \(displayedWords.count)개")
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+            .font(.callout)
+            .padding(.vertical, 8)
         }
         .searchable(text: $searchText, prompt: "영단어 검색")
         .navigationTitle("단어장")
+        .task {
+            reloadWordList()
+        }
+        .onChange(of: searchText) {
+            reloadWordList()
+        }
         .toolbar {
             ToolbarItemGroup {
                 Button("낱개 단어 추가") {
@@ -291,7 +339,7 @@ struct LibraryView: View {
                 Button("선택 단어 삭제", role: .destructive) {
                     showingDeleteConfirmation = true
                 }
-                .disabled(selectedWords.isEmpty)
+                .disabled(selection.isEmpty)
             }
         }
         .confirmationDialog(
@@ -299,7 +347,7 @@ struct LibraryView: View {
             isPresented: $showingDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("\(selectedWords.count)개 단어 삭제", role: .destructive) {
+            Button("\(selection.count)개 단어 삭제", role: .destructive) {
                 deleteSelection()
             }
             Button("취소", role: .cancel) {}
@@ -310,26 +358,115 @@ struct LibraryView: View {
             WordEditSheet(word: word) { message, isError in
                 self.message = message
                 self.isError = isError
+                reloadWordList()
             }
         }
         .sheet(isPresented: $showingAddWord) {
             LooseWordAddSheet { message, isError in
                 self.message = message
                 self.isError = isError
+                reloadWordList()
             }
         }
     }
 
     private func deleteSelection() {
-        let targets = selectedWords
+        let ids = selection
+        let targets: [WordRecord]
+        do {
+            targets = try fetchWords(ids: ids)
+        } catch {
+            message = error.localizedDescription
+            isError = true
+            return
+        }
         do {
             try LearningCoordinator(context: context).deleteWords(targets)
             selection.removeAll()
             message = "\(targets.count)개 단어를 삭제했습니다."
             isError = false
+            reloadWordList()
         } catch {
             message = error.localizedDescription
             isError = true
+        }
+    }
+
+    private func reloadWordList() {
+        page = 0
+        canLoadMore = true
+        selection.removeAll()
+        displayedWords = []
+        linkedWordIDs = []
+        loadNextWordPage()
+    }
+
+    private func loadNextWordPage() {
+        guard !isLoadingWords, canLoadMore else { return }
+        isLoadingWords = true
+        defer { isLoadingWords = false }
+
+        do {
+            let fetched = try fetchWordPage(page: page)
+            if fetched.count < pageSize {
+                canLoadMore = false
+            }
+            page += 1
+            displayedWords.append(contentsOf: fetched)
+            refreshLinkedWordIDs(for: displayedWords)
+        } catch {
+            message = error.localizedDescription
+            isError = true
+            canLoadMore = false
+        }
+    }
+
+    private func fetchWordPage(page: Int) throws -> [WordRecord] {
+        let normalizedSearch = TextNormalizer.normalizeEnglish(searchText)
+        var descriptor: FetchDescriptor<WordRecord>
+        if normalizedSearch.isEmpty {
+            descriptor = FetchDescriptor<WordRecord>(
+                predicate: #Predicate { $0.deletedAt == nil },
+                sortBy: [SortDescriptor(\.normalizedTerm)]
+            )
+        } else {
+            descriptor = FetchDescriptor<WordRecord>(
+                predicate: #Predicate { word in
+                    word.deletedAt == nil && word.normalizedTerm.contains(normalizedSearch)
+                },
+                sortBy: [SortDescriptor(\.normalizedTerm)]
+            )
+        }
+        descriptor.fetchLimit = pageSize
+        descriptor.fetchOffset = page * pageSize
+        return try context.fetch(descriptor)
+    }
+
+    private func fetchWords(ids: Set<UUID>) throws -> [WordRecord] {
+        let ids = Array(ids)
+        let descriptor = FetchDescriptor<WordRecord>(
+            predicate: #Predicate { word in
+                ids.contains(word.id) && word.deletedAt == nil
+            }
+        )
+        return try context.fetch(descriptor)
+    }
+
+    private func refreshLinkedWordIDs(for words: [WordRecord]) {
+        let ids = Array(Set(words.map(\.id)))
+        guard !ids.isEmpty else {
+            linkedWordIDs = []
+            return
+        }
+        do {
+            let descriptor = FetchDescriptor<DailySetItemRecord>(
+                predicate: #Predicate { item in
+                    ids.contains(item.wordID)
+                }
+            )
+            linkedWordIDs = Set(try context.fetch(descriptor).map(\.wordID))
+        } catch {
+            linkedWordIDs = []
         }
     }
 }
