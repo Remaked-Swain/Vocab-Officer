@@ -50,6 +50,7 @@ struct RootView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(minWidth: 900, minHeight: 600)
     }
 }
 

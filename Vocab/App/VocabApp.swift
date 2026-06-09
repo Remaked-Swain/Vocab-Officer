@@ -26,6 +26,7 @@ struct VocabApp: App {
                 .modelContainer(container)
         }
         .defaultSize(width: 1160, height: 760)
+        .windowResizability(.automatic)
 
         Settings {
             SettingsView()
