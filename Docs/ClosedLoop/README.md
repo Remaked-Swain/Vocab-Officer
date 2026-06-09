@@ -6,15 +6,47 @@ Recorder agents have been terminated.
 
 ## Start Of A Loop
 
-1. Spawn the four required agents.
-2. An agent reads `INDEX.md` only. Tooling may read `index.json` to validate
+Use the four-agent Closed-Loop by default, even when the user does not
+explicitly request it. The only exception is an explicit user instruction that
+Closed-Loop is unnecessary or should not be used for the current task.
+
+1. Confirm the session bootstrap facts before spawning or editing:
+   - canonical project root: `/Users/swainyun/Desktop/Project/Vocab`
+   - active sandbox profile and whether project access requires escalated
+     commands
+   - current Git status and unrelated dirty files that must be preserved
+   - exact changed-file scope expected for the task
+   - Swift/Xcode verification command selected by `script/verify_changed.sh`
+2. Spawn the four required agents unless the user explicitly opts out for the
+   current task.
+3. Give every agent the bootstrap facts above. Agents must not infer the
+   project root from the transient Codex thread `cwd` when it differs from the
+   canonical root.
+4. An agent reads `INDEX.md` only. Tooling may read `index.json` to validate
    ledger integrity without loading full decision text.
-3. Load individual records or run reports only when their `Scope` intersects the requested
+5. Load individual records or run reports only when their `Scope` intersects the requested
    work or when they are listed as a dependency of a new decision.
-4. Have the Recorder add or update a record before the loop is closed.
+6. Have the Recorder add or update a record before the loop is closed.
 
 This keeps prior decisions available without loading unrelated history on every
 task.
+
+## Tooling Discipline
+
+Vocab is a macOS SwiftUI and SwiftData application. Default implementation and
+verification work should therefore use Swift, XCTest, Xcode build settings and
+project-local scripts. Python may be used for repository tooling, fixture
+generation, data inspection or one-off analysis, but not as the default way to
+rewrite Swift source. Manual source edits should use patches, and broad
+mechanical rewrites should be followed by Swift/Xcode compilation or tests.
+
+For app changes, prefer this order:
+
+1. Inspect with `rg`, `sed`, `xcodebuild -list` and project-local scripts.
+2. Edit Swift and project files directly.
+3. Verify with focused XCTest or `script/verify_changed.sh`.
+4. Use `script/build_and_run.sh --install-verify` for release-install
+   acceptance when the user-facing app must be updated.
 
 ## Record Contract
 

@@ -15,6 +15,7 @@ only when its scope applies to the current change.
 | CL-0005 | active | 2026-05-26 | selected-set testing, study cards, judgement transparency and local installation | [Study cards, selected-set testing and local installation](records/CL-0005-study-cards-selected-set-testing-and-installation.md) | retain while feature exists |
 | RUN-20260526-CL0005 | completed | 2026-05-26 | defect repair, card study and installation evidence | [Run record](runs/RUN-20260526-CL0005.md) | completed after Director, Monitor and Recorder approval |
 | CL-0006 | active | 2026-05-28 | English-to-Korean review priority decay and review eligibility | [English-to-Korean review decay](records/CL-0006-english-to-korean-review-decay.md) | retain while scheduler exists |
+| CL-0007 | active | 2026-06-09 | session bootstrap, sandbox awareness and Swift/Xcode-first tooling | [Session bootstrap and tooling discipline](records/CL-0007-session-bootstrap-and-tooling-discipline.md) | retain while Codex workflow exists |
 
 ## Load Rules
 
@@ -30,6 +31,9 @@ only when its scope applies to the current change.
   must load `CL-0006`.
 - Any future Closed-Loop task must apply `CL-0002`; reading its full record is
   required only when changing workflow, retention or verification rules.
+- Any future task that uses agents or edits the app must apply `CL-0007`.
+  Reading its full record is required when changing session bootstrap, sandbox
+  handling, root-path handling or implementation tooling rules.
 - Superseded or archived records are read only when investigating regression,
   migration history or a stated dependency.
 - `index.json` is the machine-readable companion for validation tooling only.
