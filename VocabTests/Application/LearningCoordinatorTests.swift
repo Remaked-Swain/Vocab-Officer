@@ -88,6 +88,36 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(Set(generated.1.map(\.word.id)).count, generated.1.count)
     }
 
+    func testLooseWordIsSavedOutsideDailySetOnSameDay() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let set = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first)
+
+        let loose = try coordinator.addLooseWord(term: "bonus", meaningsText: "보충뜻", date: testDate)
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 101)
+        XCTAssertEqual(set.items.count, 100)
+        XCTAssertFalse(try context.fetch(FetchDescriptor<DailySetItemRecord>()).contains { $0.wordID == loose.id })
+        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
+        XCTAssertFalse(generated.1.contains { $0.word.id == loose.id })
+    }
+
+    func testLooseDuplicateHeadwordMergesMeaningsWithoutAddingSetItem() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let existing = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "term-0" })
+        let beforeItemCount = try context.fetch(FetchDescriptor<DailySetItemRecord>()).count
+
+        let result = try coordinator.addLooseWord(term: "TERM-0", meaningsText: "뜻-0, 보충뜻", date: testDate)
+
+        XCTAssertEqual(result.id, existing.id)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 100)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<DailySetItemRecord>()).count, beforeItemCount)
+        XCTAssertEqual(Set(existing.meanings.map(\.text)), ["뜻-0", "보충뜻"])
+    }
+
     func testTodaySessionPrioritizesWordsNotPreviouslyPresentedThatDay() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)

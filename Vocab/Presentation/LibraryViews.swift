@@ -221,9 +221,11 @@ struct ReviewView: View {
 struct LibraryView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \WordRecord.normalizedTerm) private var words: [WordRecord]
+    @Query private var setItems: [DailySetItemRecord]
     @State private var searchText = ""
     @State private var selection = Set<UUID>()
     @State private var showingDeleteConfirmation = false
+    @State private var showingAddWord = false
     @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
@@ -235,6 +237,10 @@ struct LibraryView: View {
 
     private var selectedWords: [WordRecord] {
         words.filter { selection.contains($0.id) && $0.deletedAt == nil }
+    }
+
+    private var setLinkedWordIDs: Set<UUID> {
+        Set(setItems.map(\.wordID))
     }
 
     var body: some View {
@@ -253,9 +259,19 @@ struct LibraryView: View {
                         Text(word.meanings.map(\.text).joined(separator: ", "))
                             .font(.body)
                             .foregroundStyle(.secondary)
-                        Text(word.statusRaw.capitalized)
-                            .font(.caption)
-                            .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
+                        HStack(spacing: 8) {
+                            Text(word.statusRaw.capitalized)
+                                .font(.caption)
+                                .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
+                            if !setLinkedWordIDs.contains(word.id) {
+                                Text("낱개")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.blue)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .background(.blue.opacity(0.12), in: Capsule())
+                            }
+                        }
                     }
                     Spacer()
                     Button("수정") { editingWord = word }
@@ -267,7 +283,11 @@ struct LibraryView: View {
         .searchable(text: $searchText, prompt: "영단어 검색")
         .navigationTitle("단어장")
         .toolbar {
-            ToolbarItem {
+            ToolbarItemGroup {
+                Button("낱개 단어 추가") {
+                    showingAddWord = true
+                }
+                .controlSize(.large)
                 Button("선택 단어 삭제", role: .destructive) {
                     showingDeleteConfirmation = true
                 }
@@ -288,6 +308,12 @@ struct LibraryView: View {
         }
         .sheet(item: $editingWord) { word in
             WordEditSheet(word: word) { message, isError in
+                self.message = message
+                self.isError = isError
+            }
+        }
+        .sheet(isPresented: $showingAddWord) {
+            LooseWordAddSheet { message, isError in
                 self.message = message
                 self.isError = isError
             }
@@ -420,6 +446,65 @@ private struct WordEditSheet: View {
         do {
             try LearningCoordinator(context: context).updateWord(word, term: term, meaningsText: meaningsText)
             onComplete("\(word.term)을 수정했습니다.", false)
+            dismiss()
+        } catch {
+            self.error = error.localizedDescription
+            onComplete(error.localizedDescription, true)
+        }
+    }
+}
+
+private struct LooseWordAddSheet: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
+    let onComplete: (String, Bool) -> Void
+    @State private var term = ""
+    @State private var meaningsText = ""
+    @State private var error: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text("낱개 단어 추가")
+                .font(.title.weight(.semibold))
+            Text("일일 100개 세트에 포함하지 않고 단어장 SOT에만 저장합니다. 기존 표제어가 있으면 새 단어를 만들지 않고 뜻만 병합합니다.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            TextField("영단어", text: $term)
+                .textFieldStyle(.roundedBorder)
+                .font(.title3)
+                .controlSize(.large)
+            Text("한국어 뜻")
+                .font(.headline)
+            TextEditor(text: $meaningsText)
+                .font(.body)
+                .frame(minHeight: 130)
+                .overlay { RoundedRectangle(cornerRadius: 8).stroke(.quaternary) }
+            Text("쉼표, 슬래시 또는 줄바꿈으로 여러 뜻을 구분합니다.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if let error {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("취소") { dismiss() }
+                    .controlSize(.large)
+                Button("낱개 단어 저장") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .disabled(term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || meaningsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(28)
+        .frame(minWidth: 460)
+    }
+
+    private func save() {
+        do {
+            let word = try LearningCoordinator(context: context).addLooseWord(term: term, meaningsText: meaningsText)
+            onComplete("\(word.term)을 낱개 단어로 저장했습니다.", false)
             dismiss()
         } catch {
             self.error = error.localizedDescription

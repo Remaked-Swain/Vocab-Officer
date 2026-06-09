@@ -188,6 +188,45 @@ final class LearningCoordinator {
         try context.save()
     }
 
+    @discardableResult
+    func addLooseWord(term: String, meaningsText: String, date: Date = .now) throws -> WordRecord {
+        let trimmedTerm = term.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedTerm.isEmpty else { throw LearningError.termRequired }
+        let normalizedTerm = TextNormalizer.normalizeEnglish(trimmedTerm)
+        let meaningValues = meaningsText.components(separatedBy: CharacterSet(charactersIn: ",/\n"))
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard !meaningValues.isEmpty else { throw LearningError.meaningRequired }
+
+        let existing = try context.fetch(FetchDescriptor<WordRecord>()).first {
+            $0.deletedAt == nil && $0.normalizedTerm == normalizedTerm
+        }
+        let word: WordRecord
+        if let existing {
+            word = existing
+            if word.reviewState == nil {
+                word.reviewState = ReviewStateRecord()
+            }
+        } else {
+            let newWord = WordRecord(term: trimmedTerm, createdAt: date)
+            newWord.reviewState = ReviewStateRecord()
+            context.insert(newWord)
+            word = newWord
+        }
+
+        var existingMeanings = Set(word.meanings.map(\.normalizedText))
+        for value in meaningValues {
+            let normalizedMeaning = TextNormalizer.normalizeKorean(value)
+            guard existingMeanings.insert(normalizedMeaning).inserted else { continue }
+            let meaning = MeaningRecord(text: value)
+            meaning.word = word
+            word.meanings.append(meaning)
+            context.insert(meaning)
+        }
+        try context.save()
+        return word
+    }
+
     func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now) throws -> (TestSessionRecord, [SessionQuestion]) {
         let day = SeoulCalendar.day(for: date)
         let words = try context.fetch(FetchDescriptor<WordRecord>())
