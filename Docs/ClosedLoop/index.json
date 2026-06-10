@@ -191,6 +191,23 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": []
+    },
+    {
+      "id": "CL-0008",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Loose word testing",
+      "date": "2026-06-10",
+      "tags": ["testing", "loose-word", "fair-order", "session-selection"],
+      "affectedPaths": ["Vocab/Application/", "Vocab/Presentation/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0008-loose-word-testing.md",
+      "references": ["CL-0001", "CL-0002", "CL-0005", "CL-0006", "CL-0007"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": []
     }
   ]
 }

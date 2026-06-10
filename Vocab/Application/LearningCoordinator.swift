@@ -107,6 +107,7 @@ enum PasteIntakeError: LocalizedError {
 enum SessionMode: String, CaseIterable, Identifiable {
     case today = "오늘 신규"
     case set = "세트 선택"
+    case loose = "낱개"
     case review = "복습"
     case mixed = "혼합"
     var id: String { rawValue }
@@ -266,6 +267,7 @@ final class LearningCoordinator {
         let sets = try context.fetch(FetchDescriptor<DailySetRecord>())
         let referenceSet = sets.first(where: { $0.seoulDay == day }) ?? sets.sorted { $0.createdAt > $1.createdAt }.first
         let referenceIDs: Set<UUID> = Set(referenceSet?.items.map(\.wordID) ?? [])
+        let linkedWordIDs = Set(try context.fetch(FetchDescriptor<DailySetItemRecord>()).map(\.wordID))
         compactSessionHistory(now: date)
         let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
         let exposure = presentationStats(from: sessions)
@@ -285,6 +287,10 @@ final class LearningCoordinator {
             return record.statusRaw == "active" && state.activePriority > 0
         }
         let orderedReview = reviewOrder(review, exposure: exposure)
+        let loose = fairOrder(
+            words.filter { !linkedWordIDs.contains($0.id) },
+            exposure: exposure
+        )
         var selected: [WordRecord] = []
         switch mode {
         case .today:
@@ -300,6 +306,8 @@ final class LearningCoordinator {
             let prioritized = fairOrder(setWords.filter { !allPresentedIDs.contains($0.id) }, exposure: exposure)
                 + fairOrder(setWords.filter { allPresentedIDs.contains($0.id) }, exposure: exposure)
             selected = Array(prioritized.prefix(20))
+        case .loose:
+            selected = Array(loose.prefix(20))
         case .review:
             selected = Array(orderedReview.prefix(20))
             appendUnique(from: reference, to: &selected, limit: 20)

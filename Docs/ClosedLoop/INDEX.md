@@ -16,6 +16,7 @@ only when its scope applies to the current change.
 | RUN-20260526-CL0005 | completed | 2026-05-26 | defect repair, card study and installation evidence | [Run record](runs/RUN-20260526-CL0005.md) | completed after Director, Monitor and Recorder approval |
 | CL-0006 | active | 2026-05-28 | English-to-Korean review priority decay and review eligibility | [English-to-Korean review decay](records/CL-0006-english-to-korean-review-decay.md) | retain while scheduler exists |
 | CL-0007 | active | 2026-06-09 | session bootstrap, sandbox awareness and Swift/Xcode-first tooling | [Session bootstrap and tooling discipline](records/CL-0007-session-bootstrap-and-tooling-discipline.md) | retain while Codex workflow exists |
+| CL-0008 | active | 2026-06-10 | loose-word test eligibility and fair presentation | [Loose word testing](records/CL-0008-loose-word-testing.md) | retain while loose-word intake and testing exist |
 
 ## Load Rules
 
@@ -27,6 +28,7 @@ only when its scope applies to the current change.
   must load `CL-0004`.
 - Selected-set testing, test presentation safety, learning cards, judgement
   acknowledgement or local app installation work must load `CL-0005`.
+- Loose-word test eligibility or presentation work must load `CL-0008`.
 - Review priority, failure checks, review session eligibility or scheduler work
   must load `CL-0006`.
 - Any future Closed-Loop task must apply `CL-0002`; reading its full record is

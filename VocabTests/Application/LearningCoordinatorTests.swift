@@ -142,6 +142,50 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertFalse(generated.1.contains { $0.word.id == loose.id })
     }
 
+    func testLooseWordCanBeTestedWithoutDailySet() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let loose = try coordinator.addLooseWord(term: "bonus", meaningsText: "보충뜻", date: testDate)
+
+        let generated = try coordinator.generateSession(mode: .loose, direction: .enToKo, date: testDate)
+
+        XCTAssertEqual(generated.1.map(\.word.id), [loose.id])
+        XCTAssertTrue(generated.0.wasReduced)
+        XCTAssertEqual(generated.0.modeRaw, SessionMode.loose.rawValue)
+    }
+
+    func testLooseSessionExcludesSetWordsAndPrioritizesUnseenWords() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let looseWords = try (0..<21).map { index in
+            try coordinator.addLooseWord(term: "loose-\(index)", meaningsText: "낱개뜻-\(index)", date: testDate)
+        }
+
+        let first = try coordinator.generateSession(mode: .loose, direction: .enToKo, date: testDate)
+        let firstIDs = Set(first.1.map(\.word.id))
+        let unseenID = try XCTUnwrap(looseWords.first { !firstIDs.contains($0.id) }?.id)
+        let second = try coordinator.generateSession(mode: .loose, direction: .enToKo, date: testDate)
+
+        XCTAssertEqual(first.1.count, 20)
+        XCTAssertEqual(firstIDs.count, 20)
+        XCTAssertTrue(first.1.allSatisfy { $0.word.term.hasPrefix("loose-") })
+        XCTAssertEqual(second.1.count, 20)
+        XCTAssertTrue(second.1.contains { $0.word.id == unseenID })
+        XCTAssertTrue(second.1.allSatisfy { $0.word.term.hasPrefix("loose-") })
+    }
+
+    func testEmptyLoosePoolDoesNotPersistSession() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+
+        XCTAssertThrowsError(
+            try coordinator.generateSession(mode: .loose, direction: .enToKo, date: testDate)
+        )
+        XCTAssertTrue(try context.fetch(FetchDescriptor<TestSessionRecord>()).isEmpty)
+    }
+
     func testLooseDuplicateHeadwordMergesMeaningsWithoutAddingSetItem() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)

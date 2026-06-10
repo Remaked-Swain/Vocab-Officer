@@ -48,6 +48,10 @@ struct TestSetupView: View {
                 Text("아직 시험하지 않은 과거 세트도 선택하여 20문항씩 학습할 수 있습니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+            } else if mode == .loose {
+                Text("일일 세트에 속하지 않은 낱개 단어만 최대 20개 출제합니다. 덜 출제된 단어를 우선하여 반복 테스트에서도 빈도를 고르게 유지합니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             } else if mode == .review {
                 Text("복습 대상이 20개보다 적으면 가장 최근 세트에서 문항을 보충합니다.")
                     .font(.callout)
