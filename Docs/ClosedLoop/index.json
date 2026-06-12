@@ -208,6 +208,23 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": []
+    },
+    {
+      "id": "CL-0009",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Previous-set re-exposure in review mode",
+      "date": "2026-06-12",
+      "tags": ["review", "previous-set", "re-exposure", "session-selection"],
+      "affectedPaths": ["Vocab/Application/", "Vocab/Presentation/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0009-previous-set-review-reexposure.md",
+      "references": ["CL-0001", "CL-0002", "CL-0005", "CL-0006", "CL-0007", "CL-0008"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["long-term recurrence across all historical sets is intentionally excluded"]
     }
   ]
 }

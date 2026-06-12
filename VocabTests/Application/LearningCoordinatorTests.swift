@@ -235,6 +235,129 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertTrue(Set(generated.1.map(\.word.id)).isDisjoint(with: Set(previouslyPresentedIDs)))
     }
 
+    func testReviewSessionCapsInitialFailuresThenUsesPreviousSetBeforeRemainingFailures() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let previousDate = ISO8601DateFormatter().date(from: "2026-05-24T01:00:00Z")!
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "previous"), date: previousDate)
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "today"), date: testDate)
+
+        let previousWords = try context.fetch(FetchDescriptor<WordRecord>())
+            .filter { $0.term.hasPrefix("previous-") }
+        for word in previousWords.dropFirst(2) {
+            word.statusRaw = "mastered"
+        }
+        for index in 0..<18 {
+            let word = try coordinator.addLooseWord(
+                term: "failure-\(index)",
+                meaningsText: "실패뜻-\(index)",
+                date: testDate
+            )
+            word.reviewState?.failureCheck = 1
+            word.reviewState?.activePriority = 1
+        }
+        try context.save()
+
+        let generated = try coordinator.generateSession(mode: .review, direction: .enToKo, date: testDate)
+        let terms = generated.1.map(\.word.term)
+
+        XCTAssertEqual(terms.count, 20)
+        XCTAssertTrue(terms.prefix(14).allSatisfy { $0.hasPrefix("failure-") })
+        XCTAssertTrue(terms[14..<16].allSatisfy { $0.hasPrefix("previous-") })
+        XCTAssertTrue(terms.suffix(4).allSatisfy { $0.hasPrefix("failure-") })
+        XCTAssertFalse(terms.contains { $0.hasPrefix("today-") })
+    }
+
+    func testReviewSessionUsesLatestSetAsPreviousSetWhenTodaySetIsMissing() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let olderDate = ISO8601DateFormatter().date(from: "2026-05-24T01:00:00Z")!
+        let latestDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
+        let targetDate = ISO8601DateFormatter().date(from: "2026-05-27T01:00:00Z")!
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "older"), date: olderDate)
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "latest"), date: latestDate)
+        for index in 0..<14 {
+            let word = try coordinator.addLooseWord(
+                term: "failure-\(index)",
+                meaningsText: "실패뜻-\(index)",
+                date: targetDate
+            )
+            word.reviewState?.failureCheck = 1
+            word.reviewState?.activePriority = 1
+        }
+        try context.save()
+
+        let generated = try coordinator.generateSession(mode: .review, direction: .enToKo, date: targetDate)
+        let terms = generated.1.map(\.word.term)
+
+        XCTAssertEqual(terms.count, 20)
+        XCTAssertTrue(terms.prefix(14).allSatisfy { $0.hasPrefix("failure-") })
+        XCTAssertTrue(terms.suffix(6).allSatisfy { $0.hasPrefix("latest-") })
+        XCTAssertFalse(terms.contains { $0.hasPrefix("older-") })
+    }
+
+    func testReviewSessionLimitsPreviousSetToSixWhenFailurePoolIsSmall() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let previousDate = ISO8601DateFormatter().date(from: "2026-05-24T01:00:00Z")!
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "previous"), date: previousDate)
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "today"), date: testDate)
+        for index in 0..<3 {
+            let word = try coordinator.addLooseWord(
+                term: "failure-\(index)",
+                meaningsText: "실패뜻-\(index)",
+                date: testDate
+            )
+            word.reviewState?.failureCheck = 1
+            word.reviewState?.activePriority = 1
+        }
+        try context.save()
+
+        let generated = try coordinator.generateSession(mode: .review, direction: .enToKo, date: testDate)
+        let terms = generated.1.map(\.word.term)
+
+        XCTAssertEqual(terms.count, 20)
+        XCTAssertEqual(terms.filter { $0.hasPrefix("failure-") }.count, 3)
+        XCTAssertEqual(terms.filter { $0.hasPrefix("previous-") }.count, 6)
+        XCTAssertEqual(terms.filter { $0.hasPrefix("today-") }.count, 11)
+        XCTAssertEqual(Set(generated.1.map(\.word.id)).count, 20)
+    }
+
+    func testReviewSessionIgnoresFutureSetsWhenTodaySetIsMissing() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let pastDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
+        let targetDate = ISO8601DateFormatter().date(from: "2026-05-27T01:00:00Z")!
+        let futureDate = ISO8601DateFormatter().date(from: "2026-05-28T01:00:00Z")!
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "past"), date: pastDate)
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "future"), date: futureDate)
+
+        let generated = try coordinator.generateSession(mode: .review, direction: .enToKo, date: targetDate)
+
+        XCTAssertEqual(generated.1.count, 20)
+        XCTAssertTrue(generated.1.allSatisfy { $0.word.term.hasPrefix("past-") })
+    }
+
+    func testMixedSessionIgnoresFutureSetsInHistoricalBacklog() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        let olderDate = ISO8601DateFormatter().date(from: "2026-05-25T01:00:00Z")!
+        let latestPastDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
+        let targetDate = ISO8601DateFormatter().date(from: "2026-05-27T01:00:00Z")!
+        let futureDate = ISO8601DateFormatter().date(from: "2026-05-28T01:00:00Z")!
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "older"), date: olderDate)
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "latest-past"), date: latestPastDate)
+        try coordinator.saveDailySet(drafts(count: 100, prefix: "future"), date: futureDate)
+
+        let generated = try coordinator.generateSession(mode: .mixed, direction: .enToKo, date: targetDate)
+        let terms = generated.1.map(\.word.term)
+
+        XCTAssertEqual(terms.count, 20)
+        XCTAssertGreaterThanOrEqual(terms.filter { $0.hasPrefix("latest-past-") }.count, 12)
+        XCTAssertTrue(terms.contains { $0.hasPrefix("older-") })
+        XCTAssertFalse(terms.contains { $0.hasPrefix("future-") })
+    }
+
     func testMixedSessionKeepsTodayMajorityAndIncludesHistoricalUntestedWords() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)

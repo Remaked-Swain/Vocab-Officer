@@ -265,8 +265,16 @@ final class LearningCoordinator {
         let words = try context.fetch(FetchDescriptor<WordRecord>())
             .filter { $0.deletedAt == nil && $0.statusRaw == "active" }
         let sets = try context.fetch(FetchDescriptor<DailySetRecord>())
-        let referenceSet = sets.first(where: { $0.seoulDay == day }) ?? sets.sorted { $0.createdAt > $1.createdAt }.first
+        let setsByRecency = sets.filter { $0.seoulDay <= day }.sorted {
+            if $0.seoulDay != $1.seoulDay { return $0.seoulDay > $1.seoulDay }
+            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
+            return $0.id.uuidString < $1.id.uuidString
+        }
+        let todaySet = setsByRecency.first(where: { $0.seoulDay == day })
+        let referenceSet = todaySet ?? setsByRecency.first
+        let previousSet = setsByRecency.first(where: { $0.seoulDay < day })
         let referenceIDs: Set<UUID> = Set(referenceSet?.items.map(\.wordID) ?? [])
+        let previousSetIDs: Set<UUID> = Set(previousSet?.items.map(\.wordID) ?? [])
         let linkedWordIDs = Set(try context.fetch(FetchDescriptor<DailySetItemRecord>()).map(\.wordID))
         compactSessionHistory(now: date)
         let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
@@ -277,7 +285,7 @@ final class LearningCoordinator {
             fairOrder(words.filter { referenceIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
                 + fairOrder(words.filter { referenceIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
         )
-        let historicalSetIDs = Set(sets.filter { $0.id != referenceSet?.id }.flatMap(\.items).map(\.wordID))
+        let historicalSetIDs = Set(setsByRecency.filter { $0.id != referenceSet?.id }.flatMap(\.items).map(\.wordID))
         let unverifiedBacklog = fairOrder(
             words.filter { historicalSetIDs.contains($0.id) && !allPresentedIDs.contains($0.id) },
             exposure: exposure
@@ -287,6 +295,10 @@ final class LearningCoordinator {
             return record.statusRaw == "active" && state.activePriority > 0
         }
         let orderedReview = reviewOrder(review, exposure: exposure)
+        let previousSetCandidates = fairOrder(
+            words.filter { previousSetIDs.contains($0.id) },
+            exposure: exposure
+        )
         let loose = fairOrder(
             words.filter { !linkedWordIDs.contains($0.id) },
             exposure: exposure
@@ -309,7 +321,13 @@ final class LearningCoordinator {
         case .loose:
             selected = Array(loose.prefix(20))
         case .review:
-            selected = Array(orderedReview.prefix(20))
+            selected = Array(orderedReview.prefix(14))
+            appendUnique(
+                from: previousSetCandidates,
+                to: &selected,
+                limit: min(20, selected.count + 6)
+            )
+            appendUnique(from: orderedReview, to: &selected, limit: 20)
             appendUnique(from: reference, to: &selected, limit: 20)
         case .mixed:
             selected = Array(reference.prefix(12))

@@ -53,7 +53,7 @@ struct TestSetupView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if mode == .review {
-                Text("복습 대상이 20개보다 적으면 가장 최근 세트에서 문항을 보충합니다.")
+                Text("복습은 미암기 단어 최대 14개와 직전 세트 최대 6개를 조합합니다. 자리가 남으면 나머지 복습 대상과 기준 세트로 채웁니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if mode == .mixed {

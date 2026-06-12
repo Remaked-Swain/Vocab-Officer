@@ -17,6 +17,7 @@ only when its scope applies to the current change.
 | CL-0006 | active | 2026-05-28 | English-to-Korean review priority decay and review eligibility | [English-to-Korean review decay](records/CL-0006-english-to-korean-review-decay.md) | retain while scheduler exists |
 | CL-0007 | active | 2026-06-09 | session bootstrap, sandbox awareness and Swift/Xcode-first tooling | [Session bootstrap and tooling discipline](records/CL-0007-session-bootstrap-and-tooling-discipline.md) | retain while Codex workflow exists |
 | CL-0008 | active | 2026-06-10 | loose-word test eligibility and fair presentation | [Loose word testing](records/CL-0008-loose-word-testing.md) | retain while loose-word intake and testing exist |
+| CL-0009 | active | 2026-06-12 | review-mode previous-set re-exposure and 14+6 selection | [Previous-set review re-exposure](records/CL-0009-previous-set-review-reexposure.md) | retain while review-session selection exists |
 
 ## Load Rules
 
@@ -31,6 +32,8 @@ only when its scope applies to the current change.
 - Loose-word test eligibility or presentation work must load `CL-0008`.
 - Review priority, failure checks, review session eligibility or scheduler work
   must load `CL-0006`.
+- Review-session previous-set recurrence or its 14+6 selection rule must load
+  `CL-0009`.
 - Any future Closed-Loop task must apply `CL-0002`; reading its full record is
   required only when changing workflow, retention or verification rules.
 - Any future task that uses agents or edits the app must apply `CL-0007`.
