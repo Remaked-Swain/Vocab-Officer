@@ -69,7 +69,7 @@ enum DailyIntakePasteParser {
             }
 
             let range = NSRange(line.startIndex..<line.endIndex, in: line)
-            let pattern = #"^\s*(?:\d+\s*-\s*)?([A-Za-z][A-Za-z0-9' -]*?)\s*-\s*((?:[가-힣0-9~(]|약\s).*)\s*$"#
+            let pattern = #"^\s*(?:\d+\s*-\s*)?([A-Za-z][A-Za-z0-9' -]*?)\s*-\s*((?:[가-힣0-9~(（]|약\s).*)\s*$"#
             let expression = try NSRegularExpression(pattern: pattern)
             guard let match = expression.firstMatch(in: line, range: range),
                   let termRange = Range(match.range(at: 1), in: line),
@@ -147,7 +147,7 @@ struct JudgeResult {
 
 extension MeaningRecord {
     var isIndividuallyTrackable: Bool {
-        !text.contains { ",/\n".contains($0) }
+        MeaningTextSplitter.split(text).count == 1
     }
 
     var isTrackableCoreMeaning: Bool {

@@ -225,6 +225,23 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["long-term recurrence across all historical sets is intentionally excluded"]
+    },
+    {
+      "id": "CL-0010",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Parenthesized-comma meaning tracking",
+      "date": "2026-06-17",
+      "tags": ["meaning-tracking", "correction", "paste-intake", "parentheses"],
+      "affectedPaths": ["Vocab/Application/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0010-parenthesized-comma-meaning-tracking.md",
+      "references": ["CL-0001", "CL-0002", "CL-0004", "CL-0005", "CL-0006", "CL-0007"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["display joins can remain visually ambiguous when meanings contain parenthesized commas"]
     }
   ]
 }

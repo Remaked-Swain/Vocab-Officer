@@ -67,6 +67,15 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(drafts[3].meanings, "표본, 예시")
     }
 
+    func testPasteParserAcceptsFullwidthParenthesizedMeaningStart() throws {
+        let drafts = try DailyIntakePasteParser.parse("0001-board-（배, 기차에） 타다")
+
+        XCTAssertEqual(drafts.count, 1)
+        XCTAssertEqual(drafts[0].term, "board")
+        XCTAssertEqual(drafts[0].meanings, "（배, 기차에） 타다")
+        XCTAssertEqual(MeaningTextSplitter.split(drafts[0].meanings), ["（배, 기차에） 타다"])
+    }
+
     func testPastedOneHundredWordsUseAtomicDailySetSave() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)
@@ -462,6 +471,7 @@ final class LearningCoordinatorTests: XCTestCase {
         legacyMeaning.word = question.word
         question.word.meanings.append(legacyMeaning)
 
+        XCTAssertFalse(legacyMeaning.isTrackableCoreMeaning)
         let result = coordinator.judge(answer: "첫 의미, 둘째 의미", for: question)
         XCTAssertEqual(result.automaticResult, .incorrect)
 
@@ -469,6 +479,25 @@ final class LearningCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(legacyMeaning.successDays.isEmpty)
         XCTAssertEqual(question.word.statusRaw, "active")
+    }
+
+    func testParenthesizedCommaMeaningCanBeConfirmedForCorrectionCredit() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        var values = drafts(count: 100, prefix: "entry")
+        values[0] = WordDraft(term: "formula", meanings: "(수학, 화학) 공식")
+        try coordinator.saveDailySet(values, date: testDate)
+        let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "formula" })
+        let meaning = try XCTUnwrap(word.meanings.first)
+        let question = SessionQuestion(word: word, direction: .enToKo, index: 0)
+
+        XCTAssertTrue(meaning.isTrackableCoreMeaning)
+        XCTAssertEqual(coordinator.judge(answer: "(수학, 화학) 공식", for: question).automaticResult, .correct)
+
+        let session = TestSessionRecord(directionRaw: PracticeDirection.enToKo.rawValue, modeRaw: SessionMode.today.rawValue, seoulDay: SeoulCalendar.day(for: testDate), wordIDs: [word.id], wasReduced: true)
+        try coordinator.commit(answer: "사용자 보정", result: .correct, automatic: .incorrect, matchedMeaningID: meaning.id, question: question, session: session, correction: "oneTimeCorrection", date: testDate)
+
+        XCTAssertTrue(meaning.successDays.contains(SeoulCalendar.day(for: testDate)))
     }
 
     func testInvalidMeaningInCompleteSetDoesNotPartiallyInsertWords() throws {

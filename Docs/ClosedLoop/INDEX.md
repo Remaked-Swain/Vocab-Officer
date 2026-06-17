@@ -18,6 +18,7 @@ only when its scope applies to the current change.
 | CL-0007 | active | 2026-06-09 | session bootstrap, sandbox awareness and Swift/Xcode-first tooling | [Session bootstrap and tooling discipline](records/CL-0007-session-bootstrap-and-tooling-discipline.md) | retain while Codex workflow exists |
 | CL-0008 | active | 2026-06-10 | loose-word test eligibility and fair presentation | [Loose word testing](records/CL-0008-loose-word-testing.md) | retain while loose-word intake and testing exist |
 | CL-0009 | active | 2026-06-12 | review-mode previous-set re-exposure and 14+6 selection | [Previous-set review re-exposure](records/CL-0009-previous-set-review-reexposure.md) | retain while review-session selection exists |
+| CL-0010 | active | 2026-06-17 | parenthesized-comma meaning tracking and correction | [Parenthesized-comma meaning tracking](records/CL-0010-parenthesized-comma-meaning-tracking.md) | retain while correction and meaning-tracking behavior exists |
 
 ## Load Rules
 
@@ -29,6 +30,8 @@ only when its scope applies to the current change.
   must load `CL-0004`.
 - Selected-set testing, test presentation safety, learning cards, judgement
   acknowledgement or local app installation work must load `CL-0005`.
+- Parenthesized delimiter handling, confirmed core-meaning correction, or
+  meaning trackability work must load `CL-0010`.
 - Loose-word test eligibility or presentation work must load `CL-0008`.
 - Review priority, failure checks, review session eligibility or scheduler work
   must load `CL-0006`.
