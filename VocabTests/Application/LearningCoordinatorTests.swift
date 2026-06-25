@@ -12,6 +12,11 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(values, ["(배, 기차에) 타다", "내리다", "갈아타다"])
     }
 
+    func testMeaningSplitterPreservesAcademicFieldCommaInsideParentheses() {
+        XCTAssertEqual(MeaningTextSplitter.split("(수학, 화학) 공식"), ["(수학, 화학) 공식"])
+        XCTAssertEqual(MeaningTextSplitter.split("(수학, 화학) 공식, 방식"), ["(수학, 화학) 공식", "방식"])
+    }
+
     func testDailySetPreservesParenthesizedCommaMeaning() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context)
@@ -74,6 +79,63 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(drafts[0].term, "board")
         XCTAssertEqual(drafts[0].meanings, "（배, 기차에） 타다")
         XCTAssertEqual(MeaningTextSplitter.split(drafts[0].meanings), ["（배, 기차에） 타다"])
+    }
+
+    func testPasteParserHandlesLargePastedTextWithHyphenatedTerms() throws {
+        let input = (0..<10_000).map { index in
+            String(format: "%04d-long-term-%d-뜻%d, 추가뜻%d", index + 1, index, index, index)
+        }.joined(separator: "\n")
+
+        let drafts = try DailyIntakePasteParser.parse(input)
+
+        XCTAssertEqual(drafts.count, 10_000)
+        XCTAssertEqual(drafts[0].term, "long-term-0")
+        XCTAssertEqual(drafts[9_999].term, "long-term-9999")
+        XCTAssertEqual(drafts[9_999].meanings, "뜻9999, 추가뜻9999")
+    }
+
+    func testPasteParserHandlesLongInputWithFiveDigitNumbersAndParenthesizedCommas() throws {
+        let input = (10_001...12_000).map { number in
+            "\(number)-formula-\(number)-(수학, 화학) 공식, 방식"
+        }.joined(separator: "\n")
+
+        let drafts = try DailyIntakePasteParser.parse(input)
+
+        XCTAssertEqual(drafts.count, 2_000)
+        XCTAssertEqual(drafts.first?.term, "formula-10001")
+        XCTAssertEqual(drafts.first?.meanings, "(수학, 화학) 공식, 방식")
+        XCTAssertEqual(MeaningTextSplitter.split(drafts[0].meanings), ["(수학, 화학) 공식", "방식"])
+        XCTAssertEqual(drafts.last?.term, "formula-12000")
+    }
+
+    func testPasteParserHundredLineP95MeetsTarget() throws {
+        try requirePerformanceTests()
+        let input = (0..<100).map { index in
+            String(format: "%04d-long-term-%d-(수학, 화학) 공식, 뜻%d", index + 1, index, index)
+        }.joined(separator: "\n")
+
+        let p95 = try percentile95(iterations: 200) {
+            let drafts = try DailyIntakePasteParser.parse(input)
+            XCTAssertEqual(drafts.count, 100)
+        }
+
+        print("PERF paste_parser_100_line_p95_ms=\(p95 * 1000)")
+        XCTAssertLessThanOrEqual(p95, 0.010)
+    }
+
+    func testGenerateSessionLargeFixtureP95MeetsTarget() throws {
+        try requirePerformanceTests()
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try insertSessionPerformanceFixture(context: context, wordCount: 10_000, sessionCount: 10_000, date: testDate)
+
+        let p95 = try percentile95(iterations: 40) {
+            let generated = try coordinator.generateSession(mode: .mixed, direction: .enToKo, date: testDate)
+            XCTAssertEqual(generated.1.count, 20)
+        }
+
+        print("PERF generate_session_mixed_10000_words_10000_sessions_p95_ms=\(p95 * 1000)")
+        XCTAssertLessThanOrEqual(p95, 0.300)
     }
 
     func testPastedOneHundredWordsUseAtomicDailySetSave() throws {
@@ -221,6 +283,30 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(first.wordIDs.count, 20)
         XCTAssertEqual(second.wordIDs.count, 20)
         XCTAssertTrue(Set(first.wordIDs).isDisjoint(with: Set(second.wordIDs)))
+    }
+
+    func testGenerateSessionCompactsExpiredSessionsBeforeExposureStats() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let words = try context.fetch(FetchDescriptor<WordRecord>())
+        let targetDate = ISO8601DateFormatter().date(from: "2027-01-25T01:00:00Z")!
+        context.insert(TestSessionRecord(
+            directionRaw: PracticeDirection.enToKo.rawValue,
+            modeRaw: SessionMode.today.rawValue,
+            seoulDay: "2026-05-25",
+            wordIDs: Array(words.prefix(20).map(\.id)),
+            wasReduced: false,
+            startedAt: targetDate.addingTimeInterval(-220 * 86_400)
+        ))
+        try context.save()
+
+        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: targetDate)
+
+        XCTAssertEqual(generated.1.count, 20)
+        let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
+        XCTAssertEqual(sessions.count, 1)
+        XCTAssertEqual(sessions.first?.id, generated.0.id)
     }
 
     func testReviewSessionPrefersLessPresentedWordsWithinSamePriority() throws {
@@ -492,12 +578,25 @@ final class LearningCoordinatorTests: XCTestCase {
         let question = SessionQuestion(word: word, direction: .enToKo, index: 0)
 
         XCTAssertTrue(meaning.isTrackableCoreMeaning)
+        XCTAssertEqual(word.correctionCandidateMeanings.map(\.text), ["(수학, 화학) 공식"])
+        XCTAssertEqual(word.defaultCorrectionMeaningID, meaning.id)
         XCTAssertEqual(coordinator.judge(answer: "(수학, 화학) 공식", for: question).automaticResult, .correct)
 
         let session = TestSessionRecord(directionRaw: PracticeDirection.enToKo.rawValue, modeRaw: SessionMode.today.rawValue, seoulDay: SeoulCalendar.day(for: testDate), wordIDs: [word.id], wasReduced: true)
         try coordinator.commit(answer: "사용자 보정", result: .correct, automatic: .incorrect, matchedMeaningID: meaning.id, question: question, session: session, correction: "oneTimeCorrection", date: testDate)
 
         XCTAssertTrue(meaning.successDays.contains(SeoulCalendar.day(for: testDate)))
+    }
+
+    func testCorrectionCandidatesFallBackToCoreMeaningWhenLegacyMeaningIsNotTrackable() throws {
+        let word = WordRecord(term: "legacy")
+        let legacyMeaning = MeaningRecord(text: "첫 의미, 둘째 의미", isCore: true)
+        legacyMeaning.word = word
+        word.meanings.append(legacyMeaning)
+
+        XCTAssertFalse(legacyMeaning.isTrackableCoreMeaning)
+        XCTAssertEqual(word.correctionCandidateMeanings.map(\.id), [legacyMeaning.id])
+        XCTAssertEqual(word.defaultCorrectionMeaningID, legacyMeaning.id)
     }
 
     func testInvalidMeaningInCompleteSetDoesNotPartiallyInsertWords() throws {
@@ -651,6 +750,86 @@ final class LearningCoordinatorTests: XCTestCase {
         let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
         XCTAssertEqual(sessions.count, 1)
         XCTAssertEqual(sessions.first?.seoulDay, "2027-05-01")
+    }
+
+    private func requirePerformanceTests() throws {
+        let bundlePath = Bundle.main.bundlePath
+        guard bundlePath.contains("/performance-build/") else {
+            throw XCTSkip("Run via script/measure_intake_performance.sh.")
+        }
+    }
+
+    private func percentile95(iterations: Int, operation: () throws -> Void) throws -> TimeInterval {
+        var durations: [TimeInterval] = []
+        durations.reserveCapacity(iterations)
+        for _ in 0..<iterations {
+            let started = ContinuousClock.now
+            try operation()
+            let duration = started.duration(to: .now)
+            durations.append(Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1_000_000_000_000_000_000)
+        }
+        durations.sort()
+        let index = max(0, min(durations.count - 1, Int((Double(durations.count) * 0.95).rounded(.up)) - 1))
+        return durations[index]
+    }
+
+    private func insertSessionPerformanceFixture(context: ModelContext, wordCount: Int, sessionCount: Int, date: Date) throws {
+        var words: [WordRecord] = []
+        words.reserveCapacity(wordCount)
+
+        for index in 0..<wordCount {
+            let word = WordRecord(term: "perf-\(index)", createdAt: date)
+            let state = ReviewStateRecord()
+            if index.isMultiple(of: 7) {
+                state.failureCheck = 1
+                state.activePriority = 1
+            }
+            word.reviewState = state
+            context.insert(word)
+            for meaningIndex in 0..<3 {
+                let meaning = MeaningRecord(text: "성능뜻-\(index)-\(meaningIndex)")
+                meaning.word = word
+                word.meanings.append(meaning)
+                context.insert(meaning)
+            }
+            words.append(word)
+        }
+
+        for setIndex in 0..<(wordCount / 100) {
+            let setDate = date.addingTimeInterval(-Double(wordCount / 100 - setIndex) * 86_400)
+            let set = DailySetRecord(seoulDay: SeoulCalendar.day(for: setDate), createdAt: setDate)
+            for offset in 0..<100 {
+                let word = words[setIndex * 100 + offset]
+                let item = DailySetItemRecord(orderIndex: offset, entryKind: "newHeadword", wordID: word.id)
+                item.set = set
+                set.items.append(item)
+                context.insert(item)
+            }
+            set.completedAt = setDate
+            context.insert(set)
+        }
+
+        for sessionIndex in 0..<sessionCount {
+            let start = (sessionIndex * 17) % max(wordCount - 20, 1)
+            let ids = words[start..<(start + 20)].map(\.id)
+            let startedAt = date.addingTimeInterval(-Double(sessionIndex % 30) * 60)
+            for word in words[start..<(start + 20)] {
+                guard let state = word.reviewState else { continue }
+                state.presentationCount = (state.presentationCount ?? 0) + 1
+                if (state.lastPresentedAt ?? .distantPast) < startedAt {
+                    state.lastPresentedAt = startedAt
+                }
+            }
+            context.insert(TestSessionRecord(
+                directionRaw: PracticeDirection.enToKo.rawValue,
+                modeRaw: SessionMode.mixed.rawValue,
+                seoulDay: SeoulCalendar.day(for: startedAt),
+                wordIDs: ids,
+                wasReduced: false,
+                startedAt: startedAt
+            ))
+        }
+        try context.save()
     }
 
     private var testDate: Date {

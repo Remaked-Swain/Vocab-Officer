@@ -29,35 +29,68 @@ enum OCRVocabularyFormatter {
     private static func extractEntries(from tokens: [OCRTextToken]) -> [VocabularyEntry] {
         let normalized = tokens.map { NormalizedToken(text: clean($0.text), boundingBox: $0.boundingBox) }
             .filter { !$0.text.isEmpty && isContentToken($0) }
-        let numbers = normalized.filter { isNumber($0.text) }
-        var entries: [VocabularyEntry] = []
-        var seenNumbers = Set<Int>()
+        let rowIndex = Dictionary(grouping: normalized) { rowKey(for: $0) }
+        let numbers = normalized.compactMap { token -> (token: NormalizedToken, number: Int, text: String)? in
+            guard let numberText = normalizedNumberText(token.text), let number = Int(numberText) else {
+                return nil
+            }
+            return (token, number, numberText)
+        }
+        var entriesByNumber: [Int: VocabularyEntry] = [:]
 
         for number in numbers {
-            guard let numberValue = Int(number.text), seenNumbers.insert(numberValue).inserted else { continue }
-            let column = columnBounds(for: number)
-            let rowTokens = normalized.filter {
-                $0 !== number &&
-                $0.centerX >= column.minX &&
-                $0.centerX <= column.maxX &&
-                abs($0.centerY - number.centerY) <= 0.036
-            }
-
-            guard let termToken = rowTokens
-                .filter({ isEnglishTerm($0.text) && $0.minX > number.maxX })
-                .min(by: { termScore($0, number: number) < termScore($1, number: number) }) else {
+            guard let entry = entry(for: number, rowIndex: rowIndex) else {
                 continue
             }
-
-            let meaningTokens = rowTokens
-                .filter { containsHangul($0.text) && $0.minX >= termToken.minX - 0.02 }
-                .sorted { $0.minX < $1.minX }
-            guard !meaningTokens.isEmpty else { continue }
-            let meaning = meaningTokens.map(\.text).joined(separator: " ")
-            entries.append(VocabularyEntry(number: numberValue, numberText: number.text, term: termToken.text.lowercased(), meaning: meaning))
+            if let existing = entriesByNumber[number.number], existing.score <= entry.score {
+                continue
+            }
+            entriesByNumber[number.number] = entry
         }
 
-        return entries
+        return Array(entriesByNumber.values)
+    }
+
+    private static func entry(
+        for number: (token: NormalizedToken, number: Int, text: String),
+        rowIndex: [Int: [NormalizedToken]]
+    ) -> VocabularyEntry? {
+        let column = columnBounds(for: number.token)
+        let tolerance = max(CGFloat(0.036), number.token.height * 2.4)
+        let keyRadius = max(2, Int((tolerance * 120).rounded(.up)))
+        let nearbyRows = ((rowKey(for: number.token) - keyRadius)...(rowKey(for: number.token) + keyRadius))
+            .flatMap { rowIndex[$0] ?? [] }
+        let rowTokens = nearbyRows.filter {
+            $0 !== number.token &&
+            $0.centerX >= column.minX &&
+            $0.centerX <= column.maxX &&
+            abs($0.centerY - number.token.centerY) <= tolerance
+        }
+
+        guard let termToken = rowTokens
+            .filter({ isEnglishTerm($0.text) && $0.minX > number.token.maxX })
+            .min(by: { termScore($0, number: number.token) < termScore($1, number: number.token) }) else {
+            return nil
+        }
+
+        let meaningTokens = rowTokens
+            .filter { isMeaningToken($0.text) && $0.minX > number.token.maxX && $0 !== termToken }
+            .sorted { $0.minX < $1.minX }
+        guard !meaningTokens.isEmpty else { return nil }
+
+        let meaning = meaningTokens.map(\.text).joined(separator: " ")
+        let score = entryScore(number: number.token, term: termToken, meanings: meaningTokens, numberText: number.text)
+        return VocabularyEntry(
+            number: number.number,
+            numberText: number.text,
+            term: termToken.text.lowercased(),
+            meaning: meaning,
+            score: score
+        )
+    }
+
+    private static func rowKey(for token: NormalizedToken) -> Int {
+        Int((token.centerY * 120).rounded())
     }
 
     private static func columnBounds(for token: NormalizedToken) -> (minX: CGFloat, maxX: CGFloat) {
@@ -68,6 +101,19 @@ enum OCRVocabularyFormatter {
         abs(token.centerY - number.centerY) + max(0, token.minX - number.maxX) * 0.12
     }
 
+    private static func entryScore(
+        number: NormalizedToken,
+        term: NormalizedToken,
+        meanings: [NormalizedToken],
+        numberText: String
+    ) -> CGFloat {
+        let meaningDistance = meanings
+            .map { abs($0.centerY - number.centerY) + abs($0.minX - term.minX) * 0.04 }
+            .min() ?? 1
+        let cleanNumberBonus: CGFloat = numberText.allSatisfy(\.isNumber) ? 0 : 0.01
+        return termScore(term, number: number) + meaningDistance + cleanNumberBonus
+    }
+
     private static func isContentToken(_ token: NormalizedToken) -> Bool {
         token.centerY > 0.08 && token.centerY < 0.78 && token.centerX > 0.07 && token.centerX < 0.92
     }
@@ -75,11 +121,18 @@ enum OCRVocabularyFormatter {
     private static func clean(_ value: String) -> String {
         value
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "  ", with: " ")
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .replacingOccurrences(of: "–", with: "-")
+            .replacingOccurrences(of: "—", with: "-")
     }
 
-    private static func isNumber(_ value: String) -> Bool {
-        value.range(of: #"^\d{4,}$"#, options: .regularExpression) != nil
+    private static func normalizedNumberText(_ value: String) -> String? {
+        let corrected = value
+            .replacingOccurrences(of: "O", with: "0")
+            .replacingOccurrences(of: "o", with: "0")
+        let digits = corrected.filter(\.isNumber)
+        guard digits.count >= 4, digits.count <= 6 else { return nil }
+        return String(digits)
     }
 
     private static func isEnglishTerm(_ value: String) -> Bool {
@@ -89,6 +142,10 @@ enum OCRVocabularyFormatter {
 
     private static func containsHangul(_ value: String) -> Bool {
         value.range(of: #"[가-힣]"#, options: .regularExpression) != nil
+    }
+
+    private static func isMeaningToken(_ value: String) -> Bool {
+        containsHangul(value) && !isEnglishTerm(value) && normalizedNumberText(value) == nil
     }
 }
 
@@ -116,6 +173,7 @@ private final class NormalizedToken {
     var maxX: CGFloat { boundingBox.maxX }
     var centerX: CGFloat { boundingBox.midX }
     var centerY: CGFloat { boundingBox.midY }
+    var height: CGFloat { boundingBox.height }
 }
 
 private struct VocabularyEntry {
@@ -123,4 +181,5 @@ private struct VocabularyEntry {
     let numberText: String
     let term: String
     let meaning: String
+    let score: CGFloat
 }

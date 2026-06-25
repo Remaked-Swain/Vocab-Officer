@@ -178,7 +178,7 @@ struct TestRunnerView: View {
                         judgeResult = JudgeResult(automaticResult: .unknown, matchedMeaningID: nil, isTypoSuggestion: false)
                         chosenResult = .unknown
                         correctedMeaningID = question.direction == .enToKo
-                            ? question.word.meanings.first(where: \.isTrackableCoreMeaning)?.id
+                            ? question.word.defaultCorrectionMeaningID
                             : nil
                         focus = .advance
                     }
@@ -236,7 +236,7 @@ struct TestRunnerView: View {
                 if (chosenResult ?? result.automaticResult) == .correct && result.automaticResult != .correct {
                     if question.direction == .enToKo {
                         Picker("확인한 핵심 뜻", selection: $correctedMeaningID) {
-                            ForEach(question.word.meanings.filter(\.isTrackableCoreMeaning)) { meaning in
+                            ForEach(question.word.correctionCandidateMeanings) { meaning in
                                 Text(meaning.text).tag(Optional(meaning.id))
                             }
                         }
@@ -263,7 +263,7 @@ struct TestRunnerView: View {
         let result = LearningCoordinator(context: context).judge(answer: answer, for: question)
         judgeResult = result
         chosenResult = result.automaticResult
-        correctedMeaningID = question.direction == .enToKo ? question.word.meanings.first(where: \.isTrackableCoreMeaning)?.id : nil
+        correctedMeaningID = question.direction == .enToKo ? question.word.defaultCorrectionMeaningID : nil
         focus = result.automaticResult == .incorrect ? .finalJudgement : .advance
     }
 

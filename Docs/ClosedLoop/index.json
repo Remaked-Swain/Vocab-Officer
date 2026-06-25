@@ -242,6 +242,23 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["display joins can remain visually ambiguous when meanings contain parenthesized commas"]
+    },
+    {
+      "id": "CL-0011",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "OCR intake, input IO and performance refactor",
+      "date": "2026-06-24",
+      "tags": ["performance", "ocr", "paste-intake", "input-io"],
+      "affectedPaths": ["Vocab/Presentation/", "Vocab/Application/", "VocabTests/Application/", "Docs/Performance.md", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0011-ocr-intake-input-io-performance-refactor.md",
+      "references": ["CL-0001", "CL-0002", "CL-0003", "CL-0004", "CL-0007", "CL-0010"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["large-fixture generateSession p95 remains open until query refactor and Release measurement"]
     }
   ]
 }

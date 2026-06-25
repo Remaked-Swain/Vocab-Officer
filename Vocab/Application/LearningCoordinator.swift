@@ -51,33 +51,115 @@ enum LearningHistoryRetentionPolicy {
 }
 
 enum DailyIntakePasteParser {
+    private static let markdownFencePrefix = "```"
+    private static let nonHangulMeaningStartCharacters = CharacterSet(charactersIn: "~(（")
+
     static func parse(_ text: String) throws -> [WordDraft] {
-        let lines = text.components(separatedBy: .newlines)
-            .enumerated()
-            .filter {
-                let value = $0.element.trimmingCharacters(in: .whitespacesAndNewlines)
-                return !value.isEmpty && !value.hasPrefix("```")
-            }
-        guard !lines.isEmpty else { throw PasteIntakeError.empty }
+        var drafts: [WordDraft] = []
+        drafts.reserveCapacity(100)
+        var sawContent = false
+        var sourceLineNumber = 0
+        var parseError: PasteIntakeError?
 
-        return try lines.map { offset, line in
-            let lineNumber = offset + 1
-            if line.contains("\t") {
-                let fields = line.split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)
-                guard fields.count == 2 else { throw PasteIntakeError.invalidLine(lineNumber) }
-                return try draft(term: String(fields[0]), meanings: String(fields[1]), line: lineNumber)
-            }
+        text.enumerateLines { line, stop in
+            sourceLineNumber += 1
+            let lineNumber = sourceLineNumber
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !trimmed.hasPrefix(markdownFencePrefix) else { return }
+            sawContent = true
 
-            let range = NSRange(line.startIndex..<line.endIndex, in: line)
-            let pattern = #"^\s*(?:\d+\s*-\s*)?([A-Za-z][A-Za-z0-9' -]*?)\s*-\s*((?:[가-힣0-9~(（]|약\s).*)\s*$"#
-            let expression = try NSRegularExpression(pattern: pattern)
-            guard let match = expression.firstMatch(in: line, range: range),
-                  let termRange = Range(match.range(at: 1), in: line),
-                  let meaningsRange = Range(match.range(at: 2), in: line) else {
-                throw PasteIntakeError.invalidLine(lineNumber)
+            do {
+                drafts.append(try parseLine(trimmed, line: lineNumber))
+            } catch let error as PasteIntakeError {
+                parseError = error
+                stop = true
+            } catch {
+                parseError = .invalidLine(lineNumber)
+                stop = true
             }
-            return try draft(term: String(line[termRange]), meanings: String(line[meaningsRange]), line: lineNumber)
         }
+
+        if let parseError { throw parseError }
+        guard sawContent else { throw PasteIntakeError.empty }
+        return drafts
+    }
+
+    private static func parseLine(_ line: String, line lineNumber: Int) throws -> WordDraft {
+        if let tabIndex = line.firstIndex(of: "\t") {
+            let term = line[..<tabIndex]
+            let meanings = line[line.index(after: tabIndex)...]
+            return try draft(term: String(term), meanings: String(meanings), line: lineNumber)
+        }
+
+        let body = stripLeadingNumber(from: line)
+        guard let separator = meaningSeparator(in: body) else {
+            throw PasteIntakeError.invalidLine(lineNumber)
+        }
+        return try draft(
+            term: String(body[..<separator]),
+            meanings: String(body[body.index(after: separator)...]),
+            line: lineNumber
+        )
+    }
+
+    private static func stripLeadingNumber(from line: String) -> Substring {
+        var index = line.startIndex
+        while index < line.endIndex, line[index].isWhitespace {
+            index = line.index(after: index)
+        }
+        let digitStart = index
+        while index < line.endIndex, line[index].isNumber {
+            index = line.index(after: index)
+        }
+        guard index > digitStart else { return line[...] }
+        while index < line.endIndex, line[index].isWhitespace {
+            index = line.index(after: index)
+        }
+        guard index < line.endIndex, line[index] == "-" else { return line[...] }
+        index = line.index(after: index)
+        while index < line.endIndex, line[index].isWhitespace {
+            index = line.index(after: index)
+        }
+        return line[index...]
+    }
+
+    private static func meaningSeparator(in line: Substring) -> String.Index? {
+        var index = line.startIndex
+        var numericMeaningFallback: String.Index?
+        while index < line.endIndex {
+            guard line[index] == "-" else {
+                index = line.index(after: index)
+                continue
+            }
+            let term = line[..<index].trimmingCharacters(in: .whitespacesAndNewlines)
+            let meaning = line[line.index(after: index)...].trimmingCharacters(in: .whitespacesAndNewlines)
+            if isValidTerm(term), startsLikePrimaryMeaning(meaning) {
+                return index
+            }
+            if isValidTerm(term), startsLikeNumericMeaning(meaning) {
+                numericMeaningFallback = index
+            }
+            index = line.index(after: index)
+        }
+        return numericMeaningFallback
+    }
+
+    private static func isValidTerm(_ value: String) -> Bool {
+        guard let first = value.unicodeScalars.first, CharacterSet.letters.contains(first) else { return false }
+        return value.unicodeScalars.allSatisfy {
+            CharacterSet.alphanumerics.contains($0) || $0 == "'" || $0 == " " || $0 == "-"
+        }
+    }
+
+    private static func startsLikePrimaryMeaning(_ value: String) -> Bool {
+        guard let scalar = value.unicodeScalars.first else { return false }
+        return value.hasPrefix("약 ")
+            || (scalar.value >= 0xAC00 && scalar.value <= 0xD7A3)
+            || nonHangulMeaningStartCharacters.contains(scalar)
+    }
+
+    private static func startsLikeNumericMeaning(_ value: String) -> Bool {
+        value.unicodeScalars.first.map(CharacterSet.decimalDigits.contains) == true
     }
 
     private static func draft(term: String, meanings: String, line: Int) throws -> WordDraft {
@@ -155,9 +237,22 @@ extension MeaningRecord {
     }
 }
 
+extension WordRecord {
+    var correctionCandidateMeanings: [MeaningRecord] {
+        let trackable = meanings.filter(\.isTrackableCoreMeaning)
+        return trackable.isEmpty ? meanings.filter(\.isCore) : trackable
+    }
+
+    var defaultCorrectionMeaningID: UUID? {
+        correctionCandidateMeanings.first?.id
+    }
+}
+
 @MainActor
 final class LearningCoordinator {
     private let context: ModelContext
+    private var activeWordCache: [WordRecord]?
+    private var dailySetCache: [DailySetRecord]?
 
     init(context: ModelContext) {
         self.context = context
@@ -221,6 +316,7 @@ final class LearningCoordinator {
         set.completedAt = date
         context.insert(set)
         try context.save()
+        invalidateSessionCandidateCache()
     }
 
     @discardableResult
@@ -257,14 +353,15 @@ final class LearningCoordinator {
             context.insert(meaning)
         }
         try context.save()
+        invalidateSessionCandidateCache()
         return word
     }
 
     func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now) throws -> (TestSessionRecord, [SessionQuestion]) {
         let day = SeoulCalendar.day(for: date)
-        let words = try context.fetch(FetchDescriptor<WordRecord>())
-            .filter { $0.deletedAt == nil && $0.statusRaw == "active" }
-        let sets = try context.fetch(FetchDescriptor<DailySetRecord>())
+        let words = try activeWords()
+        let wordsByID = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
+        let sets = try dailySets()
         let setsByRecency = sets.filter { $0.seoulDay <= day }.sorted {
             if $0.seoulDay != $1.seoulDay { return $0.seoulDay > $1.seoulDay }
             if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
@@ -273,54 +370,52 @@ final class LearningCoordinator {
         let todaySet = setsByRecency.first(where: { $0.seoulDay == day })
         let referenceSet = todaySet ?? setsByRecency.first
         let previousSet = setsByRecency.first(where: { $0.seoulDay < day })
-        let referenceIDs: Set<UUID> = Set(referenceSet?.items.map(\.wordID) ?? [])
-        let previousSetIDs: Set<UUID> = Set(previousSet?.items.map(\.wordID) ?? [])
-        let linkedWordIDs = Set(try context.fetch(FetchDescriptor<DailySetItemRecord>()).map(\.wordID))
-        compactSessionHistory(now: date)
-        let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
-        let exposure = presentationStats(from: sessions)
-        let alreadyPresentedTodayIDs: Set<UUID> = Set(sessions.filter { $0.seoulDay == day }.flatMap(\.wordIDs))
-        let allPresentedIDs: Set<UUID> = Set(sessions.flatMap(\.wordIDs))
-        let reference = uniqueWords(
-            fairOrder(words.filter { referenceIDs.contains($0.id) && !alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
-                + fairOrder(words.filter { referenceIDs.contains($0.id) && alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
-        )
-        let historicalSetIDs = Set(setsByRecency.filter { $0.id != referenceSet?.id }.flatMap(\.items).map(\.wordID))
-        let unverifiedBacklog = fairOrder(
-            words.filter { historicalSetIDs.contains($0.id) && !allPresentedIDs.contains($0.id) },
-            exposure: exposure
-        )
-        let review = words.filter { record in
-            guard let state = record.reviewState else { return false }
-            return record.statusRaw == "active" && state.activePriority > 0
-        }
-        let orderedReview = reviewOrder(review, exposure: exposure)
-        let previousSetCandidates = fairOrder(
-            words.filter { previousSetIDs.contains($0.id) },
-            exposure: exposure
-        )
-        let loose = fairOrder(
-            words.filter { !linkedWordIDs.contains($0.id) },
-            exposure: exposure
-        )
+        let presentation = try presentationContext(for: words, day: day, now: date)
+        let exposure = presentation.exposure
+        let alreadyPresentedTodayIDs = presentation.alreadyPresentedTodayIDs
+        let allPresentedIDs = presentation.allPresentedIDs
         var selected: [WordRecord] = []
+        func setWords(for items: [DailySetItemRecord]) -> [WordRecord] {
+            uniqueWords(items
+                .sorted { $0.orderIndex < $1.orderIndex }
+                .compactMap { wordsByID[$0.wordID] })
+        }
+        func referenceCandidates() -> [WordRecord] {
+            let referenceWords = setWords(for: referenceSet?.items ?? [])
+            return uniqueWords(
+                fairOrder(referenceWords.filter { !alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
+                    + fairOrder(referenceWords.filter { alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
+            )
+        }
+        func orderedReviewCandidates() -> [WordRecord] {
+            let review = words.filter { record in
+                guard let state = record.reviewState else { return false }
+                return state.activePriority > 0
+            }
+            return reviewOrder(review, exposure: exposure)
+        }
         switch mode {
         case .today:
-            selected = Array(reference.prefix(20))
+            selected = Array(referenceCandidates().prefix(20))
         case .set:
             guard let setID, let selectedSet = sets.first(where: { $0.id == setID }) else {
                 throw LearningError.setRequired
             }
-            let wordsByID = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
-            let setWords = uniqueWords(selectedSet.items
-                .sorted { $0.orderIndex < $1.orderIndex }
-                .compactMap { wordsByID[$0.wordID] })
-            let prioritized = fairOrder(setWords.filter { !allPresentedIDs.contains($0.id) }, exposure: exposure)
-                + fairOrder(setWords.filter { allPresentedIDs.contains($0.id) }, exposure: exposure)
+            let selectedSetWords = setWords(for: selectedSet.items)
+            let prioritized = fairOrder(selectedSetWords.filter { !allPresentedIDs.contains($0.id) }, exposure: exposure)
+                + fairOrder(selectedSetWords.filter { allPresentedIDs.contains($0.id) }, exposure: exposure)
             selected = Array(prioritized.prefix(20))
         case .loose:
+            let linkedWordIDs = Set(sets.flatMap(\.items).map(\.wordID))
+            let loose = fairOrder(
+                words.filter { !linkedWordIDs.contains($0.id) },
+                exposure: exposure
+            )
             selected = Array(loose.prefix(20))
         case .review:
+            let orderedReview = orderedReviewCandidates()
+            let previousSetCandidates = fairOrder(setWords(for: previousSet?.items ?? []), exposure: exposure)
+            let reference = referenceCandidates()
             selected = Array(orderedReview.prefix(14))
             appendUnique(
                 from: previousSetCandidates,
@@ -330,6 +425,13 @@ final class LearningCoordinator {
             appendUnique(from: orderedReview, to: &selected, limit: 20)
             appendUnique(from: reference, to: &selected, limit: 20)
         case .mixed:
+            let reference = referenceCandidates()
+            let orderedReview = orderedReviewCandidates()
+            let historicalSetIDs = Set(setsByRecency.filter { $0.id != referenceSet?.id }.flatMap(\.items).map(\.wordID))
+            let unverifiedBacklog = fairOrder(
+                historicalSetIDs.compactMap { wordsByID[$0] }.filter { !allPresentedIDs.contains($0.id) },
+                exposure: exposure
+            )
             selected = Array(reference.prefix(12))
             appendUnique(from: orderedReview, to: &selected, limit: min(18, 20))
             appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
@@ -338,8 +440,9 @@ final class LearningCoordinator {
             appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
         }
         guard !selected.isEmpty else { throw LearningError.noSessionCandidates }
-        let session = TestSessionRecord(directionRaw: direction.rawValue, modeRaw: mode.rawValue, seoulDay: day, wordIDs: selected.map(\.id), wasReduced: selected.count < 20)
+        let session = TestSessionRecord(directionRaw: direction.rawValue, modeRaw: mode.rawValue, seoulDay: day, wordIDs: selected.map(\.id), wasReduced: selected.count < 20, startedAt: date)
         context.insert(session)
+        recordPresentation(for: selected, at: date)
         try context.save()
         return (session, selected.enumerated().map { SessionQuestion(word: $0.element, direction: direction, index: $0.offset) })
     }
@@ -452,6 +555,7 @@ final class LearningCoordinator {
         }
         context.delete(word)
         try context.save()
+        invalidateSessionCandidateCache()
     }
 
     func deleteWords(_ words: [WordRecord]) throws {
@@ -460,6 +564,7 @@ final class LearningCoordinator {
             try deleteWordRecord(word)
         }
         try context.save()
+        invalidateSessionCandidateCache()
     }
 
     func discardDailySet(_ set: DailySetRecord) throws {
@@ -480,6 +585,7 @@ final class LearningCoordinator {
 
         context.delete(set)
         try context.save()
+        invalidateSessionCandidateCache()
     }
 
     private func apply(result: FinalResult, matchedMeaningID: UUID?, direction: PracticeDirection, to word: WordRecord, date: Date) {
@@ -530,15 +636,95 @@ final class LearningCoordinator {
         var lastPresentedAt: Date?
     }
 
+    private struct PresentationContext {
+        let exposure: [UUID: PresentationStats]
+        let alreadyPresentedTodayIDs: Set<UUID>
+        let allPresentedIDs: Set<UUID>
+    }
+
+    private func activeWords() throws -> [WordRecord] {
+        if let activeWordCache { return activeWordCache }
+        let words = try context.fetch(FetchDescriptor<WordRecord>(predicate: #Predicate {
+            $0.deletedAt == nil && $0.statusRaw == "active"
+        }))
+        activeWordCache = words
+        return words
+    }
+
+    private func dailySets() throws -> [DailySetRecord] {
+        if let dailySetCache { return dailySetCache }
+        let sets = try context.fetch(FetchDescriptor<DailySetRecord>())
+        dailySetCache = sets
+        return sets
+    }
+
+    private func invalidateSessionCandidateCache() {
+        activeWordCache = nil
+        dailySetCache = nil
+    }
+
+    private func presentationContext(for words: [WordRecord], day: String, now: Date) throws -> PresentationContext {
+        if words.contains(where: { ($0.reviewState?.presentationCount ?? 0) > 0 || $0.reviewState?.lastPresentedAt != nil }) {
+            return presentationContextFromSummary(words, day: day)
+        }
+
+        let sessions = try activeSessionsAfterCompaction(now: now)
+        let exposure = presentationStats(from: sessions)
+        backfillPresentationSummary(exposure, into: words)
+        return PresentationContext(
+            exposure: exposure,
+            alreadyPresentedTodayIDs: Set(sessions.filter { $0.seoulDay == day }.flatMap(\.wordIDs)),
+            allPresentedIDs: Set(sessions.flatMap(\.wordIDs))
+        )
+    }
+
+    private func presentationContextFromSummary(_ words: [WordRecord], day: String) -> PresentationContext {
+        var exposure: [UUID: PresentationStats] = [:]
+        var alreadyPresentedTodayIDs = Set<UUID>()
+        var allPresentedIDs = Set<UUID>()
+        for word in words {
+            guard let state = word.reviewState else { continue }
+            let presentationCount = state.presentationCount ?? 0
+            let stats = PresentationStats(count: presentationCount, lastPresentedAt: state.lastPresentedAt)
+            exposure[word.id] = stats
+            if presentationCount > 0 { allPresentedIDs.insert(word.id) }
+            if let lastPresentedAt = state.lastPresentedAt, SeoulCalendar.day(for: lastPresentedAt) == day {
+                alreadyPresentedTodayIDs.insert(word.id)
+            }
+        }
+        return PresentationContext(exposure: exposure, alreadyPresentedTodayIDs: alreadyPresentedTodayIDs, allPresentedIDs: allPresentedIDs)
+    }
+
     private func presentationStats(from sessions: [TestSessionRecord]) -> [UUID: PresentationStats] {
         var stats: [UUID: PresentationStats] = [:]
-        for session in sessions.sorted(by: { $0.startedAt < $1.startedAt }) {
+        for session in sessions {
             for id in session.wordIDs {
                 stats[id, default: PresentationStats()].count += 1
-                stats[id, default: PresentationStats()].lastPresentedAt = session.startedAt
+                if (stats[id]?.lastPresentedAt ?? .distantPast) < session.startedAt {
+                    stats[id, default: PresentationStats()].lastPresentedAt = session.startedAt
+                }
             }
         }
         return stats
+    }
+
+    private func backfillPresentationSummary(_ exposure: [UUID: PresentationStats], into words: [WordRecord]) {
+        for word in words {
+            guard let stats = exposure[word.id] else { continue }
+            let state = word.reviewState ?? ReviewStateRecord()
+            word.reviewState = state
+            state.presentationCount = stats.count
+            state.lastPresentedAt = stats.lastPresentedAt
+        }
+    }
+
+    private func recordPresentation(for words: [WordRecord], at date: Date) {
+        for word in words {
+            let state = word.reviewState ?? ReviewStateRecord()
+            word.reviewState = state
+            state.presentationCount = (state.presentationCount ?? 0) + 1
+            state.lastPresentedAt = date
+        }
     }
 
     private func fairOrder(_ candidates: [WordRecord], exposure: [UUID: PresentationStats]) -> [WordRecord] {
@@ -585,14 +771,26 @@ final class LearningCoordinator {
     }
 
     private func compactSessionHistory(now: Date) {
-        let cutoff = now.addingTimeInterval(-Double(LearningHistoryRetentionPolicy.keepSessionDays) * 86_400)
         do {
-            for session in try context.fetch(FetchDescriptor<TestSessionRecord>()) where session.startedAt < cutoff {
-                context.delete(session)
-            }
+            _ = try activeSessionsAfterCompaction(now: now)
         } catch {
             assertionFailure("Failed to compact session history: \(error)")
         }
+    }
+
+    private func activeSessionsAfterCompaction(now: Date) throws -> [TestSessionRecord] {
+        let cutoff = now.addingTimeInterval(-Double(LearningHistoryRetentionPolicy.keepSessionDays) * 86_400)
+        let sessions = try context.fetch(FetchDescriptor<TestSessionRecord>())
+        var active: [TestSessionRecord] = []
+        active.reserveCapacity(sessions.count)
+        for session in sessions {
+            if session.startedAt < cutoff {
+                context.delete(session)
+            } else {
+                active.append(session)
+            }
+        }
+        return active
     }
 
     private func compactAttempts(for word: WordRecord, now: Date) {

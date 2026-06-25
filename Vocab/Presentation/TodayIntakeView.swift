@@ -17,6 +17,7 @@ struct TodayIntakeView: View {
     @Environment(\.modelContext) private var context
     @State private var mode: IntakeMode = .paste
     @State private var pastedText = ""
+    @State private var pasteAnalysis = PasteAnalysis.empty
     @State private var drafts = (0..<100).map { _ in WordDraft() }
     @State private var message: String?
     @State private var isError = false
@@ -25,27 +26,6 @@ struct TodayIntakeView: View {
 
     private var filledCount: Int {
         drafts.filter { !$0.term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
-    }
-
-    private var pastedDrafts: [WordDraft] {
-        (try? DailyIntakePasteParser.parse(pastedText)) ?? []
-    }
-
-    private var pasteStatus: (String, Bool) {
-        guard !pastedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return ("100개 단어를 한 번에 붙여넣으세요.", false)
-        }
-        do {
-            let count = try DailyIntakePasteParser.parse(pastedText).count
-            if count == 100 {
-                return ("100개가 확인되었습니다. 바로 저장할 수 있습니다.", true)
-            }
-            let missingNumbers = missingNumberHint(from: pastedText)
-            let suffix = missingNumbers.isEmpty ? "" : " 누락 의심 번호: \(missingNumbers.joined(separator: ", "))"
-            return ("\(count)개가 인식되었습니다. 정확히 100개가 필요합니다.\(suffix)", false)
-        } catch {
-            return (error.localizedDescription, false)
-        }
     }
 
     var body: some View {
@@ -90,11 +70,15 @@ struct TodayIntakeView: View {
             ToolbarItem {
                 Button("입력 내용 비우기") {
                     pastedText = ""
+                    pasteAnalysis = .empty
                     drafts = (0..<100).map { _ in WordDraft() }
                     message = nil
                 }
                 .controlSize(.large)
             }
+        }
+        .onChange(of: pastedText) {
+            updatePasteAnalysis()
         }
     }
 
@@ -127,25 +111,25 @@ struct TodayIntakeView: View {
                                 .stroke(.quaternary, lineWidth: 1)
                         }
                         .accessibilityLabel("OCR 추출 결과 검수 입력창")
-                    Label(pasteStatus.0, systemImage: pasteStatus.1 ? "checkmark.circle.fill" : "info.circle")
+                    Label(pasteAnalysis.status, systemImage: pasteAnalysis.isReady ? "checkmark.circle.fill" : "info.circle")
                         .font(.body.weight(.medium))
-                        .foregroundStyle(pasteStatus.1 ? .green : .secondary)
+                        .foregroundStyle(pasteAnalysis.isReady ? .green : .secondary)
                 }
                 .padding(10)
             }
 
             HStack {
-                Text("\(pastedDrafts.count) / 100")
+                Text("\(pasteAnalysis.drafts.count) / 100")
                     .font(.title2.monospacedDigit().weight(.semibold))
-                    .accessibilityLabel("인식된 신규 단어 \(pastedDrafts.count)개")
+                    .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
                 Spacer()
                 Button("검수한 100개 저장") {
-                    save(pastedDrafts)
+                    save(pasteAnalysis.drafts)
                 }
                 .keyboardShortcut(.return, modifiers: .command)
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
-                .disabled(!pasteStatus.1)
+                .disabled(!pasteAnalysis.isReady)
             }
         }
         .fileImporter(
@@ -175,25 +159,25 @@ struct TodayIntakeView: View {
                                 .stroke(.quaternary, lineWidth: 1)
                         }
                         .accessibilityLabel("단어 100개 붙여넣기 입력창")
-                    Label(pasteStatus.0, systemImage: pasteStatus.1 ? "checkmark.circle.fill" : "info.circle")
+                    Label(pasteAnalysis.status, systemImage: pasteAnalysis.isReady ? "checkmark.circle.fill" : "info.circle")
                         .font(.body.weight(.medium))
-                        .foregroundStyle(pasteStatus.1 ? .green : .secondary)
+                        .foregroundStyle(pasteAnalysis.isReady ? .green : .secondary)
                 }
                 .padding(10)
             }
 
             HStack {
-                Text("\(pastedDrafts.count) / 100")
+                Text("\(pasteAnalysis.drafts.count) / 100")
                     .font(.title2.monospacedDigit().weight(.semibold))
-                    .accessibilityLabel("인식된 신규 단어 \(pastedDrafts.count)개")
+                    .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
                 Spacer()
                 Button("붙여넣은 100개 저장") {
-                    save(pastedDrafts)
+                    save(pasteAnalysis.drafts)
                 }
                 .keyboardShortcut(.return, modifiers: .command)
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
-                .disabled(!pasteStatus.1)
+                .disabled(!pasteAnalysis.isReady)
             }
         }
     }
@@ -256,6 +240,27 @@ struct TodayIntakeView: View {
         }
     }
 
+    private func updatePasteAnalysis() {
+        pasteAnalysis = analyzePaste(pastedText)
+    }
+
+    private func analyzePaste(_ text: String) -> PasteAnalysis {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return .empty
+        }
+        do {
+            let drafts = try DailyIntakePasteParser.parse(text)
+            if drafts.count == 100 {
+                return PasteAnalysis(drafts: drafts, status: "100개가 확인되었습니다. 바로 저장할 수 있습니다.", isReady: true)
+            }
+            let missingNumbers = missingNumberHint(from: text)
+            let suffix = missingNumbers.isEmpty ? "" : " 누락 의심 번호: \(missingNumbers.joined(separator: ", "))"
+            return PasteAnalysis(drafts: drafts, status: "\(drafts.count)개가 인식되었습니다. 정확히 100개가 필요합니다.\(suffix)", isReady: false)
+        } catch {
+            return PasteAnalysis(drafts: [], status: error.localizedDescription, isReady: false)
+        }
+    }
+
     private func missingNumberHint(from text: String) -> [String] {
         let numbers = text.components(separatedBy: .newlines).compactMap { line -> Int? in
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -284,6 +289,7 @@ struct TodayIntakeView: View {
                     let text = try await recognizeText(from: urls)
                     await MainActor.run {
                         pastedText = text
+                        pasteAnalysis = analyzePaste(text)
                         message = "\(urls.count)장 이미지에서 OCR 텍스트를 추출했습니다. 저장 전 원본 캡쳐본과 대조하세요."
                         isError = false
                         isRecognizingText = false
@@ -315,6 +321,14 @@ struct TodayIntakeView: View {
             return try OCRVocabularyFormatter.formatPages(pages)
         }.value
     }
+}
+
+private struct PasteAnalysis {
+    static let empty = PasteAnalysis(drafts: [], status: "100개 단어를 한 번에 붙여넣으세요.", isReady: false)
+
+    let drafts: [WordDraft]
+    let status: String
+    let isReady: Bool
 }
 
 private func recognizeTokens(from url: URL) throws -> [OCRTextToken] {

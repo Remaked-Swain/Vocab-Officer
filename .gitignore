@@ -3,6 +3,7 @@
 build/
 test-build/
 release-build/
+performance-build/
 DerivedData/
 xcuserdata/
 *.xcuserstate

@@ -143,6 +143,8 @@ final class ReviewStateRecord {
     var latestWrongDirection: String?
     var latestWrongAt: Date?
     var lastTestedAt: Date?
+    var presentationCount: Int?
+    var lastPresentedAt: Date?
     var word: WordRecord?
 
     init() {
@@ -152,6 +154,7 @@ final class ReviewStateRecord {
         self.enToKoStreak = 0
         self.koToEnStreak = 0
         self.koToEnSuccessDays = []
+        self.presentationCount = 0
     }
 }
 

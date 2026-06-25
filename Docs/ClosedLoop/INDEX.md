@@ -19,6 +19,7 @@ only when its scope applies to the current change.
 | CL-0008 | active | 2026-06-10 | loose-word test eligibility and fair presentation | [Loose word testing](records/CL-0008-loose-word-testing.md) | retain while loose-word intake and testing exist |
 | CL-0009 | active | 2026-06-12 | review-mode previous-set re-exposure and 14+6 selection | [Previous-set review re-exposure](records/CL-0009-previous-set-review-reexposure.md) | retain while review-session selection exists |
 | CL-0010 | active | 2026-06-17 | parenthesized-comma meaning tracking and correction | [Parenthesized-comma meaning tracking](records/CL-0010-parenthesized-comma-meaning-tracking.md) | retain while correction and meaning-tracking behavior exists |
+| CL-0011 | active | 2026-06-24 | OCR intake, input IO and performance refactor | [OCR intake, input IO and performance refactor](records/CL-0011-ocr-intake-input-io-performance-refactor.md) | retain while OCR intake, paste intake or performance acceptance exists |
 
 ## Load Rules
 
@@ -32,6 +33,8 @@ only when its scope applies to the current change.
   acknowledgement or local app installation work must load `CL-0005`.
 - Parenthesized delimiter handling, confirmed core-meaning correction, or
   meaning trackability work must load `CL-0010`.
+- OCR intake, image IO, daily-intake performance, or OCR-formatted paste output
+  work must load `CL-0011`.
 - Loose-word test eligibility or presentation work must load `CL-0008`.
 - Review priority, failure checks, review session eligibility or scheduler work
   must load `CL-0006`.
