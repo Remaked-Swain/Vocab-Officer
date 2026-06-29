@@ -1,8 +1,9 @@
 # Closed-Loop Operating Policy
 
-This directory is the durable memory for the four-agent Closed-Loop workflow.
+This directory is the durable memory for the four-role Closed-Loop workflow.
 Its contents remain in source control after Director, Executor, Monitor and
-Recorder agents have been terminated.
+Recorder work has ended. Roles must run as just-in-time sequential handoffs;
+parallel independent role execution is prohibited.
 
 ## Start Of A Loop
 
@@ -17,16 +18,84 @@ Closed-Loop is unnecessary or should not be used for the current task.
    - current Git status and unrelated dirty files that must be preserved
    - exact changed-file scope expected for the task
    - Swift/Xcode verification command selected by `script/verify_changed.sh`
-2. Spawn the four required agents unless the user explicitly opts out for the
-   current task.
-3. Give every agent the bootstrap facts above. Agents must not infer the
-   project root from the transient Codex thread `cwd` when it differs from the
-   canonical root.
-4. An agent reads `INDEX.md` only. Tooling may read `index.json` to validate
+2. Start only the Director. Do not pre-spawn or pre-register Executor, Monitor
+   or Recorder work.
+3. Create the run, register the active Director, and submit its artifact.
+   Registration of a successor requires the predecessor artifact SHA-256 shown
+   as the pipeline handoff token.
+4. Give each role the bootstrap facts above when its turn begins. Agents must
+   not infer the project root from the transient Codex thread `cwd` when it
+   differs from the canonical root.
+5. An agent reads `INDEX.md` only. Tooling may read `index.json` to validate
    ledger integrity without loading full decision text.
-5. Load individual records or run reports only when their `Scope` intersects the requested
-   work or when they are listed as a dependency of a new decision.
-6. Have the Recorder add or update a record before the loop is closed.
+6. Load individual records or run reports only when their `Scope` intersects
+   the requested work or when they are listed as a dependency of a new
+   decision.
+7. The orchestrator must wait for the current role artifact to be accepted and
+   close that role execution before spawning the next role. It then registers
+   only that newly active role with the current handoff token.
+8. Advance only in this order:
+   `Director -> Executor -> Monitor -> Recorder -> Director close`.
+   A Monitor rejection reactivates the original Executor ID and execution
+   context; it must not spawn or register a replacement Executor. At most three
+   rejections are allowed. Approval advances to Recorder.
+9. Have the Recorder add or update a valid indexed decision record before
+   Director close.
+
+## Sequential Handoff Enforcement
+
+`script/closed_loop_pipeline.sh` is the executable state machine for agent
+handoffs. `start` opens only the Director stage and registers no identity.
+Every stage requires a separate just-in-time `register-role` call. That call
+accepts only the current role and the exact predecessor artifact SHA-256 as its
+handoff token, so future-role registration, duplicate registration and stale
+or invented tokens fail. Registration also re-hashes the predecessor artifact
+file immediately and requires its current hash, stored hash and token to match;
+post-submission artifact mutation therefore blocks the successor.
+
+Every transition requires a non-empty artifact file. State stores ordered role
+registrations with timestamps and the artifact chain's previous hash, content
+hash and cumulative chain hash before opening the next stage. The script also
+rejects an unexpected role, a skipped stage, an empty or missing artifact, a
+replacement Executor after rejection, and a fourth rejection.
+
+Each run has a concurrent mutation lock. State is written through a same-folder
+temporary file and atomic rename. A Recorder artifact must be a direct,
+canonical `Docs/ClosedLoop/records/CL-*.md` path. Before Director close, its
+record row in `INDEX.md` must link the exact `records/CL-*.md` path,
+`index.json` must contain the exact project-relative path, and
+`script/closed_loop_records.sh validate` must pass. Successful close removes
+the run's temporary state.
+Use `CLOSED_LOOP_STATE_DIR` only to isolate tests or an explicitly managed
+runtime; normal state is under `.git/closed-loop-pipeline`.
+
+Typical commands:
+
+```bash
+./script/closed_loop_pipeline.sh start RUN-ID
+./script/closed_loop_pipeline.sh register-role RUN-ID Director director-1 GENESIS
+./script/closed_loop_pipeline.sh submit RUN-ID Director director-1 director.md
+./script/closed_loop_pipeline.sh register-role RUN-ID Executor executor-1 <director-sha256>
+./script/closed_loop_pipeline.sh submit RUN-ID Executor executor-1 executor.md
+./script/closed_loop_pipeline.sh register-role RUN-ID Monitor monitor-1 <executor-sha256>
+./script/closed_loop_pipeline.sh review RUN-ID Monitor monitor-1 approve monitor.md
+./script/closed_loop_pipeline.sh register-role RUN-ID Recorder recorder-1 <monitor-sha256>
+./script/closed_loop_pipeline.sh submit RUN-ID Recorder recorder-1 \
+  Docs/ClosedLoop/records/CL-NNNN-record.md
+./script/closed_loop_pipeline.sh register-role RUN-ID Director director-1 <record-sha256>
+./script/closed_loop_pipeline.sh close RUN-ID Director director-1 close.md
+```
+
+The shell cannot prevent Codex or another external orchestrator from spawning
+agents outside this API. The orchestrator is therefore responsible for not
+spawning a successor until the pipeline opens that role, and for closing the
+predecessor execution before doing so. Pipeline registration and hash-chain
+state provide enforcement at the repository boundary and audit evidence for
+violations attempted through the API.
+
+This sequential enforcement partially replaces the earlier general
+multi-agent startup guidance in `CL-0002` and `CL-0007`. Their retention,
+bootstrap, project-root and verification rules remain active.
 
 This keeps prior decisions available without loading unrelated history on every
 task.

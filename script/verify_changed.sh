@@ -29,7 +29,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
 
   process_plan="$("$0" --plan Docs/ClosedLoop/README.md script/verify_changed.sh)"
   [[ "$process_plan" == *"bash -n"* ]]
+  [[ "$process_plan" == *"closed_loop_pipeline.sh\" --self-test"* ]]
+  [[ "$process_plan" == *"closed_loop_records.sh\" validate"* ]]
   [[ "$process_plan" != *"xcodebuild"* ]]
+
+  records_plan="$("$0" --plan Docs/ClosedLoop/INDEX.md)"
+  [[ "$records_plan" == *"closed_loop_pipeline.sh\" --self-test"* ]]
+  [[ "$records_plan" == *"closed_loop_records.sh\" validate"* ]]
+  [[ "$records_plan" != *"xcodebuild"* ]]
 
   echo "Verification selection self-test passed."
   exit 0
@@ -68,6 +75,7 @@ run_application=false
 run_full=false
 run_build=false
 run_shell=false
+run_closed_loop=false
 manual_ui=false
 no_baseline=false
 
@@ -79,7 +87,14 @@ fi
 for file in "${changed_files[@]}"; do
   file="${file#"$ROOT_DIR"/}"
   case "$file" in
+    Docs/ClosedLoop/*)
+      run_closed_loop=true
+      ;;
     Docs/*|.gitignore|.codex/*)
+      ;;
+    script/closed_loop_pipeline.sh|script/closed_loop_records.sh|script/verify_changed.sh)
+      run_shell=true
+      run_closed_loop=true
       ;;
     script/*.sh)
       run_shell=true
@@ -125,10 +140,17 @@ if "$run_shell"; then
   if [[ -f "$ROOT_DIR/script/closed_loop_records.sh" ]]; then
     actions+=("bash -n \"$ROOT_DIR/script/closed_loop_records.sh\"")
   fi
+  if [[ -f "$ROOT_DIR/script/closed_loop_pipeline.sh" ]]; then
+    actions+=("bash -n \"$ROOT_DIR/script/closed_loop_pipeline.sh\"")
+  fi
   if [[ -f "$ROOT_DIR/script/build_and_run.sh" ]]; then
     actions+=("bash -n \"$ROOT_DIR/script/build_and_run.sh\"")
   fi
   actions+=("\"$ROOT_DIR/script/verify_changed.sh\" --self-test")
+fi
+if "$run_closed_loop"; then
+  actions+=("\"$ROOT_DIR/script/closed_loop_pipeline.sh\" --self-test")
+  actions+=("\"$ROOT_DIR/script/closed_loop_records.sh\" validate")
 fi
 if "$run_full"; then
   actions+=("xcodebuild -project \"$PROJECT\" -scheme Vocab -configuration Debug -derivedDataPath \"$DERIVED_DATA\" -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test")

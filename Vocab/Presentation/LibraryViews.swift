@@ -218,32 +218,73 @@ private struct FlipWordCard: View {
 struct ReviewView: View {
     @Query private var words: [WordRecord]
 
-    private var candidates: [WordRecord] {
-        words.filter { $0.statusRaw == "active" && ($0.reviewState?.activePriority ?? 0) > 0 }
+    var body: some View {
+        let candidates = words
+            .filter { $0.statusRaw == "active" && ($0.reviewState?.activePriority ?? 0) > 0 }
             .sorted { ($0.reviewState?.activePriority ?? 0) > ($1.reviewState?.activePriority ?? 0) }
+
+        Group {
+            if candidates.isEmpty {
+                ContentUnavailableView("우선 복습할 단어가 없습니다", systemImage: "checkmark.circle")
+            } else {
+                ScrollView {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
+                        ForEach(candidates) { word in
+                            ReviewWordCard(word: word)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+        .padding(28)
+        .navigationTitle("복습")
+    }
+}
+
+private struct ReviewWordCard: View {
+    let word: WordRecord
+
+    private var meaning: String {
+        word.meanings.map(\.text).joined(separator: ", ")
+    }
+
+    private var failureCheck: Int {
+        word.reviewState?.failureCheck ?? 0
+    }
+
+    private var activePriority: Int {
+        word.reviewState?.activePriority ?? 0
     }
 
     var body: some View {
-        List(candidates) { word in
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(word.term).font(.title3.weight(.semibold))
-                    Text(word.meanings.map(\.text).joined(separator: ", "))
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-                Spacer()
-                Text("체크 \(word.reviewState?.failureCheck ?? 0)")
-                Text("우선도 \(word.reviewState?.activePriority ?? 0)")
+        VStack(alignment: .leading, spacing: 12) {
+            Text(word.term)
+                .font(.title3.weight(.semibold))
+
+            Text(meaning)
+                .font(.body)
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                Label("체크 \(failureCheck)", systemImage: "checkmark.circle")
+                Label("우선도 \(activePriority)", systemImage: "arrow.clockwise.circle")
             }
-            .padding(.vertical, 5)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(18)
+        .background {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.primary.opacity(0.06))
         }
         .overlay {
-            if candidates.isEmpty {
-                ContentUnavailableView("우선 복습할 단어가 없습니다", systemImage: "checkmark.circle")
-            }
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .stroke(Color.secondary.opacity(0.22), lineWidth: 1.2)
         }
-        .navigationTitle("복습")
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("원문 \(word.term), 의미 \(meaning), 체크 \(failureCheck), 우선도 \(activePriority)")
     }
 }
 

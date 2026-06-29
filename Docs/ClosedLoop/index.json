@@ -32,6 +32,7 @@
       "references": ["CL-0001"],
       "supersedes": [],
       "supersededBy": null,
+      "partiallySupersededBy": [{"id": "CL-0012", "scope": ["independent pre-spawn of all roles before predecessor artifact registration"]}],
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": []
@@ -188,6 +189,7 @@
       "references": ["CL-0002"],
       "supersedes": [],
       "supersededBy": null,
+      "partiallySupersededBy": [{"id": "CL-0012", "scope": ["pre-spawn agent briefing instead of just-in-time eligible-role briefing"]}],
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": []
@@ -259,6 +261,44 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["large-fixture generateSession p95 remains open until query refactor and Release measurement"]
+    },
+    {
+      "id": "CL-0012",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "audit",
+      "title": "Sequential agent handoffs",
+      "date": "2026-06-28",
+      "tags": ["closed-loop", "sequential-handoff", "handoff-token", "hash-chain", "registration-order", "actor-identity", "state-machine", "concurrency", "selective-verification"],
+      "affectedPaths": ["Docs/ClosedLoop/", "script/closed_loop_pipeline.sh", "script/verify_changed.sh"],
+      "path": "Docs/ClosedLoop/records/CL-0012-sequential-agent-handoffs.md",
+      "references": ["CL-0002", "CL-0007"],
+      "supersedes": [],
+      "supersededBy": null,
+      "partiallySupersedes": [
+        {"id": "CL-0002", "scope": ["independent pre-spawn of all roles before predecessor artifact registration"]},
+        {"id": "CL-0007", "scope": ["pre-spawn agent briefing instead of just-in-time eligible-role briefing"]}
+      ],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["shell enforcement cannot spawn or close external Codex agents; orchestrator lifecycle rules must run alongside the repository-local pipeline"]
+    },
+    {
+      "id": "CL-0013",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Review grid cards",
+      "date": "2026-06-28",
+      "tags": ["review", "ui", "lazy-grid", "accessibility", "macos-14"],
+      "affectedPaths": ["Vocab/Presentation/LibraryViews.swift", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0013-review-grid-cards.md",
+      "references": ["CL-0002", "CL-0005", "CL-0006", "CL-0007", "CL-0009"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": []
     }
   ]
 }
