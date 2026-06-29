@@ -20,6 +20,9 @@ runner.
 The application includes a set-grouped learning-card screen. Cards toggle
 between their English headword and registered Korean meanings without creating
 test progress or attempts.
+Below the set picker, the screen uses `sets.count` from the same
+`DailySetRecord` query to show the current number of stored sets as a secondary
+callout and provides a VoiceOver label for that count.
 
 For English-to-Korean grading, any individually registered meaning is an
 automatic correct answer and retains its own meaning identifier for mastery
@@ -59,6 +62,10 @@ payloads, local stores or raw crash reports as repository evidence.
 must cover selected-set and empty-candidate regressions, multiple-meaning
 application grading, the full XCTest suite, Release installation and launch,
 and repository privacy scanning.
+
+The Monitor approved the stored-set count presentation and VoiceOver label
+with no remaining blocking finding. Closed-loop record validation and
+`git diff --check` verify this documentation update.
 
 ## Limitation
 

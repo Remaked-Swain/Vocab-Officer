@@ -37,6 +37,11 @@ struct StudyCardsView: View {
             .controlSize(.large)
             .frame(maxWidth: 360, alignment: .leading)
 
+            Text("보관된 학습 세트: \(sets.count)개")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .accessibilityLabel("현재 보관된 학습 세트는 \(sets.count)개입니다.")
+
             if let message {
                 Label(message, systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle")
                     .font(.body.weight(.medium))
