@@ -4,6 +4,7 @@ import SwiftUI
 struct StudyCardsView: View {
     @Environment(\.modelContext) private var context
     @Query(sort: \DailySetRecord.createdAt, order: .reverse) private var sets: [DailySetRecord]
+    @Binding var faceStates: [UUID: Bool]
     @State private var selectedSetID: UUID?
     @State private var selectedEntries: [StudyCardEntry] = []
     @State private var showingDiscardConfirmation = false
@@ -57,7 +58,13 @@ struct StudyCardsView: View {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
                         ForEach(selectedEntries) { entry in
-                            FlipWordCard(word: entry.word) {
+                            FlipWordCard(
+                                word: entry.word,
+                                showsMeaning: Binding(
+                                    get: { faceStates[entry.id] ?? false },
+                                    set: { faceStates[entry.id] = $0 }
+                                )
+                            ) {
                                 editingWord = entry.word
                             }
                         }
@@ -140,6 +147,8 @@ struct StudyCardsView: View {
             selectedEntries = sortedItems.compactMap { item in
                 wordsByID[item.wordID].map { StudyCardEntry(item: item, word: $0) }
             }
+            let validIDs = Set(selectedEntries.map(\.id))
+            faceStates = faceStates.filter { validIDs.contains($0.key) || $0.value }
         } catch {
             selectedEntries = []
             message = error.localizedDescription
@@ -160,8 +169,8 @@ private struct StudyCardEntry: Identifiable {
 
 private struct FlipWordCard: View {
     let word: WordRecord
+    @Binding var showsMeaning: Bool
     let onEdit: () -> Void
-    @State private var showsMeaning = false
 
     var body: some View {
         ZStack(alignment: .topTrailing) {

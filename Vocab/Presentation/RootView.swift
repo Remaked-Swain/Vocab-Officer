@@ -25,6 +25,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 
 struct RootView: View {
     @State private var selection: NavigationItem? = .intake
+    @State private var studyCardFaceStates: [UUID: Bool] = [:]
 
     var body: some View {
         NavigationSplitView {
@@ -41,7 +42,7 @@ struct RootView: View {
                 switch selection ?? .intake {
                 case .intake: TodayIntakeView()
                 case .test: TestSetupView()
-                case .study: StudyCardsView()
+                case .study: StudyCardsView(faceStates: $studyCardFaceStates)
                 case .review: ReviewView()
                 case .mastered: MasteredView()
                 case .library: LibraryView()
