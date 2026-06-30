@@ -62,8 +62,10 @@ struct StudyCardsView: View {
                             }
                         }
                     }
+                    .padding(.horizontal, 2)
                     .padding(.vertical, 4)
                 }
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             }
         }
         .padding(28)
@@ -176,8 +178,8 @@ private struct FlipWordCard: View {
                         .opacity(showsMeaning ? 1 : 0)
                         .rotation3DEffect(.degrees(showsMeaning ? 0 : -180), axis: (x: 0, y: 1, z: 0), perspective: 0.65)
                 }
-                .scaleEffect(showsMeaning ? 1.025 : 1.0)
-                .shadow(color: showsMeaning ? .accentColor.opacity(0.24) : .black.opacity(0.08), radius: showsMeaning ? 18 : 8, y: 5)
+                .frame(maxWidth: .infinity, minHeight: 146, maxHeight: 146)
+                .shadow(color: showsMeaning ? .accentColor.opacity(0.20) : .black.opacity(0.08), radius: 10, y: 5)
                 .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
             .buttonStyle(.plain)
@@ -188,7 +190,7 @@ private struct FlipWordCard: View {
                 .controlSize(.small)
                 .padding(8)
         }
-        .frame(minHeight: 146)
+        .frame(maxWidth: .infinity, minHeight: 146, maxHeight: 146)
         .accessibilityLabel(word.term)
         .accessibilityValue(showsMeaning ? word.meanings.map(\.text).joined(separator: ", ") : "영단어 앞면")
         .accessibilityHint("눌러서 카드 앞뒤를 전환합니다")
@@ -217,6 +219,7 @@ private struct FlipWordCard: View {
                 }
                 .padding(18)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
