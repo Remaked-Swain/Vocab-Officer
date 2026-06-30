@@ -1,3 +1,4 @@
+import AVFoundation
 import SwiftData
 import SwiftUI
 
@@ -193,11 +194,23 @@ private struct FlipWordCard: View {
             }
             .buttonStyle(.plain)
 
-            Button("수정") { onEdit() }
-                .font(.caption.weight(.semibold))
+            HStack(spacing: 8) {
+                Button {
+                    WordPronouncer.shared.speak(word.term)
+                } label: {
+                    Image(systemName: "speaker.wave.2.fill")
+                }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .padding(8)
+                .help("영단어 발음 듣기")
+                .accessibilityLabel("\(word.term) 발음 듣기")
+
+                Button("수정") { onEdit() }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+            .padding(8)
         }
         .frame(maxWidth: .infinity, minHeight: 146, maxHeight: 146)
         .accessibilityLabel(word.term)
@@ -229,6 +242,31 @@ private struct FlipWordCard: View {
                 .padding(18)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+@MainActor
+private final class WordPronouncer {
+    static let shared = WordPronouncer()
+
+    private let synthesizer = AVSpeechSynthesizer()
+
+    private init() {}
+
+    func speak(_ text: String) {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return }
+
+        if synthesizer.isSpeaking {
+            synthesizer.stopSpeaking(at: .immediate)
+        }
+
+        let utterance = AVSpeechUtterance(string: normalized)
+        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+        utterance.rate = 0.42
+        utterance.pitchMultiplier = 1.0
+        utterance.volume = 1.0
+        synthesizer.speak(utterance)
     }
 }
 
