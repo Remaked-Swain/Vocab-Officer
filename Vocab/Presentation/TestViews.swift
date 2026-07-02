@@ -3,12 +3,16 @@ import SwiftUI
 
 struct TestSetupView: View {
     @Environment(\.modelContext) private var context
-    @Query(sort: \DailySetRecord.createdAt, order: .reverse) private var sets: [DailySetRecord]
+    @Query private var sets: [DailySetRecord]
     @State private var mode: SessionMode = .mixed
     @State private var direction: PracticeDirection = .enToKo
     @State private var selectedSetID: UUID?
     @State private var activeRun: TestRun?
     @State private var error: String?
+
+    private var orderedSets: [DailySetRecord] {
+        sets.sorted(by: newestSetFirst)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
@@ -33,7 +37,7 @@ struct TestSetupView: View {
                 .pickerStyle(.segmented)
                 if mode == .set {
                     Picker("테스트 대상 세트", selection: $selectedSetID) {
-                        ForEach(Array(sets.enumerated()), id: \.element.id) { offset, set in
+                        ForEach(Array(orderedSets.enumerated()), id: \.element.id) { offset, set in
                             Text("\(set.seoulDay) 세트")
                                 .tag(Optional(set.id))
                         }
@@ -75,7 +79,7 @@ struct TestSetupView: View {
         .padding(32)
         .onAppear {
             if selectedSetID == nil {
-                selectedSetID = sets.first?.id
+                selectedSetID = orderedSets.first?.id
             }
         }
         .sheet(item: $activeRun) { run in
@@ -93,6 +97,16 @@ struct TestSetupView: View {
             activeRun = nil
             self.error = caughtError.localizedDescription
         }
+    }
+
+    private func newestSetFirst(_ lhs: DailySetRecord, _ rhs: DailySetRecord) -> Bool {
+        if lhs.seoulDay != rhs.seoulDay {
+            return lhs.seoulDay > rhs.seoulDay
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt
+        }
+        return lhs.id.uuidString > rhs.id.uuidString
     }
 }
 

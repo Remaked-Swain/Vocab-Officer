@@ -4,7 +4,7 @@ import SwiftUI
 
 struct StudyCardsView: View {
     @Environment(\.modelContext) private var context
-    @Query(sort: \DailySetRecord.createdAt, order: .reverse) private var sets: [DailySetRecord]
+    @Query private var sets: [DailySetRecord]
     @Binding var faceStates: [UUID: Bool]
     @State private var selectedSetID: UUID?
     @State private var selectedEntries: [StudyCardEntry] = []
@@ -14,8 +14,12 @@ struct StudyCardsView: View {
     @State private var isError = false
     @State private var isLoadingCards = false
 
+    private var orderedSets: [DailySetRecord] {
+        sets.sorted(by: Self.newestSetFirst)
+    }
+
     private var selectedSet: DailySetRecord? {
-        sets.first { $0.id == selectedSetID } ?? sets.first
+        orderedSets.first { $0.id == selectedSetID } ?? orderedSets.first
     }
 
     var body: some View {
@@ -30,7 +34,7 @@ struct StudyCardsView: View {
                 get: { selectedSet?.id },
                 set: { selectedSetID = $0 }
             )) {
-                ForEach(sets) { set in
+                ForEach(orderedSets) { set in
                     Text("\(set.seoulDay) 세트  (\(set.items.count)개)")
                         .tag(Optional(set.id))
                 }
@@ -39,10 +43,10 @@ struct StudyCardsView: View {
             .controlSize(.large)
             .frame(maxWidth: 360, alignment: .leading)
 
-            Text("보관된 학습 세트: \(sets.count)개")
+            Text("보관된 학습 세트: \(orderedSets.count)개")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("현재 보관된 학습 세트는 \(sets.count)개입니다.")
+                .accessibilityLabel("현재 보관된 학습 세트는 \(orderedSets.count)개입니다.")
 
             if let message {
                 Label(message, systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle")
@@ -113,7 +117,7 @@ struct StudyCardsView: View {
         guard let selectedSet else { return }
         do {
             try LearningCoordinator(context: context).discardDailySet(selectedSet)
-            selectedSetID = sets.first { $0.id != selectedSet.id }?.id
+            selectedSetID = orderedSets.first { $0.id != selectedSet.id }?.id
             message = "\(selectedSet.seoulDay) 세트를 폐기했습니다."
             isError = false
         } catch {
@@ -155,6 +159,16 @@ struct StudyCardsView: View {
             message = error.localizedDescription
             isError = true
         }
+    }
+
+    private static func newestSetFirst(_ lhs: DailySetRecord, _ rhs: DailySetRecord) -> Bool {
+        if lhs.seoulDay != rhs.seoulDay {
+            return lhs.seoulDay > rhs.seoulDay
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt
+        }
+        return lhs.id.uuidString > rhs.id.uuidString
     }
 }
 
@@ -271,13 +285,16 @@ private final class WordPronouncer {
 }
 
 struct ReviewView: View {
-    @Query private var words: [WordRecord]
+    @Query private var states: [ReviewStateRecord]
+
+    private var candidates: [WordRecord] {
+        states
+            .compactMap(\.word)
+            .filter { $0.deletedAt == nil && $0.statusRaw == "active" && ($0.reviewState?.activePriority ?? 0) > 0 }
+            .sorted(by: reviewFirst)
+    }
 
     var body: some View {
-        let candidates = words
-            .filter { $0.statusRaw == "active" && ($0.reviewState?.activePriority ?? 0) > 0 }
-            .sorted { ($0.reviewState?.activePriority ?? 0) > ($1.reviewState?.activePriority ?? 0) }
-
         Group {
             if candidates.isEmpty {
                 ContentUnavailableView("우선 복습할 단어가 없습니다", systemImage: "checkmark.circle")
@@ -294,6 +311,25 @@ struct ReviewView: View {
         }
         .padding(28)
         .navigationTitle("복습")
+    }
+
+    private func reviewFirst(_ lhs: WordRecord, _ rhs: WordRecord) -> Bool {
+        let lhsState = lhs.reviewState
+        let rhsState = rhs.reviewState
+
+        if (lhsState?.activePriority ?? 0) != (rhsState?.activePriority ?? 0) {
+            return (lhsState?.activePriority ?? 0) > (rhsState?.activePriority ?? 0)
+        }
+        if (lhsState?.failureCheck ?? 0) != (rhsState?.failureCheck ?? 0) {
+            return (lhsState?.failureCheck ?? 0) > (rhsState?.failureCheck ?? 0)
+        }
+        if (lhsState?.lastPresentedAt ?? .distantPast) != (rhsState?.lastPresentedAt ?? .distantPast) {
+            return (lhsState?.lastPresentedAt ?? .distantPast) < (rhsState?.lastPresentedAt ?? .distantPast)
+        }
+        if lhs.createdAt != rhs.createdAt {
+            return lhs.createdAt > rhs.createdAt
+        }
+        return lhs.term.localizedCaseInsensitiveCompare(rhs.term) == .orderedAscending
     }
 }
 
