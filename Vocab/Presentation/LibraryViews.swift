@@ -393,6 +393,7 @@ struct LibraryView: View {
     @State private var batch = 0
     @State private var canLoadMore = true
     @State private var isLoadingWords = false
+    @State private var matchedSearchWordIDs: [UUID]?
 
     private let batchSize = 150
 
@@ -438,7 +439,7 @@ struct LibraryView: View {
                 libraryLoadingFooter
             }
         }
-        .searchable(text: $searchText, prompt: "영단어 검색")
+        .searchable(text: $searchText, prompt: "영단어 또는 의미 검색")
         .navigationTitle("단어장")
         .task {
             reloadWordList()
@@ -543,7 +544,15 @@ struct LibraryView: View {
         selection.removeAll()
         displayedWords = []
         linkedWordIDs = []
-        loadNextWordBatch()
+        do {
+            matchedSearchWordIDs = try WordLibrarySearch(context: context).resolveWordIDs(for: searchText)
+            loadNextWordBatch()
+        } catch {
+            matchedSearchWordIDs = []
+            canLoadMore = false
+            message = error.localizedDescription
+            isError = true
+        }
     }
 
     private func loadNextWordBatch() {
@@ -567,24 +576,29 @@ struct LibraryView: View {
     }
 
     private func fetchWordBatch(batch: Int) throws -> [WordRecord] {
-        let normalizedSearch = TextNormalizer.normalizeEnglish(searchText)
-        var descriptor: FetchDescriptor<WordRecord>
-        if normalizedSearch.isEmpty {
-            descriptor = FetchDescriptor<WordRecord>(
+        if let matchedSearchWordIDs {
+            let start = batch * batchSize
+            guard start < matchedSearchWordIDs.count else { return [] }
+
+            let end = min(start + batchSize, matchedSearchWordIDs.count)
+            let batchIDs = Array(matchedSearchWordIDs[start..<end])
+            let descriptor = FetchDescriptor<WordRecord>(
+                predicate: #Predicate { word in
+                    batchIDs.contains(word.id) && word.deletedAt == nil
+                }
+            )
+            let fetched = try context.fetch(descriptor)
+            let wordsByID = Dictionary(uniqueKeysWithValues: fetched.map { ($0.id, $0) })
+            return batchIDs.compactMap { wordsByID[$0] }
+        } else {
+            var descriptor = FetchDescriptor<WordRecord>(
                 predicate: #Predicate { $0.deletedAt == nil },
                 sortBy: [SortDescriptor(\.normalizedTerm)]
             )
-        } else {
-            descriptor = FetchDescriptor<WordRecord>(
-                predicate: #Predicate { word in
-                    word.deletedAt == nil && word.normalizedTerm.contains(normalizedSearch)
-                },
-                sortBy: [SortDescriptor(\.normalizedTerm)]
-            )
+            descriptor.fetchLimit = batchSize
+            descriptor.fetchOffset = batch * batchSize
+            return try context.fetch(descriptor)
         }
-        descriptor.fetchLimit = batchSize
-        descriptor.fetchOffset = batch * batchSize
-        return try context.fetch(descriptor)
     }
 
     private func fetchWords(ids: Set<UUID>) throws -> [WordRecord] {
