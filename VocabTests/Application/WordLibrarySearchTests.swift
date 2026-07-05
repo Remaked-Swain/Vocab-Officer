@@ -10,6 +10,7 @@ final class WordLibrarySearchTests: XCTestCase {
 
         let apple = makeWord(term: "apple", meanings: ["사과"], context: context)
         _ = makeWord(term: "banana", meanings: ["바나나"], context: context)
+        try context.save()
         let search = WordLibrarySearch(context: context)
 
         let englishIDs = try XCTUnwrap(search.resolveWordIDs(for: "app"))
@@ -25,6 +26,7 @@ final class WordLibrarySearchTests: XCTestCase {
         _ = makeWord(term: "zebra", meanings: ["공통 뜻"], context: context)
         let alpha = makeWord(term: "alpha", meanings: ["공통 뜻", "다른 뜻"], context: context)
         _ = makeWord(term: "middle", meanings: ["공통 뜻"], context: context)
+        try context.save()
         let search = WordLibrarySearch(context: context)
 
         let ids = try XCTUnwrap(search.resolveWordIDs(for: "공통"))
@@ -33,6 +35,25 @@ final class WordLibrarySearchTests: XCTestCase {
 
         XCTAssertEqual(ids.compactMap { wordsByID[$0] }, ["alpha", "middle", "zebra"])
         XCTAssertEqual(ids.filter { $0 == alpha.id }.count, 1)
+    }
+
+    func testBlankQueryReturnsNilInsteadOfScanningEverything() throws {
+        let context = try makeContext()
+        _ = makeWord(term: "apple", meanings: ["사과"], context: context)
+        try context.save()
+        let search = WordLibrarySearch(context: context)
+
+        XCTAssertNil(try search.resolveWordIDs(for: "   "))
+    }
+
+    func testEnglishQueryDoesNotAccidentallyMatchKoreanMeaningOnlyRows() throws {
+        let context = try makeContext()
+        _ = makeWord(term: "pear", meanings: ["application only"], context: context)
+        _ = makeWord(term: "banana", meanings: ["사과"], context: context)
+        try context.save()
+        let search = WordLibrarySearch(context: context)
+
+        XCTAssertEqual(try search.resolveWordIDs(for: "app"), [])
     }
 
     private func makeWord(term: String, meanings: [String], context: ModelContext) -> WordRecord {

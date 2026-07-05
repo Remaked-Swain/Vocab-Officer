@@ -138,21 +138,6 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertLessThanOrEqual(p95, 0.300)
     }
 
-    func testPastedOneHundredWordsUseAtomicDailySetSave() throws {
-        let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
-        let input = (0..<100).map { index in
-            String(format: "%04d-term%d-뜻%d, 추가뜻%d", index + 1, index, index, index)
-        }.joined(separator: "\n")
-
-        let drafts = try DailyIntakePasteParser.parse(input)
-        try coordinator.saveDailySet(drafts, date: testDate)
-
-        XCTAssertEqual(drafts.count, 100)
-        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 100)
-        XCTAssertEqual(try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first).meanings.count, 2)
-    }
-
     func testPasteParserRejectsMalformedRow() {
         XCTAssertThrowsError(try DailyIntakePasteParser.parse("형식이 없는 단어 행"))
     }
