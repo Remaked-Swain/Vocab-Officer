@@ -19,6 +19,7 @@ struct VocabApp: App {
                 AttemptRecord.self,
                 ReviewStateRecord.self,
                 AnonymousAggregateRecord.self,
+                MemoryAidCacheRecord.self,
                 configurations: configuration
             )
         } catch {

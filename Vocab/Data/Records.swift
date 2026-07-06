@@ -178,3 +178,31 @@ final class AnonymousAggregateRecord {
         self.deletedMasteredCount = 0
     }
 }
+
+@Model
+final class MemoryAidCacheRecord {
+    @Attribute(.unique) var id: UUID
+    var wordID: UUID
+    var modelRaw: String
+    var promptVersion: Int
+    var contentSignature: String
+    var markdown: String
+    var generatedAt: Date
+
+    init(
+        wordID: UUID,
+        modelRaw: String,
+        promptVersion: Int,
+        contentSignature: String,
+        markdown: String,
+        generatedAt: Date = .now
+    ) {
+        self.id = UUID()
+        self.wordID = wordID
+        self.modelRaw = modelRaw
+        self.promptVersion = promptVersion
+        self.contentSignature = contentSignature
+        self.markdown = markdown
+        self.generatedAt = generatedAt
+    }
+}

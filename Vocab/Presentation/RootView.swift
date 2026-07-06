@@ -58,6 +58,11 @@ struct RootView: View {
 struct SettingsView: View {
     @AppStorage("reviewDefaultMode") private var reviewDefaultMode = "mixed"
     @AppStorage("showTypoSuggestions") private var showTypoSuggestions = true
+    @AppStorage("memoryAidModel") private var memoryAidModel = MemoryAidModel.gemini35Flash.rawValue
+    @State private var apiKey = ""
+    @State private var apiKeyLoaded = false
+    @State private var apiKeyMessage: String?
+    @State private var apiKeyError = false
 
     var body: some View {
         Form {
@@ -68,10 +73,83 @@ struct SettingsView: View {
             }
             Toggle("근접 오타 후보 제시", isOn: $showTypoSuggestions)
             LabeledContent("학습 날짜 기준", value: "Asia/Seoul")
+
+            Section("암기 도움 API") {
+                Picker("기본 모델", selection: $memoryAidModel) {
+                    ForEach(MemoryAidModel.allCases) { model in
+                        Text("\(model.displayName) · \(model.summary)")
+                            .tag(model.rawValue)
+                    }
+                }
+
+                SecureField("Gemini API 키", text: $apiKey)
+                    .textFieldStyle(.roundedBorder)
+
+                HStack {
+                    Button("API 키 저장") {
+                        saveAPIKey()
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button("API 키 삭제", role: .destructive) {
+                        deleteAPIKey()
+                    }
+                    .disabled(apiKey.isEmpty && apiKeyLoaded)
+                }
+
+                Text("Google AI Studio에서 발급한 Gemini API 키를 사용합니다. 무료 티어에서는 요청 내용이 제품 개선에 사용될 수 있습니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text("이 키는 macOS 키체인에 저장되며, 앱 재설치 후에도 사용자가 직접 삭제하기 전까지 유지될 수 있습니다.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                if let apiKeyMessage {
+                    Label(apiKeyMessage, systemImage: apiKeyError ? "exclamationmark.triangle" : "checkmark.circle")
+                        .foregroundStyle(apiKeyError ? .red : .green)
+                }
+            }
         }
         .font(.body)
         .controlSize(.large)
         .padding(24)
         .frame(width: 480)
+        .task {
+            await loadAPIKey()
+        }
+    }
+
+    private func loadAPIKey() async {
+        do {
+            apiKey = try GeminiAPIKeyStore.shared.load() ?? ""
+            apiKeyLoaded = true
+        } catch {
+            apiKeyMessage = error.localizedDescription
+            apiKeyError = true
+        }
+    }
+
+    private func saveAPIKey() {
+        do {
+            try GeminiAPIKeyStore.shared.save(apiKey.trimmingCharacters(in: .whitespacesAndNewlines))
+            apiKeyMessage = "Gemini API 키를 저장했습니다."
+            apiKeyError = false
+            apiKeyLoaded = true
+        } catch {
+            apiKeyMessage = error.localizedDescription
+            apiKeyError = true
+        }
+    }
+
+    private func deleteAPIKey() {
+        do {
+            try GeminiAPIKeyStore.shared.delete()
+            apiKey = ""
+            apiKeyMessage = "Gemini API 키를 삭제했습니다."
+            apiKeyError = false
+        } catch {
+            apiKeyMessage = error.localizedDescription
+            apiKeyError = true
+        }
     }
 }

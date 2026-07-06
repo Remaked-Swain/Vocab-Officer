@@ -214,6 +214,8 @@ private struct FlipWordCard: View {
             .buttonStyle(.plain)
 
             HStack(spacing: 8) {
+                WordMemoryAidButton(word: word)
+
                 Button {
                     WordPronouncer.shared.speak(headword: word.term, meanings: word.meanings.map(\.text))
                 } label: {
@@ -371,8 +373,12 @@ private struct ReviewWordCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(word.term)
-                .font(.title3.weight(.semibold))
+            HStack(alignment: .top, spacing: 10) {
+                Text(word.term)
+                    .font(.title3.weight(.semibold))
+                Spacer(minLength: 0)
+                WordMemoryAidButton(word: word)
+            }
 
             Text(meaning)
                 .font(.body)
@@ -455,6 +461,7 @@ struct LibraryView: View {
                             }
                         }
                         Spacer()
+                        WordMemoryAidButton(word: word)
                         Button("수정") { editingWord = word }
                             .controlSize(.large)
                     }
