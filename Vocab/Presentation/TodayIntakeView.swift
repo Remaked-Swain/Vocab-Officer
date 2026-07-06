@@ -41,11 +41,8 @@ struct TodayIntakeView: View {
                 Spacer()
             }
 
-            if let message {
-                Label(message, systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(isError ? .red : .green)
-            }
+            FeedbackPanel(items: feedbackItems)
+                .accessibilityLabel("입력 상태 안내")
 
             Picker("입력 방법", selection: $mode) {
                 ForEach(IntakeMode.allCases) { mode in
@@ -111,9 +108,6 @@ struct TodayIntakeView: View {
                                 .stroke(.quaternary, lineWidth: 1)
                         }
                         .accessibilityLabel("OCR 추출 결과 검수 입력창")
-                    Label(pasteAnalysis.status, systemImage: pasteAnalysis.isReady ? "checkmark.circle.fill" : "info.circle")
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(pasteAnalysis.isReady ? .green : .secondary)
                 }
                 .padding(10)
             }
@@ -159,9 +153,6 @@ struct TodayIntakeView: View {
                                 .stroke(.quaternary, lineWidth: 1)
                         }
                         .accessibilityLabel("단어 100개 붙여넣기 입력창")
-                    Label(pasteAnalysis.status, systemImage: pasteAnalysis.isReady ? "checkmark.circle.fill" : "info.circle")
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(pasteAnalysis.isReady ? .green : .secondary)
                 }
                 .padding(10)
             }
@@ -238,6 +229,43 @@ struct TodayIntakeView: View {
             message = error.localizedDescription
             isError = true
         }
+    }
+
+    private var feedbackItems: [FeedbackItem] {
+        var items: [FeedbackItem] = []
+
+        if let message {
+            items.append(
+                FeedbackItem(
+                    text: message,
+                    systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle",
+                    color: isError ? .red : .green
+                )
+            )
+        }
+
+        switch mode {
+        case .paste, .image:
+            items.append(
+                FeedbackItem(
+                    text: pasteAnalysis.status,
+                    systemImage: pasteAnalysis.isReady ? "checkmark.circle.fill" : "info.circle",
+                    color: pasteAnalysis.isReady ? .green : .secondary
+                )
+            )
+        case .manual:
+            items.append(
+                FeedbackItem(
+                    text: filledCount == 100
+                        ? "100개가 채워졌습니다. 바로 저장할 수 있습니다."
+                        : "직접 입력은 100개를 모두 채워야 저장할 수 있습니다.",
+                    systemImage: filledCount == 100 ? "checkmark.circle.fill" : "info.circle",
+                    color: filledCount == 100 ? .green : .secondary
+                )
+            )
+        }
+
+        return items
     }
 
     private func updatePasteAnalysis() {

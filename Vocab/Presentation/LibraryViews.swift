@@ -30,6 +30,17 @@ struct StudyCardsView: View {
                 .font(.body)
                 .foregroundStyle(.secondary)
 
+            if let message {
+                FeedbackPanel(items: [
+                    FeedbackItem(
+                        text: message,
+                        systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle",
+                        color: isError ? .red : .green
+                    )
+                ])
+                .accessibilityLabel("학습 카드 상태 안내")
+            }
+
             Picker("학습 세트", selection: Binding(
                 get: { selectedSet?.id },
                 set: { selectedSetID = $0 }
@@ -47,12 +58,6 @@ struct StudyCardsView: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .accessibilityLabel("현재 보관된 학습 세트는 \(orderedSets.count)개입니다.")
-
-            if let message {
-                Label(message, systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(isError ? .red : .green)
-            }
 
             if isLoadingCards {
                 ProgressView("카드를 불러오는 중...")
@@ -210,14 +215,14 @@ private struct FlipWordCard: View {
 
             HStack(spacing: 8) {
                 Button {
-                    WordPronouncer.shared.speak(word.term)
+                    WordPronouncer.shared.speak(headword: word.term, meanings: word.meanings.map(\.text))
                 } label: {
                     Image(systemName: "speaker.wave.2.fill")
                 }
                 .buttonStyle(.bordered)
                 .controlSize(.small)
-                .help("영단어 발음 듣기")
-                .accessibilityLabel("\(word.term) 발음 듣기")
+                .help("원문과 의미 읽기")
+                .accessibilityLabel("\(word.term) 원문과 의미 읽기")
 
                 Button("수정") { onEdit() }
                     .font(.caption.weight(.semibold))
@@ -267,20 +272,36 @@ private final class WordPronouncer {
 
     private init() {}
 
-    func speak(_ text: String) {
-        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty else { return }
+    func speak(headword: String, meanings: [String]) {
+        let normalizedHeadword = headword.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedMeaning = meanings
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        guard !normalizedHeadword.isEmpty || !normalizedMeaning.isEmpty else { return }
 
         if synthesizer.isSpeaking {
             synthesizer.stopSpeaking(at: .immediate)
         }
 
-        let utterance = AVSpeechUtterance(string: normalized)
-        utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
-        utterance.rate = 0.42
-        utterance.pitchMultiplier = 1.0
-        utterance.volume = 1.0
-        synthesizer.speak(utterance)
+        if !normalizedHeadword.isEmpty {
+            let headwordUtterance = AVSpeechUtterance(string: normalizedHeadword)
+            headwordUtterance.voice = AVSpeechSynthesisVoice(language: "en-US")
+            headwordUtterance.rate = 0.42
+            headwordUtterance.pitchMultiplier = 1.0
+            headwordUtterance.volume = 1.0
+            headwordUtterance.postUtteranceDelay = normalizedMeaning.isEmpty ? 0 : 0.18
+            synthesizer.speak(headwordUtterance)
+        }
+
+        if !normalizedMeaning.isEmpty {
+            let meaningUtterance = AVSpeechUtterance(string: normalizedMeaning)
+            meaningUtterance.voice = AVSpeechSynthesisVoice(language: "ko-KR")
+            meaningUtterance.rate = 0.4
+            meaningUtterance.pitchMultiplier = 1.0
+            meaningUtterance.volume = 1.0
+            synthesizer.speak(meaningUtterance)
+        }
     }
 }
 
@@ -400,10 +421,15 @@ struct LibraryView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let message {
-                Label(message, systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle")
-                    .font(.body.weight(.medium))
-                    .foregroundStyle(isError ? .red : .green)
-                    .padding(.horizontal)
+                FeedbackPanel(items: [
+                    FeedbackItem(
+                        text: message,
+                        systemImage: isError ? "exclamationmark.triangle" : "checkmark.circle",
+                        color: isError ? .red : .green
+                    )
+                ])
+                .padding(.horizontal)
+                .accessibilityLabel("단어장 상태 안내")
             }
 
             List(selection: $selection) {
@@ -640,11 +666,15 @@ struct HistoryView: View {
             Text("상세 로그는 학습 품질 계산용 요약 상태와 별개입니다. 최근 기록은 유지하고, 오래된 정답과 만료된 오답/모름은 정리해 앱 크기 증가를 제한합니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .padding(.horizontal)
             if let notice {
-                Label(notice, systemImage: "checkmark.circle")
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
+                FeedbackPanel(items: [
+                    FeedbackItem(
+                        text: notice,
+                        systemImage: "checkmark.circle",
+                        color: .secondary
+                    )
+                ])
+                .accessibilityLabel("학습 기록 상태 안내")
             }
             List(attempts) { attempt in
             HStack {
