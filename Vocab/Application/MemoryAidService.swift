@@ -59,7 +59,7 @@ enum MemoryAidError: LocalizedError {
 }
 
 struct MemoryAidPromptBuilder {
-    static let version = 2
+    static let version = 3
 
     static func build(for word: WordRecord) -> String {
         let meanings = word.meanings.map(\.text).joined(separator: ", ")
@@ -73,16 +73,25 @@ struct MemoryAidPromptBuilder {
         Write concise study help in Korean using Markdown.
         Follow these rules:
         - Be accurate. If etymology or a comparison is uncertain, say that it is uncertain instead of fabricating.
-        - Keep the whole answer under 220 Korean characters if possible.
+        - Keep the whole answer short and scannable. Prefer short noun phrases over long sentences.
         - Prefer practical memorization help over encyclopedia-style explanation.
-        - Use exactly these sections:
+        - Output must use exactly these sections in this order:
           ## 한줄 기억
           ## 형태/어원
           ## 연상 포인트
           ## 예문
           ## 비교
-        - In 예문, provide one short English sentence and one Korean gloss.
-        - In 비교, prefer similar/confusable words or antonyms only when actually useful.
+        - Under ## 한줄 기억, write exactly one bullet line: "- ..."
+        - Under ## 형태/어원, write exactly one bullet line: "- ..."
+        - Under ## 연상 포인트, write exactly one bullet line: "- ..."
+        - Under ## 예문, write exactly two bullet lines:
+          - EN: ...
+          - KO: ...
+        - Under ## 비교, write exactly one bullet line: "- ..."
+        - Separate each section with one blank line.
+        - Do not use bold, numbering, extra headings, code blocks, or paragraphs.
+        - Keep each bullet readable at a glance. Avoid semicolons and chained clauses.
+        - In 비교, prefer similar/confusable words or antonyms only when actually useful. If not useful, write "- 없음".
         """
     }
 
@@ -99,15 +108,30 @@ struct MemoryAidPromptBuilder {
         Rewrite from scratch.
         Requirements:
         - Output in Korean Markdown only.
-        - Use all five headings exactly once:
+        - Use all five headings exactly once and in this order:
           ## 한줄 기억
           ## 형태/어원
           ## 연상 포인트
           ## 예문
           ## 비교
         - Do not invent uncertain etymology or comparisons.
-        - Keep each section to 1-2 short lines.
-        - In 예문, include one English sentence and one Korean gloss.
+        - Use this exact line structure:
+          ## 한줄 기억
+          - ...
+
+          ## 형태/어원
+          - ...
+
+          ## 연상 포인트
+          - ...
+
+          ## 예문
+          - EN: ...
+          - KO: ...
+
+          ## 비교
+          - ...
+        - No extra text before, after, or between sections except one blank line.
         """
     }
 }
@@ -121,12 +145,111 @@ enum MemoryAidQualityGate {
         "## 비교"
     ]
 
+    struct ParsedMemoryAid: Equatable {
+        let hook: String
+        let etymology: String
+        let association: String
+        let exampleEnglish: String
+        let exampleKorean: String
+        let comparison: String
+
+        var normalizedMarkdown: String {
+            """
+            ## 한줄 기억
+            - \(hook)
+
+            ## 형태/어원
+            - \(etymology)
+
+            ## 연상 포인트
+            - \(association)
+
+            ## 예문
+            - EN: \(exampleEnglish)
+            - KO: \(exampleKorean)
+
+            ## 비교
+            - \(comparison)
+            """
+        }
+    }
+
     static func validate(_ markdown: String) -> Bool {
+        parse(markdown) != nil
+    }
+
+    static func normalize(_ markdown: String) -> String? {
+        parse(markdown)?.normalizedMarkdown
+    }
+
+    static func parsed(_ markdown: String) -> ParsedMemoryAid? {
+        parse(markdown)
+    }
+
+    private static func parse(_ markdown: String) -> ParsedMemoryAid? {
         let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return false }
-        guard requiredSections.allSatisfy(trimmed.contains) else { return false }
-        guard requiredSections.allSatisfy({ heading in trimmed.components(separatedBy: heading).count == 2 }) else { return false }
-        guard trimmed.count <= 1_400 else { return false }
+        guard !trimmed.isEmpty, trimmed.count <= 1_400 else { return nil }
+        guard requiredSections.allSatisfy(trimmed.contains) else { return nil }
+        guard requiredSections.allSatisfy({ heading in trimmed.components(separatedBy: heading).count == 2 }) else { return nil }
+
+        let blocks = trimmed
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        guard blocks.count == requiredSections.count else { return nil }
+
+        var values: [String: [String]] = [:]
+        for (index, block) in blocks.enumerated() {
+            let lines = block
+                .components(separatedBy: .newlines)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            guard let heading = lines.first, heading == requiredSections[index] else { return nil }
+            let contentLines = Array(lines.dropFirst())
+            guard !contentLines.isEmpty else { return nil }
+            values[heading] = contentLines
+        }
+
+        guard
+            let hook = parseSingleBullet(values["## 한줄 기억"]),
+            let etymology = parseSingleBullet(values["## 형태/어원"]),
+            let association = parseSingleBullet(values["## 연상 포인트"]),
+            let comparison = parseSingleBullet(values["## 비교"]),
+            let example = parseExample(values["## 예문"])
+        else {
+            return nil
+        }
+
+        return ParsedMemoryAid(
+            hook: hook,
+            etymology: etymology,
+            association: association,
+            exampleEnglish: example.english,
+            exampleKorean: example.korean,
+            comparison: comparison
+        )
+    }
+
+    private static func parseSingleBullet(_ lines: [String]?) -> String? {
+        guard let lines, lines.count == 1 else { return nil }
+        guard lines[0].hasPrefix("- ") else { return nil }
+        let value = String(lines[0].dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isReadable(value, maxLength: 80) else { return nil }
+        return value
+    }
+
+    private static func parseExample(_ lines: [String]?) -> (english: String, korean: String)? {
+        guard let lines, lines.count == 2 else { return nil }
+        guard lines[0].hasPrefix("- EN: "), lines[1].hasPrefix("- KO: ") else { return nil }
+        let english = String(lines[0].dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+        let korean = String(lines[1].dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isReadable(english, maxLength: 100), isReadable(korean, maxLength: 100) else { return nil }
+        return (english, korean)
+    }
+
+    private static func isReadable(_ value: String, maxLength: Int) -> Bool {
+        guard !value.isEmpty, value.count <= maxLength else { return false }
+        guard !value.contains("\n"), !value.contains("```"), !value.contains("##") else { return false }
         return true
     }
 
@@ -193,8 +316,8 @@ final class MemoryAidService {
 
         for (index, prompt) in prompts.enumerated() {
             let output = try await requestMarkdown(using: apiKey, model: model, prompt: prompt)
-            if MemoryAidQualityGate.validate(output) {
-                return output
+            if let normalized = MemoryAidQualityGate.normalize(output) {
+                return normalized
             }
             lastOutput = output
 
@@ -205,10 +328,10 @@ final class MemoryAidService {
 
         let repairedPrompt = MemoryAidPromptBuilder.repair(for: word, invalidOutput: lastOutput)
         let repairedOutput = try await requestMarkdown(using: apiKey, model: model, prompt: repairedPrompt)
-        guard MemoryAidQualityGate.validate(repairedOutput) else {
+        guard let normalized = MemoryAidQualityGate.normalize(repairedOutput) else {
             throw MemoryAidError.providerError("암기 도움 응답 품질이 기준을 만족하지 못했습니다. 다시 생성해 보세요.")
         }
-        return repairedOutput
+        return normalized
     }
 
     private func requestMarkdown(using apiKey: String, model: MemoryAidModel, prompt: String) async throws -> String {

@@ -40,6 +40,11 @@ private struct WordMemoryAidSheet: View {
         return try? AttributedString(markdown: markdown)
     }
 
+    private var parsedAid: MemoryAidQualityGate.ParsedMemoryAid? {
+        guard let markdown = result?.markdown else { return nil }
+        return MemoryAidQualityGate.parsed(markdown)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             HStack(alignment: .top) {
@@ -65,6 +70,8 @@ private struct WordMemoryAidSheet: View {
                     if isLoading {
                         ProgressView("암기 도움을 생성하는 중...")
                             .controlSize(.regular)
+                    } else if let parsedAid {
+                        MemoryAidContentView(aid: parsedAid)
                     } else if let renderedMarkdown {
                         Text(renderedMarkdown)
                             .textSelection(.enabled)
@@ -154,5 +161,58 @@ private struct WordMemoryAidSheet: View {
     private func sourceMessage(for result: WordMemoryAid) -> String {
         let prefix = result.source == .cached ? "저장된 암기 도움" : "새로 생성한 암기 도움"
         return "\(prefix) · \(selectedModel.displayName) · \(result.generatedAt.formatted(date: .omitted, time: .standard))"
+    }
+}
+
+private struct MemoryAidContentView: View {
+    let aid: MemoryAidQualityGate.ParsedMemoryAid
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            MemoryAidSectionCard(title: "한줄 기억", content: aid.hook, accent: .blue)
+            MemoryAidSectionCard(title: "형태/어원", content: aid.etymology, accent: .orange)
+            MemoryAidSectionCard(title: "연상 포인트", content: aid.association, accent: .purple)
+            MemoryAidSectionCard(
+                title: "예문",
+                content: "EN: \(aid.exampleEnglish)\nKO: \(aid.exampleKorean)",
+                accent: .green
+            )
+            MemoryAidSectionCard(title: "비교", content: aid.comparison, accent: .pink)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct MemoryAidSectionCard: View {
+    let title: String
+    let content: String
+    let accent: Color
+
+    var bodyView: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(accent)
+            Text(content)
+                .font(.body)
+                .lineSpacing(4)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(accent.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(accent.opacity(0.18), lineWidth: 1)
+        )
+    }
+
+    var body: some View {
+        bodyView
+            .accessibilityElement(children: .combine)
     }
 }

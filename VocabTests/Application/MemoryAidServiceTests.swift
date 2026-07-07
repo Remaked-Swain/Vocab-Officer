@@ -43,16 +43,20 @@ final class MemoryAidServiceTests: XCTestCase {
     func testQualityGateAcceptsRequiredSectionTemplate() {
         let markdown = """
         ## 한줄 기억
-        핵심 기억
+        - 핵심 기억
+
         ## 형태/어원
-        불확실하면 불확실하다고 표시
+        - 불확실하면 불확실하다고 표시
+
         ## 연상 포인트
-        소리 연상
+        - 소리 연상
+
         ## 예문
-        I derive energy from study.
-        공부에서 힘을 얻는다.
+        - EN: I derive energy from study.
+        - KO: 공부에서 힘을 얻는다.
+
         ## 비교
-        drive와 헷갈리지 말기
+        - drive와 헷갈리지 말기
         """
 
         XCTAssertTrue(MemoryAidQualityGate.validate(markdown))
@@ -60,5 +64,71 @@ final class MemoryAidServiceTests: XCTestCase {
 
     func testQualityGateRejectsMissingSections() {
         XCTAssertFalse(MemoryAidQualityGate.validate("## 한줄 기억\n하나만 있음"))
+    }
+
+    func testQualityGateRejectsUnreadableStructure() {
+        let markdown = """
+        ## 한줄 기억
+        - 핵심 기억
+        - 줄이 두 개
+
+        ## 형태/어원
+        - derive는 ...
+
+        ## 연상 포인트
+        - 소리 연상
+
+        ## 예문
+        - EN: I derive energy from study.
+        - KO: 공부에서 힘을 얻는다.
+
+        ## 비교
+        - drive와 헷갈리지 말기
+        """
+
+        XCTAssertFalse(MemoryAidQualityGate.validate(markdown))
+    }
+
+    func testQualityGateNormalizesValidOutput() {
+        let markdown = """
+        ## 한줄 기억
+          - 핵심 기억
+
+        ## 형태/어원
+         - derive는 끌어낸다는 느낌
+
+        ## 연상 포인트
+        - 드라이브하듯 끌어낸다
+
+        ## 예문
+        - EN: I derive energy from study.
+        - KO: 공부에서 힘을 얻는다.
+
+        ## 비교
+        - drive와 헷갈리지 말기
+        """
+
+        let normalized = MemoryAidQualityGate.normalize(markdown)
+
+        XCTAssertEqual(
+            normalized,
+            """
+            ## 한줄 기억
+            - 핵심 기억
+
+            ## 형태/어원
+            - derive는 끌어낸다는 느낌
+
+            ## 연상 포인트
+            - 드라이브하듯 끌어낸다
+
+            ## 예문
+            - EN: I derive energy from study.
+            - KO: 공부에서 힘을 얻는다.
+
+            ## 비교
+            - drive와 헷갈리지 말기
+            """
+        )
     }
 }
