@@ -42,6 +42,7 @@ enum MemoryAidError: LocalizedError {
     case missingAPIKey
     case invalidResponse
     case emptyResponse
+    case requestTimedOut
     case providerError(String)
 
     var errorDescription: String? {
@@ -52,8 +53,39 @@ enum MemoryAidError: LocalizedError {
             "암기 도움 응답 형식을 해석하지 못했습니다."
         case .emptyResponse:
             "암기 도움 내용을 받지 못했습니다."
+        case .requestTimedOut:
+            "Gemini 응답 대기 시간이 길어 요청을 중단했습니다. 잠시 후 다시 시도하세요."
         case .providerError(let message):
             message
+        }
+    }
+}
+
+enum MemoryAidRequestPolicy {
+    static let requestTimeout: TimeInterval = 45
+    static let qualityRetryBudget: Duration = .seconds(18)
+    static let maxQualityAttempts = 6
+    static let transientRetryDelays: [Duration] = [
+        .milliseconds(350),
+        .seconds(1)
+    ]
+
+    static func shouldRetryHTTPStatus(_ statusCode: Int) -> Bool {
+        statusCode == 408 || statusCode == 429 || (500...599).contains(statusCode)
+    }
+
+    static func shouldRetry(error: Error) -> Bool {
+        if let memoryAidError = error as? MemoryAidError {
+            if case .requestTimedOut = memoryAidError {
+                return true
+            }
+        }
+        guard let urlError = error as? URLError else { return false }
+        switch urlError.code {
+        case .timedOut, .networkConnectionLost, .cannotConnectToHost, .notConnectedToInternet, .dnsLookupFailed, .badServerResponse:
+            return true
+        default:
+            return false
         }
     }
 }
@@ -312,26 +344,61 @@ final class MemoryAidService {
         prompts: [String],
         word: WordRecord
     ) async throws -> String {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: MemoryAidRequestPolicy.qualityRetryBudget)
         var lastOutput = ""
+        var attempt = 0
+        var promptQueue = prompts
 
-        for (index, prompt) in prompts.enumerated() {
-            let output = try await requestMarkdown(using: apiKey, model: model, prompt: prompt)
+        while attempt < MemoryAidRequestPolicy.maxQualityAttempts, let prompt = promptQueue.first {
+            promptQueue.removeFirst()
+            attempt += 1
+
+            let output = try await requestMarkdownWithRetries(using: apiKey, model: model, prompt: prompt)
             if let normalized = MemoryAidQualityGate.normalize(output) {
                 return normalized
             }
             lastOutput = output
 
-            if index == prompts.count - 1 {
+            guard clock.now < deadline else {
                 break
+            }
+
+            promptQueue.append(MemoryAidPromptBuilder.repair(for: word, invalidOutput: lastOutput))
+        }
+
+        if lastOutput.isEmpty {
+            throw MemoryAidError.providerError("암기 도움 응답을 만들지 못했습니다. 잠시 후 다시 시도하세요.")
+        }
+        throw MemoryAidError.providerError("암기 도움 응답 품질이 기준을 만족하지 못했습니다. 자동 재시도 후에도 개선되지 않아 중단했습니다.")
+    }
+
+    private func requestMarkdownWithRetries(using apiKey: String, model: MemoryAidModel, prompt: String) async throws -> String {
+        var lastError: Error?
+
+        let retrySchedule: [(Int, Duration)] = [(0, .zero)] + MemoryAidRequestPolicy.transientRetryDelays.enumeratedDurations()
+
+        for (attempt, delay) in retrySchedule {
+            do {
+                if attempt > 0 {
+                    try await Task.sleep(for: delay)
+                }
+                return try await requestMarkdown(using: apiKey, model: model, prompt: prompt)
+            } catch {
+                lastError = error
+                if !MemoryAidRequestPolicy.shouldRetry(error: error) {
+                    throw error
+                }
             }
         }
 
-        let repairedPrompt = MemoryAidPromptBuilder.repair(for: word, invalidOutput: lastOutput)
-        let repairedOutput = try await requestMarkdown(using: apiKey, model: model, prompt: repairedPrompt)
-        guard let normalized = MemoryAidQualityGate.normalize(repairedOutput) else {
-            throw MemoryAidError.providerError("암기 도움 응답 품질이 기준을 만족하지 못했습니다. 다시 생성해 보세요.")
+        if let urlError = lastError as? URLError, urlError.code == .timedOut {
+            throw MemoryAidError.requestTimedOut
         }
-        return normalized
+        if let lastError {
+            throw lastError
+        }
+        throw MemoryAidError.invalidResponse
     }
 
     private func requestMarkdown(using apiKey: String, model: MemoryAidModel, prompt: String) async throws -> String {
@@ -339,17 +406,26 @@ final class MemoryAidService {
 
         var request = URLRequest(url: URL(string: "https://generativelanguage.googleapis.com/v1beta/interactions")!)
         request.httpMethod = "POST"
-        request.timeoutInterval = 20
+        request.timeoutInterval = MemoryAidRequestPolicy.requestTimeout
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(apiKey, forHTTPHeaderField: "x-goog-api-key")
         request.httpBody = try JSONEncoder().encode(requestBody)
 
-        let (data, response) = try await session.data(for: request)
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch let error as URLError where error.code == .timedOut {
+            throw MemoryAidError.requestTimedOut
+        }
         guard let http = response as? HTTPURLResponse else {
             throw MemoryAidError.invalidResponse
         }
 
         if !(200..<300).contains(http.statusCode) {
+            if MemoryAidRequestPolicy.shouldRetryHTTPStatus(http.statusCode) {
+                throw URLError(.badServerResponse)
+            }
             if let apiError = try? JSONDecoder().decode(GeminiErrorEnvelope.self, from: data) {
                 throw MemoryAidError.providerError(apiError.error.message)
             }
@@ -410,6 +486,12 @@ final class MemoryAidService {
         for cache in caches where cache.id != current.id {
             context.delete(cache)
         }
+    }
+}
+
+private extension Array where Element == Duration {
+    func enumeratedDurations() -> [(Int, Duration)] {
+        enumerated().map { ($0.offset + 1, $0.element) }
     }
 }
 

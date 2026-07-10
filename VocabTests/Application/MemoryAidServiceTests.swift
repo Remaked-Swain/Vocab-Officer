@@ -131,4 +131,18 @@ final class MemoryAidServiceTests: XCTestCase {
             """
         )
     }
+
+    func testRequestPolicyRetriesTransientHTTPStatus() {
+        XCTAssertTrue(MemoryAidRequestPolicy.shouldRetryHTTPStatus(408))
+        XCTAssertTrue(MemoryAidRequestPolicy.shouldRetryHTTPStatus(429))
+        XCTAssertTrue(MemoryAidRequestPolicy.shouldRetryHTTPStatus(503))
+        XCTAssertFalse(MemoryAidRequestPolicy.shouldRetryHTTPStatus(400))
+    }
+
+    func testRequestPolicyRetriesTimeoutAndTransientNetworkErrors() {
+        XCTAssertTrue(MemoryAidRequestPolicy.shouldRetry(error: URLError(.timedOut)))
+        XCTAssertTrue(MemoryAidRequestPolicy.shouldRetry(error: URLError(.badServerResponse)))
+        XCTAssertTrue(MemoryAidRequestPolicy.shouldRetry(error: MemoryAidError.requestTimedOut))
+        XCTAssertFalse(MemoryAidRequestPolicy.shouldRetry(error: URLError(.userAuthenticationRequired)))
+    }
 }
