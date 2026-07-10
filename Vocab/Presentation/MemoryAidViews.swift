@@ -25,14 +25,21 @@ private struct WordMemoryAidSheet: View {
     @Environment(\.modelContext) private var context
     let word: WordRecord
 
-    @AppStorage("memoryAidModel") private var modelRawValue = MemoryAidModel.gemini35Flash.rawValue
+    @AppStorage("memoryAidModel") private var modelRawValue = MemoryAidModel.defaultModel.rawValue
     @Environment(\.dismiss) private var dismiss
     @State private var isLoading = false
     @State private var result: WordMemoryAid?
     @State private var errorMessage: String?
+    @State private var progressStage: MemoryAidProgressStage?
+    @State private var generationStartedAt: Date?
+    @State private var elapsedSeconds = 0
+
+    private var shouldShowProgress: Bool {
+        isLoading && progressStage != nil
+    }
 
     private var selectedModel: MemoryAidModel {
-        MemoryAidModel(rawValue: modelRawValue) ?? .gemini35Flash
+        MemoryAidModel(rawValue: modelRawValue) ?? .defaultModel
     }
 
     private var renderedMarkdown: AttributedString? {
@@ -67,9 +74,8 @@ private struct WordMemoryAidSheet: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    if isLoading {
-                        ProgressView("암기 도움을 생성하는 중...")
-                            .controlSize(.regular)
+                    if shouldShowProgress, let progressStage {
+                        MemoryAidGenerationProgressView(stage: progressStage, elapsedSeconds: elapsedSeconds)
                     } else if let parsedAid {
                         MemoryAidContentView(aid: parsedAid)
                     } else if let renderedMarkdown {
@@ -105,6 +111,13 @@ private struct WordMemoryAidSheet: View {
         .task {
             if result == nil, !isLoading {
                 await generate(forceRefresh: false)
+            }
+        }
+        .task(id: shouldShowProgress) {
+            guard shouldShowProgress else { return }
+            while !Task.isCancelled, shouldShowProgress {
+                updateElapsedSeconds()
+                try? await Task.sleep(for: .seconds(1))
             }
         }
     }
@@ -143,16 +156,28 @@ private struct WordMemoryAidSheet: View {
     }
 
     private func generate(forceRefresh: Bool) async {
+        guard !isLoading else { return }
         isLoading = true
         errorMessage = nil
-        defer { isLoading = false }
+        progressStage = .preparing
+        generationStartedAt = .now
+        elapsedSeconds = 0
+        defer {
+            isLoading = false
+            progressStage = nil
+            generationStartedAt = nil
+            elapsedSeconds = 0
+        }
 
         do {
             result = try await MemoryAidService(context: context).generate(
                 for: word,
                 model: selectedModel,
                 forceRefresh: forceRefresh
-            )
+            ) { stage in
+                progressStage = stage
+                updateElapsedSeconds()
+            }
         } catch {
             errorMessage = MemoryAidError.userFacingMessage(for: error)
         }
@@ -160,7 +185,54 @@ private struct WordMemoryAidSheet: View {
 
     private func sourceMessage(for result: WordMemoryAid) -> String {
         let prefix = result.source == .cached ? "저장된 암기 도움" : "새로 생성한 암기 도움"
-        return "\(prefix) · \(selectedModel.displayName) · \(result.generatedAt.formatted(date: .omitted, time: .standard))"
+        return "\(prefix) · \(result.model.displayName) · \(result.generatedAt.formatted(date: .omitted, time: .standard))"
+    }
+
+    private func updateElapsedSeconds() {
+        guard let generationStartedAt else {
+            elapsedSeconds = 0
+            return
+        }
+        elapsedSeconds = max(0, Int(Date().timeIntervalSince(generationStartedAt)))
+    }
+}
+
+private struct MemoryAidGenerationProgressView: View {
+    let stage: MemoryAidProgressStage
+    let elapsedSeconds: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 12) {
+                ProgressView()
+                    .controlSize(.regular)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(stage.title)
+                        .font(.headline.weight(.semibold))
+                    Text("경과 \(elapsedSeconds)초")
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            Text(stage.detail)
+                .font(.body)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.accentColor.opacity(0.08))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.16), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(stage.title), 경과 \(elapsedSeconds)초, \(stage.detail)")
     }
 }
 

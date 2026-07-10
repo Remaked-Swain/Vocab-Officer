@@ -58,7 +58,7 @@ struct RootView: View {
 struct SettingsView: View {
     @AppStorage("reviewDefaultMode") private var reviewDefaultMode = "mixed"
     @AppStorage("showTypoSuggestions") private var showTypoSuggestions = true
-    @AppStorage("memoryAidModel") private var memoryAidModel = MemoryAidModel.gemini35Flash.rawValue
+    @AppStorage("memoryAidModel") private var memoryAidModel = MemoryAidModel.defaultModel.rawValue
     @State private var apiKey = ""
     @State private var apiKeyLoaded = false
     @State private var apiKeyMessage: String?

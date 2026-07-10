@@ -2,20 +2,20 @@ import XCTest
 @testable import Vocab
 
 final class MemoryAidServiceTests: XCTestCase {
-    func testOutputTextConcatenatesModelOutputStepsOnly() throws {
+    func testGenerateContentResponseConcatenatesCandidateTextParts() throws {
         let response = try JSONDecoder().decode(
-            GeminiInteractionResponse.self,
+            GeminiGenerateContentResponse.self,
             from: Data(
                 """
                 {
-                  "steps": [
-                    { "type": "thought" },
+                  "candidates": [
                     {
-                      "type": "model_output",
-                      "content": [
-                        { "type": "text", "text": "## 한줄 기억\\n핵심" },
-                        { "type": "text", "text": "## 예문\\nExample" }
-                      ]
+                      "content": {
+                        "parts": [
+                          { "text": "## 한줄 기억\\n핵심" },
+                          { "text": "## 예문\\nExample" }
+                        ]
+                      }
                     }
                   ]
                 }
@@ -24,6 +24,29 @@ final class MemoryAidServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(response.outputText, "## 한줄 기억\n핵심\n## 예문\nExample")
+    }
+
+    func testGenerateContentRequestUsesContentsPartsShape() throws {
+        let request = GeminiGenerateContentRequest(
+            contents: [
+                .init(role: "user", parts: [.init(text: "prompt")])
+            ],
+            generationConfig: .init(temperature: 0.35, maxOutputTokens: MemoryAidRequestPolicy.maxOutputTokens)
+        )
+
+        let json = String(data: try JSONEncoder().encode(request), encoding: .utf8) ?? ""
+
+        XCTAssertTrue(json.contains("\"contents\""))
+        XCTAssertTrue(json.contains("\"parts\""))
+        XCTAssertTrue(json.contains("\"text\":\"prompt\""))
+        XCTAssertTrue(json.contains("\"generationConfig\""))
+        XCTAssertFalse(json.contains("\"input\""))
+    }
+
+    func testDefaultModelUsesLowerQuotaPressureModel() {
+        XCTAssertEqual(MemoryAidModel.defaultModel, .gemini31FlashLite)
+        XCTAssertEqual(MemoryAidModel.gemini35Flash.fallbackModels, [.gemini31FlashLite])
+        XCTAssertTrue(MemoryAidModel.gemini31FlashLite.fallbackModels.isEmpty)
     }
 
     func testPromptBuilderIncludesHeadwordAndMeanings() {
@@ -134,9 +157,15 @@ final class MemoryAidServiceTests: XCTestCase {
 
     func testRequestPolicyRetriesTransientHTTPStatus() {
         XCTAssertTrue(MemoryAidRequestPolicy.shouldRetryHTTPStatus(408))
-        XCTAssertTrue(MemoryAidRequestPolicy.shouldRetryHTTPStatus(429))
         XCTAssertTrue(MemoryAidRequestPolicy.shouldRetryHTTPStatus(503))
         XCTAssertFalse(MemoryAidRequestPolicy.shouldRetryHTTPStatus(400))
+        XCTAssertFalse(MemoryAidRequestPolicy.shouldRetryHTTPStatus(429))
+    }
+
+    func testRequestPolicyCapsQualityRetriesAndOutputSize() {
+        XCTAssertEqual(MemoryAidRequestPolicy.maxQualityAttempts, 3)
+        XCTAssertLessThanOrEqual(MemoryAidRequestPolicy.maxOutputTokens, 650)
+        XCTAssertEqual(MemoryAidRequestPolicy.defaultRateLimitCooldown, 90)
     }
 
     func testRequestPolicyRetriesTimeoutAndTransientNetworkErrors() {
@@ -159,5 +188,57 @@ final class MemoryAidServiceTests: XCTestCase {
             MemoryAidError.userFacingMessage(for: URLError(.badServerResponse)),
             "Gemini 서버 응답이 일시적으로 불안정합니다. 잠시 후 다시 시도하세요."
         )
+    }
+
+    func testRateLimitErrorMentionsModelAndLighterModel() {
+        let message = MemoryAidError.userFacingMessage(for: MemoryAidError.rateLimited(model: .gemini35Flash, retryAfter: nil))
+
+        XCTAssertTrue(message.contains("Gemini 3.5 Flash"))
+        XCTAssertTrue(message.contains("가벼운 모델"))
+    }
+
+    func testRateLimitCooldownStoreUsesRetryAfterSeconds() {
+        let defaults = UserDefaults(suiteName: "VocabTests.\(UUID().uuidString)")!
+        let store = GeminiQuotaCooldownStore(defaults: defaults, keyPrefix: "testQuota.")
+        let now = Date(timeIntervalSince1970: 1_000)
+        let response = HTTPURLResponse(
+            url: URL(string: "https://generativelanguage.googleapis.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: ["Retry-After": "120"]
+        )!
+
+        let retryAfter = store.recordRateLimit(for: .gemini35Flash, response: response, now: now)
+
+        XCTAssertEqual(retryAfter.timeIntervalSince(now), 120, accuracy: 0.001)
+        XCTAssertEqual(store.retryAfter(for: .gemini35Flash, now: now.addingTimeInterval(60)), retryAfter)
+        XCTAssertNil(store.retryAfter(for: .gemini35Flash, now: now.addingTimeInterval(121)))
+    }
+
+    func testRateLimitCooldownStoreFallsBackWhenRetryAfterHeaderIsMissing() {
+        let defaults = UserDefaults(suiteName: "VocabTests.\(UUID().uuidString)")!
+        let store = GeminiQuotaCooldownStore(defaults: defaults, keyPrefix: "testQuota.")
+        let now = Date(timeIntervalSince1970: 1_000)
+        let response = HTTPURLResponse(
+            url: URL(string: "https://generativelanguage.googleapis.com")!,
+            statusCode: 429,
+            httpVersion: nil,
+            headerFields: [:]
+        )!
+
+        let retryAfter = store.recordRateLimit(for: .gemini31FlashLite, response: response, now: now)
+
+        XCTAssertEqual(retryAfter.timeIntervalSince(now), MemoryAidRequestPolicy.defaultRateLimitCooldown, accuracy: 0.001)
+        XCTAssertEqual(store.retryAfter(for: .gemini31FlashLite, now: now), retryAfter)
+    }
+
+    func testProgressStageProvidesUserReadableStatus() {
+        XCTAssertEqual(MemoryAidProgressStage.preparing.title, "요청 준비 중")
+        XCTAssertEqual(MemoryAidProgressStage.checkingQuota(model: .gemini31FlashLite).title, "API 호출 가능 여부 확인 중")
+        XCTAssertEqual(MemoryAidProgressStage.requesting(attempt: 1).detail, "단어와 뜻을 바탕으로 암기 도움을 요청합니다.")
+        XCTAssertEqual(MemoryAidProgressStage.requesting(attempt: 2).detail, "2번째 요청을 보내고 있습니다.")
+        XCTAssertEqual(MemoryAidProgressStage.validating(attempt: 2).detail, "2번째 응답의 품질을 검사합니다.")
+        XCTAssertFalse(MemoryAidProgressStage.quotaCoolingDown(model: .gemini31FlashLite, retryAfter: .now).detail.isEmpty)
+        XCTAssertFalse(MemoryAidProgressStage.waitingToRetry.detail.isEmpty)
     }
 }
