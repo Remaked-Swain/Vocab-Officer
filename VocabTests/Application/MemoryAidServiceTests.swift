@@ -145,4 +145,19 @@ final class MemoryAidServiceTests: XCTestCase {
         XCTAssertTrue(MemoryAidRequestPolicy.shouldRetry(error: MemoryAidError.requestTimedOut))
         XCTAssertFalse(MemoryAidRequestPolicy.shouldRetry(error: URLError(.userAuthenticationRequired)))
     }
+
+    func testUserFacingMessageMapsSystemErrorsToNaturalLanguage() {
+        XCTAssertEqual(
+            MemoryAidError.userFacingMessage(for: URLError(.timedOut)),
+            "Gemini 응답 대기 시간이 길어 요청을 중단했습니다. 잠시 후 다시 시도하세요."
+        )
+        XCTAssertEqual(
+            MemoryAidError.userFacingMessage(for: URLError(.notConnectedToInternet)),
+            "네트워크 연결이 불안정합니다. 인터넷 상태를 확인한 뒤 다시 시도하세요."
+        )
+        XCTAssertEqual(
+            MemoryAidError.userFacingMessage(for: URLError(.badServerResponse)),
+            "Gemini 서버 응답이 일시적으로 불안정합니다. 잠시 후 다시 시도하세요."
+        )
+    }
 }

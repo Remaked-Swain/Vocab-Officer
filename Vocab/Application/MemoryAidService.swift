@@ -59,6 +59,29 @@ enum MemoryAidError: LocalizedError {
             message
         }
     }
+
+    static func userFacingMessage(for error: Error) -> String {
+        if let memoryAidError = error as? MemoryAidError {
+            return memoryAidError.errorDescription ?? "암기 도움 생성 중 문제가 발생했습니다."
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut:
+                return "Gemini 응답 대기 시간이 길어 요청을 중단했습니다. 잠시 후 다시 시도하세요."
+            case .notConnectedToInternet, .networkConnectionLost:
+                return "네트워크 연결이 불안정합니다. 인터넷 상태를 확인한 뒤 다시 시도하세요."
+            case .cannotConnectToHost, .dnsLookupFailed, .cannotFindHost:
+                return "Gemini 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요."
+            case .badServerResponse:
+                return "Gemini 서버 응답이 일시적으로 불안정합니다. 잠시 후 다시 시도하세요."
+            default:
+                return "암기 도움 생성 중 네트워크 문제가 발생했습니다. 잠시 후 다시 시도하세요."
+            }
+        }
+
+        return "암기 도움 생성 중 문제가 발생했습니다. 잠시 후 다시 시도하세요."
+    }
 }
 
 enum MemoryAidRequestPolicy {
@@ -315,27 +338,34 @@ final class MemoryAidService {
             throw MemoryAidError.missingAPIKey
         }
 
-        let signature = MemoryAidQualityGate.contentSignature(for: word)
-        if !forceRefresh, let cached = try fetchCache(wordID: word.id, model: model, signature: signature) {
-            return WordMemoryAid(markdown: cached.markdown, generatedAt: cached.generatedAt, source: .cached)
+        do {
+            let signature = MemoryAidQualityGate.contentSignature(for: word)
+            if !forceRefresh, let cached = try fetchCache(wordID: word.id, model: model, signature: signature) {
+                return WordMemoryAid(markdown: cached.markdown, generatedAt: cached.generatedAt, source: .cached)
+            }
+
+            let generatedText = try await requestValidatedMarkdown(
+                using: apiKey,
+                model: model,
+                prompts: [
+                    MemoryAidPromptBuilder.build(for: word)
+                ],
+                word: word
+            )
+            let cache = try upsertCache(
+                wordID: word.id,
+                model: model,
+                signature: signature,
+                markdown: generatedText
+            )
+
+            return WordMemoryAid(markdown: cache.markdown, generatedAt: cache.generatedAt, source: .generated)
+        } catch {
+            if error is MemoryAidError {
+                throw error
+            }
+            throw MemoryAidError.providerError(MemoryAidError.userFacingMessage(for: error))
         }
-
-        let generatedText = try await requestValidatedMarkdown(
-            using: apiKey,
-            model: model,
-            prompts: [
-                MemoryAidPromptBuilder.build(for: word)
-            ],
-            word: word
-        )
-        let cache = try upsertCache(
-            wordID: word.id,
-            model: model,
-            signature: signature,
-            markdown: generatedText
-        )
-
-        return WordMemoryAid(markdown: cache.markdown, generatedAt: cache.generatedAt, source: .generated)
     }
 
     private func requestValidatedMarkdown(

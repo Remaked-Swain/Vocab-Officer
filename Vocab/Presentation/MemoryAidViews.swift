@@ -154,7 +154,7 @@ private struct WordMemoryAidSheet: View {
                 forceRefresh: forceRefresh
             )
         } catch {
-            errorMessage = error.localizedDescription
+            errorMessage = MemoryAidError.userFacingMessage(for: error)
         }
     }
 
