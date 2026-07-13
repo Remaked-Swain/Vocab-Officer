@@ -74,6 +74,18 @@ struct SettingsView: View {
             Toggle("근접 오타 후보 제시", isOn: $showTypoSuggestions)
             LabeledContent("학습 날짜 기준", value: "Asia/Seoul")
 
+            Section("iPhone / iCloud 동기화") {
+                LabeledContent("현재 저장 방식", value: VocabSyncMode.current().displayName)
+                LabeledContent("CloudKit 컨테이너", value: VocabSyncMode.cloudKitContainerIdentifier)
+                Text("현재 빌드는 기존 macOS 단어장을 보호하기 위해 로컬 저장을 기본값으로 유지합니다. iCloud 동기화는 별도 브랜치에서 저장 모델 호환성, 서명 권한, 최초 업로드 검증을 마친 뒤 켜야 합니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Text(localStoreDescription)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+
             Section("암기 도움 API") {
                 Picker("기본 모델", selection: $memoryAidModel) {
                     ForEach(MemoryAidModel.allCases) { model in
@@ -150,6 +162,14 @@ struct SettingsView: View {
         } catch {
             apiKeyMessage = error.localizedDescription
             apiKeyError = true
+        }
+    }
+
+    private var localStoreDescription: String {
+        do {
+            return "로컬 저장소: \(try VocabModelContainerFactory.storeURL().path)"
+        } catch {
+            return "로컬 저장소 경로를 확인하지 못했습니다."
         }
     }
 }
