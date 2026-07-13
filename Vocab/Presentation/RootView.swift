@@ -63,6 +63,8 @@ struct SettingsView: View {
     @State private var apiKeyLoaded = false
     @State private var apiKeyMessage: String?
     @State private var apiKeyError = false
+    @State private var cloudKitState: VocabCloudKitAccountState = .unknown
+    @State private var isCheckingCloudKit = false
 
     var body: some View {
         Form {
@@ -77,6 +79,24 @@ struct SettingsView: View {
             Section("iPhone / iCloud 동기화") {
                 LabeledContent("현재 저장 방식", value: VocabSyncMode.current().displayName)
                 LabeledContent("CloudKit 컨테이너", value: VocabSyncMode.cloudKitContainerIdentifier)
+                FeedbackPanel(items: cloudKitFeedbackItems)
+                HStack {
+                    Button {
+                        Task { await checkCloudKitStatus() }
+                    } label: {
+                        if isCheckingCloudKit {
+                            Label("확인 중", systemImage: "icloud")
+                        } else {
+                            Label("iCloud 상태 확인", systemImage: "icloud")
+                        }
+                    }
+                    .disabled(isCheckingCloudKit)
+
+                    if isCheckingCloudKit {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
                 Text("현재 빌드는 기존 macOS 단어장을 보호하기 위해 로컬 저장을 기본값으로 유지합니다. iCloud 동기화는 별도 브랜치에서 저장 모델 호환성, 서명 권한, 최초 업로드 검증을 마친 뒤 켜야 합니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
@@ -129,6 +149,25 @@ struct SettingsView: View {
         .task {
             await loadAPIKey()
         }
+    }
+
+    private var cloudKitFeedbackItems: [FeedbackItem] {
+        let color: Color = cloudKitState.isReadyForSync ? .green : .secondary
+        let symbol = cloudKitState.isReadyForSync ? "checkmark.icloud" : "icloud"
+        return [
+            FeedbackItem(
+                text: "\(cloudKitState.title): \(cloudKitState.message)",
+                systemImage: symbol,
+                color: color
+            )
+        ]
+    }
+
+    private func checkCloudKitStatus() async {
+        guard !isCheckingCloudKit else { return }
+        isCheckingCloudKit = true
+        defer { isCheckingCloudKit = false }
+        cloudKitState = await VocabCloudKitStatusService().accountStatus()
     }
 
     private func loadAPIKey() async {
