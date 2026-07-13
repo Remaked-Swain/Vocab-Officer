@@ -29,13 +29,45 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
         let context = try makeContext()
         context.insert(WordRecord(term: "old"))
         try context.save()
-        let snapshot = VocabSyncSnapshot(
+        let snapshot = makeSnapshot(term: "subway", meaning: "지하철")
+        let service = VocabCloudSnapshotSyncService(store: MemorySnapshotStore(snapshot: snapshot))
+
+        let result = try await service.replaceLocalStoreFromCloud(context: context)
+
+        XCTAssertEqual(result?.wordCount, 1)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["subway"])
+    }
+
+    func testInspectCloudSnapshotReturnsSummaryWithoutReplacingLocalStore() async throws {
+        let context = try makeContext()
+        context.insert(WordRecord(term: "local"))
+        try context.save()
+        let snapshot = makeSnapshot(term: "cloud", meaning: "구름")
+        let service = VocabCloudSnapshotSyncService(store: MemorySnapshotStore(snapshot: snapshot))
+
+        let result = try await service.inspectCloudSnapshot()
+
+        XCTAssertEqual(result?.wordCount, 1)
+        XCTAssertEqual(result?.dailySetCount, 0)
+        XCTAssertEqual(result?.exportedAt, Date(timeIntervalSince1970: 300))
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["local"])
+    }
+
+    private func makeContext() throws -> ModelContext {
+        let schema = Schema(VocabModelContainerFactory.schemaModels)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        return ModelContext(container)
+    }
+
+    private func makeSnapshot(term: String, meaning: String) -> VocabSyncSnapshot {
+        VocabSyncSnapshot(
             formatVersion: 1,
             exportedAt: Date(timeIntervalSince1970: 300),
             words: [
                 VocabSyncSnapshot.WordPayload(
                     id: UUID(),
-                    term: "subway",
+                    term: term,
                     englishAliases: [],
                     createdAt: Date(timeIntervalSince1970: 100),
                     statusRaw: "active",
@@ -43,7 +75,7 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
                     meanings: [
                         VocabSyncSnapshot.MeaningPayload(
                             id: UUID(),
-                            text: "지하철",
+                            text: meaning,
                             isCore: true,
                             aliases: [],
                             successDays: []
@@ -54,21 +86,6 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
             ],
             dailySets: []
         )
-        let service = VocabCloudSnapshotSyncService(store: MemorySnapshotStore(snapshot: snapshot))
-
-        let result = try await service.replaceLocalStoreFromCloud(context: context)
-
-        XCTAssertEqual(result?.wordCount, 1)
-        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["subway"])
-    }
-
-    private func makeContext() throws -> ModelContext {
-        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try ModelContainer(
-            for: Schema(VocabModelContainerFactory.schemaModels),
-            configurations: configuration
-        )
-        return ModelContext(container)
     }
 }
 

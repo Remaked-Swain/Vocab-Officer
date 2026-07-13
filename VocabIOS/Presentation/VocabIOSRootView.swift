@@ -1,3 +1,4 @@
+import CloudKit
 import SwiftData
 import SwiftUI
 
@@ -191,8 +192,15 @@ private struct VocabIOSTestSetupView: View {
 }
 
 private struct VocabIOSSyncStatusView: View {
+    @Environment(\.modelContext) private var modelContext
     @State private var cloudKitState: VocabCloudKitAccountState = .unknown
     @State private var isChecking = false
+    @State private var isInspectingSnapshot = false
+    @State private var isImporting = false
+    @State private var showImportConfirmation = false
+    @State private var cloudSnapshotSummary: VocabCloudSnapshotSyncResult?
+    @State private var syncMessage: String?
+    @State private var syncMessageIsError = false
 
     var body: some View {
         List {
@@ -219,7 +227,59 @@ private struct VocabIOSSyncStatusView: View {
                 .disabled(isChecking)
             }
 
-            Section("동기화 활성화 조건") {
+            Section("단어장 가져오기") {
+                Button {
+                    Task { await inspectCloudSnapshot() }
+                } label: {
+                    if isInspectingSnapshot {
+                        Label("확인 중", systemImage: "doc.text.magnifyingglass")
+                    } else {
+                        Label("가져올 스냅샷 확인", systemImage: "doc.text.magnifyingglass")
+                    }
+                }
+                .disabled(!canInspectSnapshot)
+
+                Button {
+                    showImportConfirmation = true
+                } label: {
+                    if isImporting {
+                        Label("가져오는 중", systemImage: "icloud.and.arrow.down")
+                    } else {
+                        Label("iCloud에서 Mac 단어장 가져오기", systemImage: "icloud.and.arrow.down")
+                    }
+                }
+                .disabled(!canImportSnapshot)
+
+                if let cloudSnapshotSummary {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("가져올 스냅샷")
+                            .font(.headline)
+                        Text("\(cloudSnapshotSummary.wordCount)개 단어 · \(cloudSnapshotSummary.dailySetCount)개 학습세트")
+                        Text("업로드 시각: \(cloudSnapshotSummary.exportedAt.formatted(date: .abbreviated, time: .shortened))")
+                    }
+                    .font(.callout)
+                }
+
+                if isInspectingSnapshot {
+                    ProgressView("iCloud 스냅샷 정보를 확인하는 중입니다.")
+                }
+
+                if isImporting {
+                    ProgressView("iCloud 스냅샷을 가져오는 중입니다.")
+                }
+
+                Text("가져오기는 이 iPhone의 Vocab 로컬 데이터를 iCloud 스냅샷으로 교체합니다. iPhone 쪽 기존 Vocab 데이터는 되돌릴 수 없지만, macOS 원본 단어장은 삭제하지 않습니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                if let syncMessage {
+                    Label(syncMessage, systemImage: syncMessageIsError ? "exclamationmark.triangle" : "checkmark.circle")
+                        .foregroundStyle(syncMessageIsError ? .red : .green)
+                        .font(.callout)
+                }
+            }
+
+            Section("자동 iCloud 저장소 전환 조건") {
                 ForEach(readiness.blockers) { blocker in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(blocker.title)
@@ -230,7 +290,22 @@ private struct VocabIOSSyncStatusView: View {
                     }
                     .padding(.vertical, 4)
                 }
+                Text("이 조건은 앱 저장소 자체를 iCloud 모드로 전환할 때의 안전 조건입니다. 위의 가져오기 버튼은 Mac에서 업로드한 수동 스냅샷을 이 iPhone 로컬 저장소에 복원합니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             }
+        }
+        .confirmationDialog(
+            "이 iPhone의 Vocab 데이터를 교체할까요?",
+            isPresented: $showImportConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("교체하고 가져오기", role: .destructive) {
+                Task { await importSnapshotFromCloud() }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text(importConfirmationMessage)
         }
     }
 
@@ -238,11 +313,95 @@ private struct VocabIOSSyncStatusView: View {
         VocabCloudSyncReadinessPolicy.current(accountState: cloudKitState)
     }
 
+    private var canInspectSnapshot: Bool {
+        cloudKitState.isReadyForSync
+            && VocabCloudEntitlementStatus.hasRequiredCloudKitContainer()
+            && !isInspectingSnapshot
+            && !isImporting
+    }
+
+    private var canImportSnapshot: Bool {
+        cloudKitState.isReadyForSync
+            && VocabCloudEntitlementStatus.hasRequiredCloudKitContainer()
+            && !isImporting
+            && cloudSnapshotSummary != nil
+    }
+
+    private var importConfirmationMessage: String {
+        guard let cloudSnapshotSummary else {
+            return "먼저 가져올 스냅샷을 확인하세요."
+        }
+        return "\(cloudSnapshotSummary.wordCount)개 단어와 \(cloudSnapshotSummary.dailySetCount)개 학습세트로 이 iPhone의 Vocab 로컬 데이터를 교체합니다. 이 iPhone의 기존 Vocab 데이터는 되돌릴 수 없습니다."
+    }
+
     private func checkCloudKitStatus() async {
         guard !isChecking else { return }
         isChecking = true
         defer { isChecking = false }
         cloudKitState = await VocabCloudKitStatusService().accountStatus()
+    }
+
+    private func inspectCloudSnapshot() async {
+        guard !isInspectingSnapshot else { return }
+        isInspectingSnapshot = true
+        syncMessage = nil
+        syncMessageIsError = false
+        defer { isInspectingSnapshot = false }
+
+        do {
+            guard let result = try await VocabCloudSnapshotSyncService().inspectCloudSnapshot() else {
+                cloudSnapshotSummary = nil
+                syncMessage = "iCloud에 아직 가져올 단어장 스냅샷이 없습니다. 먼저 Mac에서 업로드하세요."
+                syncMessageIsError = true
+                return
+            }
+            cloudSnapshotSummary = result
+            syncMessage = "가져올 스냅샷을 확인했습니다."
+        } catch {
+            cloudSnapshotSummary = nil
+            syncMessage = userFacingSyncError(error)
+            syncMessageIsError = true
+        }
+    }
+
+    private func importSnapshotFromCloud() async {
+        guard !isImporting else { return }
+        guard cloudSnapshotSummary != nil else {
+            syncMessage = "먼저 가져올 스냅샷을 확인하세요."
+            syncMessageIsError = true
+            return
+        }
+        isImporting = true
+        syncMessage = nil
+        syncMessageIsError = false
+        defer { isImporting = false }
+
+        do {
+            guard let result = try await VocabCloudSnapshotSyncService().replaceLocalStoreFromCloud(context: modelContext) else {
+                syncMessage = "iCloud에 아직 가져올 단어장 스냅샷이 없습니다. 먼저 Mac에서 업로드하세요."
+                syncMessageIsError = true
+                return
+            }
+            cloudSnapshotSummary = result
+            syncMessage = "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 가져왔습니다."
+        } catch {
+            syncMessage = userFacingSyncError(error)
+            syncMessageIsError = true
+        }
+    }
+
+    private func userFacingSyncError(_ error: Error) -> String {
+        if error is CKError {
+            return "iCloud 요청을 완료하지 못했습니다. iCloud 로그인, 네트워크 상태, 앱의 iCloud 권한을 확인한 뒤 다시 시도하세요."
+        }
+        if error is VocabSyncSnapshotService.SnapshotValidationError {
+            return "iCloud 단어장 데이터가 현재 앱에서 복원할 수 없는 형식입니다. Mac에서 다시 업로드한 뒤 시도하세요."
+        }
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription {
+            return description
+        }
+        return "iCloud에서 단어장을 가져오는 중 문제가 발생했습니다. iCloud 로그인, 네트워크 상태, 앱 서명 권한을 확인한 뒤 다시 시도하세요."
     }
 }
 

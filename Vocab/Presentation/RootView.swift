@@ -1,3 +1,4 @@
+import CloudKit
 import SwiftUI
 
 enum NavigationItem: String, CaseIterable, Identifiable {
@@ -56,6 +57,7 @@ struct RootView: View {
 }
 
 struct SettingsView: View {
+    @Environment(\.modelContext) private var modelContext
     @AppStorage("reviewDefaultMode") private var reviewDefaultMode = "mixed"
     @AppStorage("showTypoSuggestions") private var showTypoSuggestions = true
     @AppStorage("memoryAidModel") private var memoryAidModel = MemoryAidModel.defaultModel.rawValue
@@ -65,6 +67,10 @@ struct SettingsView: View {
     @State private var apiKeyError = false
     @State private var cloudKitState: VocabCloudKitAccountState = .unknown
     @State private var isCheckingCloudKit = false
+    @State private var isUploadingSnapshot = false
+    @State private var showUploadConfirmation = false
+    @State private var syncMessage: String?
+    @State private var syncMessageIsError = false
 
     var body: some View {
         Form {
@@ -80,7 +86,7 @@ struct SettingsView: View {
                 LabeledContent("현재 저장 방식", value: VocabSyncMode.current().displayName)
                 LabeledContent("CloudKit 컨테이너", value: VocabSyncMode.cloudKitContainerIdentifier)
                 FeedbackPanel(items: cloudKitFeedbackItems)
-                DisclosureGroup("동기화 활성화 조건") {
+                DisclosureGroup("자동 iCloud 저장소 전환 조건") {
                     VStack(alignment: .leading, spacing: 10) {
                         if cloudSyncReadiness.isReadyToEnable {
                             Label("모든 안전 조건을 통과했습니다.", systemImage: "checkmark.shield")
@@ -117,7 +123,30 @@ struct SettingsView: View {
                             .controlSize(.small)
                     }
                 }
-                Text("현재 빌드는 기존 macOS 단어장을 보호하기 위해 로컬 저장을 기본값으로 유지합니다. iCloud 동기화는 별도 브랜치에서 저장 모델 호환성, 서명 권한, 최초 업로드 검증을 마친 뒤 켜야 합니다.")
+
+                Button {
+                    showUploadConfirmation = true
+                } label: {
+                    if isUploadingSnapshot {
+                        Label("업로드 중", systemImage: "icloud.and.arrow.up")
+                    } else {
+                        Label("현재 Mac 단어장을 iCloud에 업로드", systemImage: "icloud.and.arrow.up")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!canUploadSnapshot)
+
+                if isUploadingSnapshot {
+                    ProgressView("단어장 스냅샷을 iCloud에 업로드하는 중입니다.")
+                }
+
+                if let syncMessage {
+                    Label(syncMessage, systemImage: syncMessageIsError ? "exclamationmark.triangle" : "checkmark.circle")
+                        .foregroundStyle(syncMessageIsError ? .red : .green)
+                        .font(.callout)
+                }
+
+                Text("현재 빌드는 기존 macOS 단어장을 보호하기 위해 로컬 저장을 기본값으로 유지합니다. 아래 업로드 버튼은 자동 저장소 전환이 아니라, iPhone에서 가져올 수 있는 수동 스냅샷을 iCloud에 올리는 기능입니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Text(localStoreDescription)
@@ -169,6 +198,18 @@ struct SettingsView: View {
         .task {
             await loadAPIKey()
         }
+        .confirmationDialog(
+            "현재 Mac 단어장을 iCloud에 업로드할까요?",
+            isPresented: $showUploadConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("체크포인트 생성 후 업로드") {
+                Task { await uploadSnapshotToCloud() }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("업로드 전에 현재 로컬 저장소 체크포인트를 생성합니다. iPhone에서는 이 스냅샷을 가져와 phone-local Vocab 데이터를 교체하게 됩니다.")
+        }
     }
 
     private var cloudKitFeedbackItems: [FeedbackItem] {
@@ -192,11 +233,59 @@ struct SettingsView: View {
         VocabCloudSyncReadinessPolicy.current(accountState: cloudKitState)
     }
 
+    private var canUploadSnapshot: Bool {
+        cloudKitState.isReadyForSync
+            && VocabCloudEntitlementStatus.hasRequiredCloudKitContainer()
+            && !isUploadingSnapshot
+    }
+
     private func checkCloudKitStatus() async {
         guard !isCheckingCloudKit else { return }
         isCheckingCloudKit = true
         defer { isCheckingCloudKit = false }
         cloudKitState = await VocabCloudKitStatusService().accountStatus()
+    }
+
+    private func uploadSnapshotToCloud() async {
+        guard !isUploadingSnapshot else { return }
+        isUploadingSnapshot = true
+        syncMessage = nil
+        syncMessageIsError = false
+        defer { isUploadingSnapshot = false }
+
+        do {
+            let checkpoint = try VocabLocalStoreCheckpointStore.createCheckpoint(
+                storeURL: try VocabModelContainerFactory.storeURL(),
+                destinationRoot: try localCheckpointRoot()
+            )
+            let result = try await VocabCloudSnapshotSyncService().uploadLocalSnapshot(context: modelContext)
+            syncMessage = "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 iCloud에 업로드했습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
+        } catch {
+            syncMessage = userFacingSyncError(error)
+            syncMessageIsError = true
+        }
+    }
+
+    private func localCheckpointRoot() throws -> URL {
+        try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        .appendingPathComponent("Vocab", isDirectory: true)
+        .appendingPathComponent("SyncCheckpoints", isDirectory: true)
+    }
+
+    private func userFacingSyncError(_ error: Error) -> String {
+        if error is CKError {
+            return "iCloud 요청을 완료하지 못했습니다. iCloud 로그인, 네트워크 상태, 앱의 iCloud 권한을 확인한 뒤 다시 시도하세요."
+        }
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription {
+            return description
+        }
+        return "iCloud 동기화 중 문제가 발생했습니다. iCloud 로그인, 네트워크 상태, 앱 서명 권한을 확인한 뒤 다시 시도하세요."
     }
 
     private func loadAPIKey() async {

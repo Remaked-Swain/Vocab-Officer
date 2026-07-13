@@ -92,7 +92,7 @@ enum VocabCloudSyncReadinessPolicy {
         VocabCloudSyncReadiness(
             accountState: accountState,
             allowsCloudKitRuntime: false,
-            hasCloudKitEntitlement: false,
+            hasCloudKitEntitlement: VocabCloudEntitlementStatus.hasRequiredCloudKitContainer(),
             isSchemaCloudKitReady: false,
             hasConfirmedFirstUpload: false
         )

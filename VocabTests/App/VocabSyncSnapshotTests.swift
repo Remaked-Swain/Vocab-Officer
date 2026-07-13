@@ -117,11 +117,9 @@ final class VocabSyncSnapshotTests: XCTestCase {
     }
 
     private func makeContext() throws -> ModelContext {
-        let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
-        let container = try ModelContainer(
-            for: Schema(VocabModelContainerFactory.schemaModels),
-            configurations: configuration
-        )
+        let schema = Schema(VocabModelContainerFactory.schemaModels)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let container = try ModelContainer(for: schema, configurations: [configuration])
         return ModelContext(container)
     }
 }

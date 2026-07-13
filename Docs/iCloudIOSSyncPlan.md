@@ -152,6 +152,26 @@ migration of the production SwiftData schema into CloudKit. The upload/download
 UI must stay behind the readiness gate and explicit user confirmation because a
 phone restore intentionally replaces the phone-local Vocab store.
 
+The entitlement files are present in the repository and wired to the macOS and
+iOS app targets with automatic signing:
+
+- `Vocab/Vocab.entitlements`
+- `VocabIOS/VocabIOS.entitlements`
+
+Xcode is expected to use automatic signing with the user's selected Apple
+Developer team and to manage provisioning profiles automatically. Runtime UI
+still checks whether the signed app actually carries the required CloudKit
+container before enabling Mac upload or iPhone import, so a broken provisioning
+state cannot expose a misleading sync action.
+
+Command-line builds also depend on Xcode account state. If Apple updates the
+developer agreement, automatic provisioning can fail until the agreement is
+accepted in Xcode or the developer portal. After that, `xcodebuild
+-allowProvisioningUpdates` can create or refresh the Mac Team Provisioning
+Profile and sign the installed app with the CloudKit entitlement. SwiftData unit
+tests should continue to use `CODE_SIGNING_ALLOWED=NO` when they only verify
+local in-memory model behavior.
+
 ## Developer Program Expiration Policy
 
 Developer Program expiration should not erase the vocabulary database by itself.

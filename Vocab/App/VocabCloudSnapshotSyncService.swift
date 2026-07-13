@@ -40,6 +40,16 @@ struct VocabCloudSnapshotSyncService {
             exportedAt: snapshot.exportedAt
         )
     }
+
+    func inspectCloudSnapshot() async throws -> VocabCloudSnapshotSyncResult? {
+        guard let snapshot = try await store.load() else { return nil }
+        try VocabSyncSnapshotService.validate(snapshot)
+        return VocabCloudSnapshotSyncResult(
+            wordCount: snapshot.words.count,
+            dailySetCount: snapshot.dailySets.count,
+            exportedAt: snapshot.exportedAt
+        )
+    }
 }
 
 struct VocabCloudKitSnapshotStore: VocabCloudSnapshotStoring {
