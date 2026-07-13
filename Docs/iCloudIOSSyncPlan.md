@@ -52,6 +52,8 @@ macOS vocabulary store at unnecessary risk.
 1. Preserve macOS behavior.
    - Keep `localOnly` default.
    - Verify Release build and installed app after each storage change.
+   - Keep the runtime iCloud activation gate closed until every readiness
+     condition passes.
 
 2. Audit SwiftData model compatibility for CloudKit.
    - Check unique attributes, required relationships, arrays and delete rules.
@@ -78,6 +80,34 @@ macOS vocabulary store at unnecessary risk.
    - Current mode: local-only or iCloud.
    - Last local write time.
    - Last observed sync issue in natural language.
+
+## Activation Gate
+
+The app must not allow iCloud activation just because a CloudKit account is
+available. The readiness gate must pass all of these conditions:
+
+- iCloud account state is available.
+- The build explicitly allows CloudKit runtime activation.
+- The signed app has the CloudKit entitlement for
+  `iCloud.com.swainyun.Vocab`.
+- The SwiftData schema is verified or migrated for CloudKit.
+- The first upload of the existing local vocabulary store is backed up or
+  explicitly confirmed by the user.
+
+Until all conditions pass, Settings should show the blocker in natural language
+and the app should continue using the local store.
+
+## iOS Target Do-Not-Start Conditions
+
+Do not add or ship an iOS target while any of these are true:
+
+- The macOS local store cannot be restored after a failed CloudKit attempt.
+- The CloudKit activation gate is still blocked by schema or entitlement
+  readiness.
+- The first-upload migration path does not prevent duplicate words, duplicate
+  daily set items, or partial uploads.
+- The iOS target would include the macOS `VocabApp` entry point or desktop-only
+  presentation files.
 
 ## Developer Program Expiration Policy
 

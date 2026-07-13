@@ -80,6 +80,26 @@ struct SettingsView: View {
                 LabeledContent("현재 저장 방식", value: VocabSyncMode.current().displayName)
                 LabeledContent("CloudKit 컨테이너", value: VocabSyncMode.cloudKitContainerIdentifier)
                 FeedbackPanel(items: cloudKitFeedbackItems)
+                DisclosureGroup("동기화 활성화 조건") {
+                    VStack(alignment: .leading, spacing: 10) {
+                        if cloudSyncReadiness.isReadyToEnable {
+                            Label("모든 안전 조건을 통과했습니다.", systemImage: "checkmark.shield")
+                                .foregroundStyle(.green)
+                        } else {
+                            ForEach(cloudSyncReadiness.blockers) { blocker in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Label(blocker.title, systemImage: "lock.shield")
+                                        .font(.body.weight(.semibold))
+                                    Text(blocker.message)
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 6)
+                }
                 HStack {
                     Button {
                         Task { await checkCloudKitStatus() }
@@ -152,15 +172,24 @@ struct SettingsView: View {
     }
 
     private var cloudKitFeedbackItems: [FeedbackItem] {
-        let color: Color = cloudKitState.isReadyForSync ? .green : .secondary
-        let symbol = cloudKitState.isReadyForSync ? "checkmark.icloud" : "icloud"
+        let color: Color = cloudSyncReadiness.isReadyToEnable ? .green : .orange
+        let symbol = cloudSyncReadiness.isReadyToEnable ? "checkmark.icloud" : "exclamationmark.icloud"
         return [
             FeedbackItem(
                 text: "\(cloudKitState.title): \(cloudKitState.message)",
                 systemImage: symbol,
                 color: color
+            ),
+            FeedbackItem(
+                text: cloudSyncReadiness.isReadyToEnable ? "iCloud 동기화를 켤 수 있습니다." : "현재는 안전 조건 미충족으로 iCloud 동기화를 켤 수 없습니다.",
+                systemImage: cloudSyncReadiness.isReadyToEnable ? "checkmark.shield" : "lock.shield",
+                color: cloudSyncReadiness.isReadyToEnable ? .green : .secondary
             )
         ]
+    }
+
+    private var cloudSyncReadiness: VocabCloudSyncReadiness {
+        VocabCloudSyncReadinessPolicy.current(accountState: cloudKitState)
     }
 
     private func checkCloudKitStatus() async {
