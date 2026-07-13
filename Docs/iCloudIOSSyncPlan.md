@@ -69,6 +69,9 @@ macOS vocabulary store at unnecessary risk.
    - Reuse `Domain`, `Application`, `Data` and `Infrastructure`.
    - Add a small iOS-specific `@main` app and presentation layer.
    - Avoid including the macOS `VocabApp` entry point in the iOS target.
+   - The first iOS target is intentionally explicit-source based. It includes
+     the SwiftData records, normalizer, store factory and iCloud readiness
+     services, but does not include macOS-only AppKit/OCR/settings views.
 
 5. Enable migration and sync.
    - First launch with iCloud should keep the local store intact.
@@ -119,6 +122,23 @@ Do not add or ship an iOS target while any of these are true:
   daily set items, or partial uploads.
 - The iOS target would include the macOS `VocabApp` entry point or desktop-only
   presentation files.
+
+## iPhone Companion Scope
+
+The iPhone companion target is named `VocabIOS` and builds as
+`com.swainyun.Vocab.iOS`. Its first scope is:
+
+- Show synced daily sets newest-first.
+- Show review words in a compact list.
+- Provide a lightweight tap-to-reveal card test for commute use.
+- Show the same iCloud readiness blockers as macOS Settings.
+
+This target is not a replacement for the macOS authoring app. Bulk OCR intake,
+large library maintenance and Gemini memory-aid management remain macOS-first
+until the CloudKit migration is proven safe.
+
+The iPhone target can build before sync is enabled, but it will only show the
+phone-local store until the CloudKit activation gate is opened.
 
 ## Developer Program Expiration Policy
 
