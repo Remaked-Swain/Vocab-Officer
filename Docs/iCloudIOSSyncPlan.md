@@ -97,6 +97,17 @@ available. The readiness gate must pass all of these conditions:
 Until all conditions pass, Settings should show the blocker in natural language
 and the app should continue using the local store.
 
+Before the first upload flow opens, the app must create a checkpoint of the
+local SwiftData store files:
+
+- `Vocab.store`
+- `Vocab.store-wal`, when present
+- `Vocab.store-shm`, when present
+- `manifest.json`, with the original path, copied file names and creation time
+
+The checkpoint is a safety prerequisite only. It must not change the active
+store path or delete any local vocabulary data.
+
 ## iOS Target Do-Not-Start Conditions
 
 Do not add or ship an iOS target while any of these are true:
