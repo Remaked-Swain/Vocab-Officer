@@ -80,6 +80,42 @@ final class VocabSyncSnapshotTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["fresh"])
     }
 
+    func testInvalidSnapshotDoesNotDeleteExistingPhoneLocalData() throws {
+        let context = try makeContext()
+        context.insert(WordRecord(term: "keep"))
+        try context.save()
+        let missingWordID = UUID()
+        let invalidSnapshot = VocabSyncSnapshot(
+            formatVersion: 1,
+            exportedAt: Date(timeIntervalSince1970: 200),
+            words: [],
+            dailySets: [
+                VocabSyncSnapshot.DailySetPayload(
+                    id: UUID(),
+                    seoulDay: "2026-07-13",
+                    createdAt: Date(timeIntervalSince1970: 100),
+                    completedAt: nil,
+                    items: [
+                        VocabSyncSnapshot.DailySetItemPayload(
+                            id: UUID(),
+                            orderIndex: 0,
+                            entryKind: "newHeadword",
+                            wordID: missingWordID
+                        )
+                    ]
+                )
+            ]
+        )
+
+        XCTAssertThrowsError(try VocabSyncSnapshotService.replaceLocalStore(with: invalidSnapshot, context: context)) { error in
+            XCTAssertEqual(
+                error as? VocabSyncSnapshotService.SnapshotValidationError,
+                .missingWordForDailySetItem(missingWordID)
+            )
+        }
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["keep"])
+    }
+
     private func makeContext() throws -> ModelContext {
         let configuration = ModelConfiguration(isStoredInMemoryOnly: true)
         let container = try ModelContainer(

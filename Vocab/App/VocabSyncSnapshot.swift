@@ -59,6 +59,15 @@ struct VocabSyncSnapshot: Codable, Equatable {
 enum VocabSyncSnapshotService {
     static let currentFormatVersion = 1
 
+    enum SnapshotValidationError: Error, Equatable {
+        case unsupportedFormatVersion(Int)
+        case duplicateWordID(UUID)
+        case duplicateMeaningID(UUID)
+        case duplicateDailySetID(UUID)
+        case duplicateDailySetItemID(UUID)
+        case missingWordForDailySetItem(UUID)
+    }
+
     static func exportSnapshot(context: ModelContext, exportedAt: Date = .now) throws -> VocabSyncSnapshot {
         let words = try context.fetch(
             FetchDescriptor<WordRecord>(
@@ -80,6 +89,7 @@ enum VocabSyncSnapshotService {
     }
 
     static func replaceLocalStore(with snapshot: VocabSyncSnapshot, context: ModelContext) throws {
+        try validate(snapshot)
         try deleteExistingSyncData(context: context)
 
         var wordsByID: [UUID: WordRecord] = [:]
@@ -148,6 +158,42 @@ enum VocabSyncSnapshotService {
         }
 
         try context.save()
+    }
+
+    static func validate(_ snapshot: VocabSyncSnapshot) throws {
+        guard snapshot.formatVersion == currentFormatVersion else {
+            throw SnapshotValidationError.unsupportedFormatVersion(snapshot.formatVersion)
+        }
+
+        var wordIDs = Set<UUID>()
+        var meaningIDs = Set<UUID>()
+        var dailySetIDs = Set<UUID>()
+        var dailySetItemIDs = Set<UUID>()
+
+        for word in snapshot.words {
+            guard wordIDs.insert(word.id).inserted else {
+                throw SnapshotValidationError.duplicateWordID(word.id)
+            }
+            for meaning in word.meanings {
+                guard meaningIDs.insert(meaning.id).inserted else {
+                    throw SnapshotValidationError.duplicateMeaningID(meaning.id)
+                }
+            }
+        }
+
+        for set in snapshot.dailySets {
+            guard dailySetIDs.insert(set.id).inserted else {
+                throw SnapshotValidationError.duplicateDailySetID(set.id)
+            }
+            for item in set.items {
+                guard dailySetItemIDs.insert(item.id).inserted else {
+                    throw SnapshotValidationError.duplicateDailySetItemID(item.id)
+                }
+                guard wordIDs.contains(item.wordID) else {
+                    throw SnapshotValidationError.missingWordForDailySetItem(item.wordID)
+                }
+            }
+        }
     }
 
     private static func wordPayload(_ word: WordRecord) -> VocabSyncSnapshot.WordPayload {

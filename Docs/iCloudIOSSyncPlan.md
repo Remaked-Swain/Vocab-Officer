@@ -140,6 +140,18 @@ until the CloudKit migration is proven safe.
 The iPhone target can build before sync is enabled, but it will only show the
 phone-local store until the CloudKit activation gate is opened.
 
+## Cloud Snapshot Transport
+
+The first cross-device transport is an internal snapshot, not direct SwiftData
+CloudKit mirroring. The app serializes words, meanings, review state and daily
+set membership into one versioned JSON payload, stores it as a private CloudKit
+asset, and lets the receiving device replace its local store from that snapshot.
+
+This keeps the existing macOS store local-first while avoiding premature
+migration of the production SwiftData schema into CloudKit. The upload/download
+UI must stay behind the readiness gate and explicit user confirmation because a
+phone restore intentionally replaces the phone-local Vocab store.
+
 ## Developer Program Expiration Policy
 
 Developer Program expiration should not erase the vocabulary database by itself.
