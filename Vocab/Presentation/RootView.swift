@@ -47,7 +47,14 @@ struct RootView: View {
             .listStyle(.sidebar)
             .navigationTitle("Vocab")
         } detail: {
-            Group {
+            VStack(spacing: 0) {
+                if let automaticSyncMessage {
+                    AutomaticSyncStatusBanner(
+                        message: automaticSyncMessage,
+                        isRunning: automaticSyncIsRunning
+                    )
+                }
+
                 switch selection ?? .intake {
                 case .intake: TodayIntakeView()
                 case .test: TestSetupView()
@@ -61,21 +68,6 @@ struct RootView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 900, minHeight: 600)
-        .safeAreaInset(edge: .bottom) {
-            if let automaticSyncMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: automaticSyncIsRunning ? "arrow.triangle.2.circlepath.icloud" : "icloud")
-                    Text(automaticSyncMessage)
-                        .lineLimit(2)
-                    Spacer()
-                }
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 18)
-                .padding(.vertical, 10)
-                .background(.bar)
-            }
-        }
         .task {
             if automaticSyncMessage == nil, let launchWarning {
                 automaticSyncMessage = launchWarning
@@ -174,6 +166,28 @@ struct RootView: View {
             return description
         }
         return "iCloud 자동 동기화 중 문제가 발생했습니다."
+    }
+}
+
+private struct AutomaticSyncStatusBanner: View {
+    let message: String
+    let isRunning: Bool
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: isRunning ? "arrow.triangle.2.circlepath.icloud" : "icloud")
+            Text(message)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .font(.callout)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 18)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.bar)
+        .accessibilityElement(children: .combine)
     }
 }
 
