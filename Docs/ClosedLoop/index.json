@@ -275,6 +275,7 @@
       "references": ["CL-0002", "CL-0007"],
       "supersedes": [],
       "supersededBy": null,
+      "partiallySupersededBy": [{"id": "CL-0015", "scope": ["Closed-Loop default-use rule"]}],
       "partiallySupersedes": [
         {"id": "CL-0002", "scope": ["independent pre-spawn of all roles before predecessor artifact registration"]},
         {"id": "CL-0007", "scope": ["pre-spawn agent briefing instead of just-in-time eligible-role briefing"]}
@@ -316,6 +317,24 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["per-record merge, tombstone replay, CloudKit change-token sync and field-level conflict resolution remain future work"]
+    },
+    {
+      "id": "CL-0015",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "audit",
+      "title": "Director-gated Closed-Loop use",
+      "date": "2026-07-14",
+      "tags": ["closed-loop", "director", "default-policy", "orchestration", "role-lifecycle", "main-agent-boundary"],
+      "affectedPaths": ["Docs/ClosedLoop/", "Docs/Verification.md"],
+      "path": "Docs/ClosedLoop/records/CL-0015-director-gated-closed-loop.md",
+      "references": ["CL-0002", "CL-0007", "CL-0012"],
+      "supersedes": [],
+      "supersededBy": null,
+      "partiallySupersedes": [{"id": "CL-0012", "scope": ["Closed-Loop default-use rule"]}],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["repository scripts cannot prevent external orchestrators from bypassing the main-agent orchestration boundary"]
     }
   ]
 }

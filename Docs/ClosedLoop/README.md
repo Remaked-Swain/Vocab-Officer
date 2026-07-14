@@ -7,9 +7,13 @@ parallel independent role execution is prohibited.
 
 ## Start Of A Loop
 
-Use the four-agent Closed-Loop by default, even when the user does not
-explicitly request it. The only exception is an explicit user instruction that
-Closed-Loop is unnecessary or should not be used for the current task.
+Closed-Loop is not the default workflow. The Director decides whether to use
+it for the current task and records both the decision and reason in the
+Director artifact. Use it only when the change needs durable decision evidence,
+ordered multi-role review, auditability, or explicit user instruction. Do not
+use it for simple inspection, routine single-agent edits, command-only
+questions, or changes whose risk and audit value do not justify the extra
+handoffs.
 
 1. Confirm the session bootstrap facts before spawning or editing:
    - canonical project root: `/Users/swainyun/Desktop/Project/Vocab`
@@ -35,12 +39,21 @@ Closed-Loop is unnecessary or should not be used for the current task.
    close that role execution before spawning the next role. It then registers
    only that newly active role with the current handoff token.
 8. Advance only in this order:
-   `Director -> Executor -> Monitor -> Recorder -> Director close`.
+   `Director analysis -> Executor change -> Monitor review -> Recorder record
+   -> Director close`.
    A Monitor rejection reactivates the original Executor ID and execution
    context; it must not spawn or register a replacement Executor. At most three
    rejections are allowed. Approval advances to Recorder.
-9. Have the Recorder add or update a valid indexed decision record before
-   Director close.
+9. Do not create Executor, Monitor or Recorder concurrently. Create each role
+   only after the previous stage is accepted and the pipeline opens the next
+   stage. The Recorder is created only after Monitor approval.
+10. During a Closed-Loop run, the Codex main agent must not directly change
+    code or documentation. It only orchestrates role order, handoff tokens,
+    sandbox state, token budget and verification visibility. File changes are
+    performed by the active Executor, and records are performed by the Recorder
+    after approval.
+11. Have the Recorder add or update a valid indexed decision record before
+    Director close.
 
 ## Sequential Handoff Enforcement
 
@@ -69,7 +82,7 @@ the run's temporary state.
 Use `CLOSED_LOOP_STATE_DIR` only to isolate tests or an explicitly managed
 runtime; normal state is under `.git/closed-loop-pipeline`.
 
-Typical commands:
+Typical approval commands:
 
 ```bash
 ./script/closed_loop_pipeline.sh start RUN-ID
@@ -86,6 +99,15 @@ Typical commands:
 ./script/closed_loop_pipeline.sh close RUN-ID Director director-1 close.md
 ```
 
+Typical rejection commands keep the same Executor identity:
+
+```bash
+./script/closed_loop_pipeline.sh review RUN-ID Monitor monitor-1 reject monitor.md
+./script/closed_loop_pipeline.sh submit RUN-ID Executor executor-1 executor-rework.md
+./script/closed_loop_pipeline.sh register-role RUN-ID Monitor monitor-1 <executor-rework-sha256>
+./script/closed_loop_pipeline.sh review RUN-ID Monitor monitor-1 approve monitor-approval.md
+```
+
 The shell cannot prevent Codex or another external orchestrator from spawning
 agents outside this API. The orchestrator is therefore responsible for not
 spawning a successor until the pipeline opens that role, and for closing the
@@ -94,8 +116,10 @@ state provide enforcement at the repository boundary and audit evidence for
 violations attempted through the API.
 
 This sequential enforcement partially replaces the earlier general
-multi-agent startup guidance in `CL-0002` and `CL-0007`. Their retention,
-bootstrap, project-root and verification rules remain active.
+multi-agent startup guidance in `CL-0002` and `CL-0007`. `CL-0015` further
+replaces the previous default-use rule: Closed-Loop is opt-in per Director
+decision, with recorded use or non-use reasoning. Their retention, bootstrap,
+project-root and verification rules remain active.
 
 This keeps prior decisions available without loading unrelated history on every
 task.

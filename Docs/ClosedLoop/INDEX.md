@@ -15,15 +15,15 @@ only when its scope applies to the current change.
 | CL-0005 | active | 2026-05-26 | selected-set testing, study cards, judgement transparency and local installation | [Study cards, selected-set testing and local installation](records/CL-0005-study-cards-selected-set-testing-and-installation.md) | retain while feature exists |
 | RUN-20260526-CL0005 | completed | 2026-05-26 | defect repair, card study and installation evidence | [Run record](runs/RUN-20260526-CL0005.md) | completed after Director, Monitor and Recorder approval |
 | CL-0006 | active | 2026-05-28 | English-to-Korean review priority decay and review eligibility | [English-to-Korean review decay](records/CL-0006-english-to-korean-review-decay.md) | retain while scheduler exists |
-| CL-0013 | active | 2026-06-28 | `Vocab/Presentation/LibraryViews.swift` and review UI | [Review grid cards](records/CL-0013-review-grid-cards.md) | retain while review UI exists |
 | CL-0007 | active | 2026-06-09 | session bootstrap, sandbox awareness and Swift/Xcode-first tooling; pre-spawn briefing partially superseded by CL-0012 | [Session bootstrap and tooling discipline](records/CL-0007-session-bootstrap-and-tooling-discipline.md) | retain while Codex workflow exists |
 | CL-0008 | active | 2026-06-10 | loose-word test eligibility and fair presentation | [Loose word testing](records/CL-0008-loose-word-testing.md) | retain while loose-word intake and testing exist |
 | CL-0009 | active | 2026-06-12 | review-mode previous-set re-exposure and 14+6 selection | [Previous-set review re-exposure](records/CL-0009-previous-set-review-reexposure.md) | retain while review-session selection exists |
 | CL-0010 | active | 2026-06-17 | parenthesized-comma meaning tracking and correction | [Parenthesized-comma meaning tracking](records/CL-0010-parenthesized-comma-meaning-tracking.md) | retain while correction and meaning-tracking behavior exists |
 | CL-0011 | active | 2026-06-24 | OCR intake, input IO and performance refactor | [OCR intake, input IO and performance refactor](records/CL-0011-ocr-intake-input-io-performance-refactor.md) | retain while OCR intake, paste intake or performance acceptance exists |
-| CL-0012 | active | 2026-06-28 | JIT role registration, ordered identity/hash handoffs, scoped verification and validated Recorder close | [Sequential agent handoffs](records/CL-0012-sequential-agent-handoffs.md) | retain while Codex Closed-Loop workflow exists |
+| CL-0012 | active | 2026-06-28 | JIT role registration, ordered identity/hash handoffs, scoped verification and validated Recorder close; default-use rule partially superseded by CL-0015 | [Sequential agent handoffs](records/CL-0012-sequential-agent-handoffs.md) | retain while Codex Closed-Loop workflow exists |
 | CL-0013 | active | 2026-06-28 | `Vocab/Presentation/LibraryViews.swift` and review UI | [Review grid cards](records/CL-0013-review-grid-cards.md) | retain while review UI exists |
 | CL-0014 | active | 2026-07-14 | automatic batch iCloud sync, snapshot cursor and conflict stop | [Automatic batch iCloud sync](records/CL-0014-automatic-batch-icloud-sync.md) | retain while iCloud sync or migration behavior exists |
+| CL-0015 | active | 2026-07-14 | Director-gated Closed-Loop use, use/non-use criteria, main-agent orchestration boundary and role lifecycle | [Director-gated Closed-Loop use](records/CL-0015-director-gated-closed-loop.md) | retain while Codex Closed-Loop workflow exists |
 
 ## Load Rules
 
@@ -44,6 +44,8 @@ only when its scope applies to the current change.
   must load `CL-0006`.
 - Review-session previous-set recurrence or its 14+6 selection rule must load
   `CL-0009`.
+- Any future task that considers Closed-Loop must apply `CL-0015`: Closed-Loop
+  is not the default, and the Director records the use or non-use reason.
 - Any future Closed-Loop task must apply `CL-0012` for JIT role registration,
   hash-token handoffs, rejection routing and validated Recorder close.
 - Any future Closed-Loop task must also apply `CL-0002`; reading its full record is

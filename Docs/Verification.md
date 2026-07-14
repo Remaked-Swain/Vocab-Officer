@@ -25,9 +25,11 @@
   preservation.
 - Confirm no learning payload, local SwiftData store, secret material or test
   result bundle is tracked in Git before publishing.
-- For each Closed-Loop change, read `Docs/ClosedLoop/INDEX.md` and run
+- For each Closed-Loop change, read `Docs/ClosedLoop/INDEX.md`, apply
+  `CL-0015` to decide whether Closed-Loop is justified, and run
   `script/verify_changed.sh` with only that loop's affected files before
-  broadening verification scope.
+  broadening verification scope. Closed-Loop is not the default; record the
+  Director's use or non-use reason when the workflow is considered.
 - Run unit tests, build the macOS target and execute the performance harness
   against the documented fixture before final acceptance.
 - Build and install the local executable with

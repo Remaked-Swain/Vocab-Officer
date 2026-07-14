@@ -17,12 +17,16 @@ corrupt or bypass an informal workflow state.
 
 ## Decision
 
+- Closed-Loop is not the default workflow. `CL-0015` requires the Director to
+  decide whether to use it and record the use or non-use reason.
 - Roles are created one at a time, just in time, in this exact flow:
-  `Director -> Executor -> Monitor -> original Executor on reject -> Recorder
-  on approve -> Director close`.
+  `Director analysis -> Executor change -> Monitor review -> original Executor
+  rework on reject or Recorder record on approve -> Director close`.
 - Parallel independent role execution is prohibited. The orchestrator closes
   the current role execution after its artifact is accepted, and only then
   spawns and registers the next role.
+- Executor, Monitor and Recorder are not created concurrently. The Recorder is
+  created only after Monitor approval.
 - `start` opens Director without registering any identity. Every active stage
   requires a separate just-in-time `register-role`; future-role and duplicate
   registration are rejected.
@@ -56,6 +60,10 @@ corrupt or bypass an informal workflow state.
   pipeline and record checks selected for this scope.
 
 ## Partial Supersession
+
+This record is partially superseded by `CL-0015` only for the previous
+default-use rule. Its sequential handoff and repository-local enforcement
+rules remain active.
 
 This record partially supersedes:
 
@@ -106,4 +114,7 @@ app or Xcode project behavior changed.
 The shell cannot prevent Codex or another external orchestrator from spawning
 or retaining agents outside this API. The orchestrator must enforce agent
 lifecycle timing; pipeline role registration and hash tokens enforce and audit
-the repository-local handoff boundary.
+the repository-local handoff boundary. During a Closed-Loop run, the Codex main
+agent must not directly change code or documentation; it only orchestrates
+role order, handoff tokens, token budget, sandbox state and verification
+visibility.
