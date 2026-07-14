@@ -71,6 +71,16 @@ the macOS RootView automatic sync path, kept the iOS manual import and iOS
 automatic download checkpoint guard, and expanded success messaging/tests so a
 successful download can expose the checkpoint directory name.
 
+The iOS QA follow-up approved raising the iOS deployment target to 26 because
+that build setting is not a local store deletion, store path change, bundle id
+change, schema migration or data reset. The iOS app must not use private
+`SecTask` runtime entitlement shims; when entitlement inspection is unavailable
+on iOS, readiness should leave CloudKit requests possible and let signed-build
+entitlement inspection or actual CloudKit account/operation failures expose
+provisioning problems. Sync status and CTA UI must stay out of the tab bar
+area, with staged sync actions moved into the Sync tab. The iPhone 12 mini
+compact-first layout changes still require real-device verification.
+
 Still out of scope: SwiftData CloudKit mirroring, per-record merge, tombstone
 replay, CloudKit change-token sync and field-level merge. Future work that adds
 any of those must create or update a separate decision record.
