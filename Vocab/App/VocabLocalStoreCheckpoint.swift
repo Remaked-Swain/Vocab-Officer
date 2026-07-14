@@ -1,8 +1,15 @@
 import Foundation
+import SwiftData
 
 struct VocabLocalStoreCheckpoint: Equatable {
     let directory: URL
     let copiedFiles: [String]
+}
+
+struct VocabLocalStoreCheckpointRehearsal: Equatable {
+    let wordCount: Int
+    let dailySetCount: Int
+    let attemptCount: Int
 }
 
 enum VocabLocalStoreCheckpointError: LocalizedError, Equatable {
@@ -80,6 +87,32 @@ enum VocabLocalStoreCheckpointStore {
             sibling(of: storeURL, suffix: "-wal"),
             sibling(of: storeURL, suffix: "-shm")
         ]
+    }
+
+    @MainActor
+    static func rehearseCheckpoint(_ checkpoint: VocabLocalStoreCheckpoint) throws -> VocabLocalStoreCheckpointRehearsal {
+        guard let storeFileName = checkpoint.copiedFiles.first(where: { !$0.hasSuffix("-wal") && !$0.hasSuffix("-shm") }) else {
+            throw VocabLocalStoreCheckpointError.missingPrimaryStore(checkpoint.directory)
+        }
+        let storeURL = checkpoint.directory.appendingPathComponent(storeFileName)
+        guard FileManager.default.fileExists(atPath: storeURL.path) else {
+            throw VocabLocalStoreCheckpointError.missingPrimaryStore(storeURL)
+        }
+
+        let schema = Schema(VocabModelContainerFactory.schemaModels)
+        let configuration = ModelConfiguration(
+            "VocabCheckpointRehearsal",
+            schema: schema,
+            url: storeURL,
+            cloudKitDatabase: .none
+        )
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = ModelContext(container)
+        return VocabLocalStoreCheckpointRehearsal(
+            wordCount: try context.fetchCount(FetchDescriptor<WordRecord>()),
+            dailySetCount: try context.fetchCount(FetchDescriptor<DailySetRecord>()),
+            attemptCount: try context.fetchCount(FetchDescriptor<AttemptRecord>())
+        )
     }
 
     private static func sibling(of storeURL: URL, suffix: String) -> URL {

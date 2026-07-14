@@ -13,13 +13,22 @@ not delete or rewrite the existing local store.
 ## Current State
 
 - The app currently opens `Vocab.store` in local-only mode by default.
-- `cloudKitPrivate` exists in `VocabModelContainerFactory`, but
-  `VocabSyncMode.current()` intentionally falls back to `.localOnly` unless
-  CloudKit is explicitly allowed at container creation time.
+- `cloudKitPrivate` opens a separate `VocabMirrored.store` with
+  `cloudKitDatabase: .private("iCloud.com.swainyun.Vocab")`.
+- The launch path reads the persisted sync mode. If the mirrored container
+  cannot open, the app falls back to local-only mode and surfaces a warning
+  instead of terminating.
 - Snapshot sync is implemented with one CloudKit snapshot record and a local
   cursor. It is useful as a recovery/fallback path but does not provide
   per-record merge.
 - Both macOS and iOS targets have the `iCloud.com.swainyun.Vocab` entitlement.
+- macOS Settings exposes a guarded migration action. It requires CloudKit
+  readiness, creates a local checkpoint, rehearses opening that checkpoint,
+  confirms `VocabMirrored.store` is empty, copies a full-fidelity snapshot,
+  verifies the snapshot fingerprint, then switches the next launch to mirrored
+  mode.
+- SwiftData model IDs are app-managed UUID values without `@Attribute(.unique)`
+  because CloudKit mirroring must not depend on unique constraints.
 
 ## Non-Negotiable Safety Rules
 
@@ -31,6 +40,8 @@ not delete or rewrite the existing local store.
   switch.
 - Keep snapshot export/import available until mirrored mode is proven on both
   Mac and iPhone with real data.
+- Do not import into a mirrored store that already contains local mirrored
+  records; this prevents accidental deletion or overwrite propagation.
 - Treat simultaneous cross-device edits as an explicit conflict design topic,
   not as something automatically solved by last-writer-wins.
 
@@ -51,10 +62,11 @@ The mode flag changes only after a migration transaction completes:
 2. Create a local checkpoint of `Vocab.store`.
 3. Export a validated snapshot from `Vocab.store`.
 4. Create or open `VocabMirrored.store`.
-5. Import the snapshot into `VocabMirrored.store`.
-6. Verify word count, daily set count and relationship integrity.
-7. Persist `.cloudKitPrivate`.
-8. Ask the user to relaunch, or rebuild the root container through an app-level
+5. Refuse migration if `VocabMirrored.store` already contains mirrored records.
+6. Import the snapshot into `VocabMirrored.store`.
+7. Verify a stable content fingerprint after re-export from the mirrored store.
+8. Persist `.cloudKitPrivate`.
+9. Ask the user to relaunch, or rebuild the root container through an app-level
    restart flow.
 
 Rollback is just switching the mode flag back to `.localOnly`. The local store
@@ -62,7 +74,7 @@ remains untouched.
 
 ## Sync Scope
 
-Initial mirrored scope should include:
+Mirrored migration scope includes:
 
 - `WordRecord`
 - `MeaningRecord`
@@ -71,16 +83,13 @@ Initial mirrored scope should include:
 - `ReviewStateRecord`
 - `TestSessionRecord`
 - `AttemptRecord`
+- `AnonymousAggregateRecord`
+- `MemoryAidCacheRecord`
 
-Local-only or deferred scope:
-
-- `MemoryAidCacheRecord`: generated content can be recreated and may be large.
-- `AnonymousAggregateRecord`: can be recomputed or kept local until a clear
-  cross-device analytics need exists.
-
-If SwiftData cannot split one schema across local-only and CloudKit-backed
-stores cleanly, keep these records in the mirrored schema temporarily but do
-not rely on them for cross-device UX until storage behavior is measured.
+`MemoryAidCacheRecord` and `AnonymousAggregateRecord` are included for
+full-fidelity migration because the current app uses one SwiftData schema per
+container. They can be split later only if storage growth or CloudKit traffic
+becomes measurable enough to justify the complexity.
 
 ## Conflict Policy
 
@@ -104,26 +113,25 @@ Long-term safest shape:
 
 ### Phase 1: Compatibility Probe
 
-- Add a safe test/harness that creates a CloudKit-configured container in a
-  temporary store URL, never the production `Vocab.store`.
-- Verify the current schema can open under `.private`.
-- Add tests for separate local and mirrored store URLs.
-- Do not expose mirrored mode in the UI yet.
+- Added tests that create a CloudKit-configured container in a temporary store
+  URL, never the production `Vocab.store`.
+- Verified separate local and mirrored store URLs.
 
 ### Phase 2: Migration Service
 
-- Add `VocabStoreMigrationService`.
-- Export from local store and import into mirrored store.
-- Verify counts and relationship integrity.
-- Store migration status and last checkpoint directory.
-- Add rollback-by-mode-switch helper.
+- Added `VocabStoreMigrationService`.
+- Export from local store and import into mirrored store using the full
+  snapshot shape.
+- Verify by comparing source and mirrored content fingerprints.
+- Added checkpoint restore rehearsal before the mode switch.
+- Added rollback-by-mode-switch helper in Settings.
 
 ### Phase 3: UI Gate
 
-- Add a Mac settings flow: readiness check, checkpoint confirmation, migration,
-  relaunch guidance, rollback option.
-- iOS should open mirrored mode only after entitlement/account readiness and
-  should show clear recovery guidance if the mirrored container fails.
+- Added a Mac settings flow: readiness check, confirmation, checkpoint,
+  migration, relaunch guidance and rollback option.
+- macOS and iOS startup both fall back to local-only mode with guidance if the
+  mirrored container fails.
 
 ### Phase 4: Domain Conflict Hardening
 
@@ -141,10 +149,13 @@ Long-term safest shape:
 
 ## Verification Gates
 
-- Unit tests for URL separation and mode selection.
-- Unit tests for migration count/relationship integrity.
-- Build macOS and iOS targets.
-- Real-device check:
+- Unit tests for URL separation and mode selection: passed.
+- Unit tests for migration fingerprint/relationship integrity: passed.
+- Unit tests for blocking migration into a non-empty mirrored store: passed.
+- Unit tests for checkpoint restore rehearsal: passed.
+- macOS changed-file test suite: passed.
+- iOS simulator build: passed.
+- Real-device check still required:
   - Mac creates a set, iPhone observes it.
   - iPhone completes a test, Mac observes attempts/review state.
   - Mac edits a word meaning, iPhone observes it.

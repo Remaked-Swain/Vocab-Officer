@@ -3,7 +3,7 @@ import SwiftData
 
 @Model
 final class WordRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID
     var term: String
     var normalizedTerm: String
     var englishAliases: [String]
@@ -26,7 +26,7 @@ final class WordRecord {
 
 @Model
 final class MeaningRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID
     var text: String
     var normalizedText: String
     var isCore: Bool
@@ -46,7 +46,7 @@ final class MeaningRecord {
 
 @Model
 final class DailySetRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID
     var seoulDay: String
     var createdAt: Date
     var completedAt: Date?
@@ -63,7 +63,7 @@ final class DailySetRecord {
 
 @Model
 final class DailySetItemRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID
     var orderIndex: Int
     var entryKind: String
     var wordID: UUID
@@ -79,7 +79,7 @@ final class DailySetItemRecord {
 
 @Model
 final class AttemptRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID
     var directionRaw: String
     var modeRaw: String
     var sessionID: UUID
@@ -112,7 +112,7 @@ final class AttemptRecord {
 
 @Model
 final class TestSessionRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID
     var directionRaw: String
     var modeRaw: String
     var seoulDay: String
@@ -134,7 +134,7 @@ final class TestSessionRecord {
 
 @Model
 final class ReviewStateRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID
     var failureCheck: Int
     var activePriority: Int
     var enToKoStreak: Int
@@ -160,7 +160,7 @@ final class ReviewStateRecord {
 
 @Model
 final class AnonymousAggregateRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID
     var seoulDay: String
     var modeRaw: String
     var correctCount: Int
@@ -181,7 +181,7 @@ final class AnonymousAggregateRecord {
 
 @Model
 final class MemoryAidCacheRecord {
-    @Attribute(.unique) var id: UUID
+    var id: UUID
     var wordID: UUID
     var modelRaw: String
     var promptVersion: Int

@@ -25,6 +25,7 @@ private enum VocabIOSTab: String, CaseIterable, Identifiable {
 }
 
 struct VocabIOSRootView: View {
+    let launchWarning: String?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @State private var automaticSyncMessage: String?
@@ -45,6 +46,9 @@ struct VocabIOSRootView: View {
             }
         }
         .task {
+            if automaticSyncMessage == nil, let launchWarning {
+                automaticSyncMessage = launchWarning
+            }
             await runAutomaticCloudSync(reason: "앱 실행")
         }
         .onChange(of: scenePhase) { _, phase in

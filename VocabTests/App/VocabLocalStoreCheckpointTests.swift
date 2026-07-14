@@ -1,6 +1,8 @@
+import SwiftData
 import XCTest
 @testable import Vocab
 
+@MainActor
 final class VocabLocalStoreCheckpointTests: XCTestCase {
     private var temporaryRoots: [URL] = []
 
@@ -53,6 +55,35 @@ final class VocabLocalStoreCheckpointTests: XCTestCase {
         let names = VocabLocalStoreCheckpointStore.storeCompanionURLs(for: storeURL).map(\.lastPathComponent)
 
         XCTAssertEqual(names, ["Vocab.store", "Vocab.store-wal", "Vocab.store-shm"])
+    }
+
+    func testCheckpointRehearsalOpensCopiedSwiftDataStore() throws {
+        let root = try makeTemporaryRoot()
+        let storeDirectory = root.appendingPathComponent("Store", isDirectory: true)
+        let checkpointRoot = root.appendingPathComponent("Checkpoints", isDirectory: true)
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        let storeURL = storeDirectory.appendingPathComponent("Vocab.store")
+        let schema = Schema(VocabModelContainerFactory.schemaModels)
+        let configuration = ModelConfiguration(
+            "VocabCheckpointSource",
+            schema: schema,
+            url: storeURL,
+            cloudKitDatabase: .none
+        )
+        let container = try ModelContainer(for: schema, configurations: [configuration])
+        let context = ModelContext(container)
+        context.insert(WordRecord(term: "checkpoint"))
+        try context.save()
+
+        let checkpoint = try VocabLocalStoreCheckpointStore.createCheckpoint(
+            storeURL: storeURL,
+            destinationRoot: checkpointRoot
+        )
+        let rehearsal = try VocabLocalStoreCheckpointStore.rehearseCheckpoint(checkpoint)
+
+        XCTAssertEqual(rehearsal.wordCount, 1)
+        XCTAssertEqual(rehearsal.dailySetCount, 0)
+        XCTAssertEqual(rehearsal.attemptCount, 0)
     }
 
     private func makeTemporaryRoot() throws -> URL {

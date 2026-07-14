@@ -1,4 +1,5 @@
 import CloudKit
+import SwiftData
 import SwiftUI
 
 enum NavigationItem: String, CaseIterable, Identifiable {
@@ -25,6 +26,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 }
 
 struct RootView: View {
+    let launchWarning: String?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: NavigationItem? = .intake
@@ -75,6 +77,9 @@ struct RootView: View {
             }
         }
         .task {
+            if automaticSyncMessage == nil, let launchWarning {
+                automaticSyncMessage = launchWarning
+            }
             await runAutomaticCloudSync(reason: "앱 실행")
         }
         .onChange(of: scenePhase) { _, phase in
@@ -190,7 +195,9 @@ struct SettingsView: View {
     @State private var cloudKitState: VocabCloudKitAccountState = .unknown
     @State private var isCheckingCloudKit = false
     @State private var isUploadingSnapshot = false
+    @State private var isMigratingToMirroredStore = false
     @State private var showUploadConfirmation = false
+    @State private var showMirroringConfirmation = false
     @State private var syncMessage: String?
     @State private var syncMessageIsError = false
 
@@ -260,6 +267,39 @@ struct SettingsView: View {
 
                 if isUploadingSnapshot {
                     ProgressView("단어장 스냅샷을 iCloud에 업로드하는 중입니다.")
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Per-record CloudKit mirroring")
+                        .font(.headline)
+                    Text("현재 로컬 단어장을 별도 mirrored store로 복사 검증한 뒤, 다음 실행부터 SwiftData CloudKit mirroring 저장소를 사용합니다. 기존 `Vocab.store`는 삭제하지 않으며, mirrored store에 기존 데이터가 있으면 삭제 전파를 막기 위해 전환을 중단합니다.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button {
+                            showMirroringConfirmation = true
+                        } label: {
+                            if isMigratingToMirroredStore {
+                                Label("전환 준비 중", systemImage: "icloud.and.arrow.up")
+                            } else {
+                                Label("per-record iCloud 저장소로 전환 준비", systemImage: "point.3.connected.trianglepath.dotted")
+                            }
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!canMigrateToMirroredStore)
+
+                        Button("로컬 저장 모드로 되돌리기") {
+                            UserDefaults.standard.set(VocabSyncMode.localOnly.rawValue, forKey: VocabSyncMode.userDefaultsKey)
+                            syncMessage = "다음 실행부터 기존 로컬 저장소를 사용합니다. mirrored store는 삭제하지 않았습니다."
+                            syncMessageIsError = false
+                        }
+                        .disabled(isMigratingToMirroredStore)
+                    }
+                    if isMigratingToMirroredStore {
+                        ProgressView("체크포인트 생성, mirrored store 이관, fingerprint 검증을 수행하는 중입니다.")
+                    }
                 }
 
                 if let syncMessage {
@@ -332,6 +372,18 @@ struct SettingsView: View {
         } message: {
             Text("업로드 전에 현재 로컬 저장소 체크포인트를 생성합니다. iPhone에서는 이 스냅샷을 가져와 phone-local Vocab 데이터를 교체하게 됩니다.")
         }
+        .confirmationDialog(
+            "per-record iCloud mirrored store로 전환할까요?",
+            isPresented: $showMirroringConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("체크포인트 생성 후 mirrored store 준비") {
+                Task { await migrateToMirroredStore() }
+            }
+            Button("취소", role: .cancel) {}
+        } message: {
+            Text("기존 로컬 Vocab.store는 삭제하지 않습니다. mirrored store가 비어 있고 이관 검증이 성공한 경우에만 다음 앱 실행부터 적용됩니다.")
+        }
     }
 
     private var cloudKitFeedbackItems: [FeedbackItem] {
@@ -361,6 +413,12 @@ struct SettingsView: View {
             && !isUploadingSnapshot
     }
 
+    private var canMigrateToMirroredStore: Bool {
+        cloudKitState.isReadyForSync
+            && VocabCloudEntitlementStatus.allowsCloudKitRequests()
+            && !isMigratingToMirroredStore
+    }
+
     private func checkCloudKitStatus() async {
         guard !isCheckingCloudKit else { return }
         isCheckingCloudKit = true
@@ -382,6 +440,32 @@ struct SettingsView: View {
             )
             let result = try await VocabCloudSnapshotSyncService().uploadLocalSnapshot(context: modelContext)
             syncMessage = "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 iCloud에 업로드했습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
+        } catch {
+            syncMessage = userFacingSyncError(error)
+            syncMessageIsError = true
+        }
+    }
+
+    private func migrateToMirroredStore() async {
+        guard !isMigratingToMirroredStore else { return }
+        isMigratingToMirroredStore = true
+        syncMessage = nil
+        syncMessageIsError = false
+        defer { isMigratingToMirroredStore = false }
+
+        do {
+            let mirroredContainer = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
+            let report = try VocabStoreMigrationService.migrateLocalSnapshotToMirroredStore(
+                localContext: modelContext,
+                mirroredContext: ModelContext(mirroredContainer),
+                createCheckpoint: {
+                    let checkpoint = try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint()
+                    _ = try VocabLocalStoreCheckpointStore.rehearseCheckpoint(checkpoint)
+                    return checkpoint
+                }
+            )
+            UserDefaults.standard.set(VocabSyncMode.cloudKitPrivate.rawValue, forKey: VocabSyncMode.userDefaultsKey)
+            syncMessage = "\(report.wordCount)개 단어, \(report.dailySetCount)개 세트, \(report.attemptCount)개 시도 기록을 mirrored store로 검증 이관했습니다. 다음 앱 실행부터 per-record iCloud 저장소를 사용합니다. 체크포인트: \(report.checkpointDirectoryName)"
         } catch {
             syncMessage = userFacingSyncError(error)
             syncMessageIsError = true

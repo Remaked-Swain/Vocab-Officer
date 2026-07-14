@@ -4,27 +4,46 @@ import SwiftUI
 
 @main
 struct VocabApp: App {
-    private let container: ModelContainer = Self.makeContainer()
+    private let launch = Self.makeLaunch()
 
-    private static func makeContainer() -> ModelContainer {
+    private struct Launch {
+        let container: ModelContainer
+        let fallbackMessage: String?
+    }
+
+    private static func makeLaunch() -> Launch {
+        let preferredMode = VocabSyncMode.current(allowsCloudKit: true)
         do {
-            return try VocabModelContainerFactory.makeContainer()
+            return Launch(
+                container: try VocabModelContainerFactory.makeContainer(syncMode: preferredMode),
+                fallbackMessage: nil
+            )
         } catch {
-            fatalError("Unable to prepare local learning data: \(error.localizedDescription)")
+            guard preferredMode == .cloudKitPrivate else {
+                fatalError("Unable to prepare local learning data: \(error.localizedDescription)")
+            }
+            do {
+                return Launch(
+                    container: try VocabModelContainerFactory.makeContainer(syncMode: .localOnly),
+                    fallbackMessage: "iCloud mirrored store를 열지 못해 기존 로컬 단어장으로 열었습니다. \(error.localizedDescription)"
+                )
+            } catch {
+                fatalError("Unable to prepare fallback local learning data: \(error.localizedDescription)")
+            }
         }
     }
 
     var body: some Scene {
         WindowGroup("Vocab", id: "main") {
-            RootView()
-                .modelContainer(container)
+            RootView(launchWarning: launch.fallbackMessage)
+                .modelContainer(launch.container)
         }
         .defaultSize(width: 1160, height: 760)
         .windowResizability(.automatic)
 
         Settings {
             SettingsView()
-                .modelContainer(container)
+                .modelContainer(launch.container)
         }
     }
 }
