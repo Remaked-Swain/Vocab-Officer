@@ -81,6 +81,7 @@ struct VocabIOSRootView: View {
     }
 
     private func runAutomaticCloudSync(reason: String) async {
+        guard !ProcessInfo.processInfo.isRunningXCTestForVocabIOSRootView else { return }
         guard !automaticSyncIsRunning else { return }
         automaticSyncIsRunning = true
         automaticSyncMessage = "\(reason): iCloud 자동 동기화 조건을 확인하는 중입니다."
@@ -119,7 +120,7 @@ struct VocabIOSRootView: View {
         case .blocked:
             return "현재 조건에서는 자동 동기화를 실행하지 않았습니다."
         case .conflict:
-            return "이 iPhone과 iCloud가 모두 변경되어 자동 적용을 중단했습니다. 수동 확인이 필요합니다."
+            return "이 iPhone 또는 iCloud가 동기화 중 변경되어 자동 적용을 중단했습니다. 수동 확인이 필요합니다."
         }
     }
 
@@ -135,6 +136,12 @@ struct VocabIOSRootView: View {
             return description
         }
         return "iCloud 자동 동기화 중 문제가 발생했습니다."
+    }
+}
+
+private extension ProcessInfo {
+    var isRunningXCTestForVocabIOSRootView: Bool {
+        environment["XCTestConfigurationFilePath"] != nil
     }
 }
 

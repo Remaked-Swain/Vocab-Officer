@@ -4,7 +4,12 @@ import SwiftData
 
 protocol VocabCloudSnapshotStoring {
     func save(_ snapshot: VocabSyncSnapshot) async throws
+    func save(
+        _ snapshot: VocabSyncSnapshot,
+        ifCloudMetadataMatches expectedMetadata: VocabCloudSnapshotMetadata?
+    ) async throws -> Bool
     func load() async throws -> VocabSyncSnapshot?
+    func metadata() async throws -> VocabCloudSnapshotMetadata?
 }
 
 extension VocabCloudSnapshotStoring {
@@ -101,6 +106,20 @@ struct VocabCloudBatchSyncResult: Equatable {
     let snapshotResult: VocabCloudSnapshotSyncResult?
 }
 
+enum VocabCloudBatchSyncError: LocalizedError {
+    case localCheckpointFailed
+    case localCheckpointRestoreFailed
+
+    var errorDescription: String? {
+        switch self {
+        case .localCheckpointFailed:
+            return "로컬 단어장 보호 사본을 만들지 못해 iCloud 자동 다운로드를 중단했습니다."
+        case .localCheckpointRestoreFailed:
+            return "iCloud 자동 다운로드가 실패했고 로컬 보호 사본 복원도 완료하지 못했습니다. 자동 동기화를 중단했습니다."
+        }
+    }
+}
+
 @MainActor
 struct VocabCloudSnapshotSyncService {
     private let store: VocabCloudSnapshotStoring
@@ -164,9 +183,28 @@ struct VocabCloudSnapshotSyncService {
         }
 
         let plan = try await planBatchSync(context: context, now: now)
+        return try await applyBatchSyncPlan(plan, context: context, now: now)
+    }
+
+    func applyBatchSyncPlan(
+        _ plan: VocabCloudBatchSyncPlan,
+        context: ModelContext,
+        now: Date = .now
+    ) async throws -> VocabCloudBatchSyncResult {
         switch plan.action {
         case .uploadLocalSnapshot:
-            let result = try await uploadLocalSnapshot(context: context, now: now)
+            guard let result = try await uploadLocalSnapshotIfCloudUnchanged(
+                context: context,
+                plan: plan,
+                now: now
+            ) else {
+                return VocabCloudBatchSyncResult(
+                    action: .conflict,
+                    local: plan.local,
+                    cloud: try await store.metadata(),
+                    snapshotResult: nil
+                )
+            }
             return VocabCloudBatchSyncResult(
                 action: .uploadLocalSnapshot,
                 local: plan.local,
@@ -174,7 +212,18 @@ struct VocabCloudSnapshotSyncService {
                 snapshotResult: result
             )
         case .downloadCloudSnapshot:
-            let result = try await replaceLocalStoreFromCloud(context: context, syncedAt: now)
+            guard let result = try await replaceLocalStoreFromCloudIfLocalUnchanged(
+                context: context,
+                plan: plan,
+                syncedAt: now
+            ) else {
+                return VocabCloudBatchSyncResult(
+                    action: .conflict,
+                    local: try currentLocalMetadata(context: context, now: now),
+                    cloud: plan.cloud,
+                    snapshotResult: nil
+                )
+            }
             return VocabCloudBatchSyncResult(
                 action: .downloadCloudSnapshot,
                 local: plan.local,
@@ -212,6 +261,54 @@ struct VocabCloudSnapshotSyncService {
                 snapshotResult: nil
             )
         }
+    }
+
+    private func uploadLocalSnapshotIfCloudUnchanged(
+        context: ModelContext,
+        plan: VocabCloudBatchSyncPlan,
+        now: Date
+    ) async throws -> VocabCloudSnapshotSyncResult? {
+        let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: context, exportedAt: now)
+        let didSave = try await store.save(snapshot, ifCloudMetadataMatches: plan.cloud)
+        guard didSave else { return nil }
+        try recordSyncedSnapshot(snapshot, syncedAt: now)
+        return VocabCloudSnapshotSyncResult(snapshot: snapshot)
+    }
+
+    private func replaceLocalStoreFromCloudIfLocalUnchanged(
+        context: ModelContext,
+        plan: VocabCloudBatchSyncPlan,
+        syncedAt: Date
+    ) async throws -> VocabCloudSnapshotSyncResult? {
+        let localCheckpoint: VocabSyncSnapshot
+        do {
+            localCheckpoint = try VocabSyncSnapshotService.exportSnapshot(context: context, exportedAt: syncedAt)
+        } catch {
+            throw VocabCloudBatchSyncError.localCheckpointFailed
+        }
+
+        let currentLocal = try VocabCloudSnapshotMetadata(snapshot: localCheckpoint)
+        guard currentLocal.fingerprint == plan.local.fingerprint else { return nil }
+        guard let cloudSnapshot = try await store.load() else { return nil }
+
+        do {
+            try VocabSyncSnapshotService.replaceLocalStore(with: cloudSnapshot, context: context)
+        } catch {
+            do {
+                try VocabSyncSnapshotService.replaceLocalStore(with: localCheckpoint, context: context)
+            } catch {
+                throw VocabCloudBatchSyncError.localCheckpointRestoreFailed
+            }
+            throw error
+        }
+
+        try recordSyncedSnapshot(cloudSnapshot, syncedAt: syncedAt)
+        return VocabCloudSnapshotSyncResult(snapshot: cloudSnapshot)
+    }
+
+    private func currentLocalMetadata(context: ModelContext, now: Date) throws -> VocabCloudSnapshotMetadata {
+        let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: context, exportedAt: now)
+        return try VocabCloudSnapshotMetadata(snapshot: snapshot)
     }
 
     private func action(
@@ -275,12 +372,43 @@ struct VocabCloudKitSnapshotStore: VocabCloudSnapshotStoring {
 
         let recordID = CKRecord.ID(recordName: Self.recordName)
         let record = try await existingRecord(for: recordID)
-        record[Self.assetField] = CKAsset(fileURL: assetURL)
-        record[Self.exportedAtField] = snapshot.exportedAt as NSDate
-        record[Self.metadataField] = try JSONEncoder.vocabSnapshotEncoder.encode(
-            VocabCloudSnapshotMetadata(snapshot: snapshot)
-        ) as NSData
+        try apply(snapshot, assetURL: assetURL, to: record)
         _ = try await database.save(record)
+    }
+
+    func save(
+        _ snapshot: VocabSyncSnapshot,
+        ifCloudMetadataMatches expectedMetadata: VocabCloudSnapshotMetadata?
+    ) async throws -> Bool {
+        let data = try JSONEncoder.vocabSnapshotEncoder.encode(snapshot)
+        let assetURL = try writeTemporaryAsset(data)
+        defer { try? FileManager.default.removeItem(at: assetURL) }
+
+        let recordID = CKRecord.ID(recordName: Self.recordName)
+        let record: CKRecord
+        do {
+            record = try await database.record(for: recordID)
+        } catch let error as CKError where error.code == .unknownItem {
+            guard expectedMetadata == nil else { return false }
+            let newRecord = CKRecord(recordType: Self.recordType, recordID: recordID)
+            try apply(snapshot, assetURL: assetURL, to: newRecord)
+            do {
+                _ = try await database.save(newRecord)
+                return true
+            } catch let error as CKError where error.code == .serverRecordChanged {
+                return false
+            }
+        }
+
+        let currentMetadata = try metadata(from: record)
+        guard currentMetadata == expectedMetadata else { return false }
+        try apply(snapshot, assetURL: assetURL, to: record)
+        do {
+            _ = try await database.save(record)
+            return true
+        } catch let error as CKError where error.code == .serverRecordChanged {
+            return false
+        }
     }
 
     func load() async throws -> VocabSyncSnapshot? {
@@ -304,21 +432,33 @@ struct VocabCloudKitSnapshotStore: VocabCloudSnapshotStoring {
         let recordID = CKRecord.ID(recordName: Self.recordName)
         do {
             let record = try await database.record(for: recordID)
-            if let data = record[Self.metadataField] as? Data {
-                return try JSONDecoder.vocabSnapshotDecoder.decode(VocabCloudSnapshotMetadata.self, from: data)
-            }
-            guard
-                let asset = record[Self.assetField] as? CKAsset,
-                let fileURL = asset.fileURL
-            else {
-                return nil
-            }
-            let data = try Data(contentsOf: fileURL)
-            let snapshot = try JSONDecoder.vocabSnapshotDecoder.decode(VocabSyncSnapshot.self, from: data)
-            return try VocabCloudSnapshotMetadata(snapshot: snapshot)
+            return try metadata(from: record)
         } catch let error as CKError where error.code == .unknownItem {
             return nil
         }
+    }
+
+    private func apply(_ snapshot: VocabSyncSnapshot, assetURL: URL, to record: CKRecord) throws {
+        record[Self.assetField] = CKAsset(fileURL: assetURL)
+        record[Self.exportedAtField] = snapshot.exportedAt as NSDate
+        record[Self.metadataField] = try JSONEncoder.vocabSnapshotEncoder.encode(
+            VocabCloudSnapshotMetadata(snapshot: snapshot)
+        ) as NSData
+    }
+
+    private func metadata(from record: CKRecord) throws -> VocabCloudSnapshotMetadata? {
+        if let data = record[Self.metadataField] as? Data {
+            return try JSONDecoder.vocabSnapshotDecoder.decode(VocabCloudSnapshotMetadata.self, from: data)
+        }
+        guard
+            let asset = record[Self.assetField] as? CKAsset,
+            let fileURL = asset.fileURL
+        else {
+            return nil
+        }
+        let data = try Data(contentsOf: fileURL)
+        let snapshot = try JSONDecoder.vocabSnapshotDecoder.decode(VocabSyncSnapshot.self, from: data)
+        return try VocabCloudSnapshotMetadata(snapshot: snapshot)
     }
 
     private func writeTemporaryAsset(_ data: Data) throws -> URL {

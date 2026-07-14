@@ -82,6 +82,7 @@ struct RootView: View {
     }
 
     private func runAutomaticCloudSync(reason: String) async {
+        guard !ProcessInfo.processInfo.isRunningXCTest else { return }
         guard !automaticSyncIsRunning else { return }
         automaticSyncIsRunning = true
         automaticSyncMessage = "\(reason): iCloud 자동 동기화 조건을 확인하는 중입니다."
@@ -120,7 +121,7 @@ struct RootView: View {
         case .blocked:
             return "현재 조건에서는 자동 동기화를 실행하지 않았습니다."
         case .conflict:
-            return "Mac과 iCloud가 모두 변경되어 자동 적용을 중단했습니다. 수동 확인이 필요합니다."
+            return "Mac 또는 iCloud가 동기화 중 변경되어 자동 적용을 중단했습니다. 수동 확인이 필요합니다."
         }
     }
 
@@ -128,11 +129,20 @@ struct RootView: View {
         if error is CKError {
             return "iCloud 요청을 완료하지 못했습니다. 네트워크, iCloud 로그인, 앱 권한을 확인하세요."
         }
+        if error is VocabSyncSnapshotService.SnapshotValidationError {
+            return "iCloud 단어장 데이터가 현재 앱에서 복원할 수 없는 형식입니다."
+        }
         if let localizedError = error as? LocalizedError,
            let description = localizedError.errorDescription {
             return description
         }
         return "iCloud 자동 동기화 중 문제가 발생했습니다."
+    }
+}
+
+private extension ProcessInfo {
+    var isRunningXCTest: Bool {
+        environment["XCTestConfigurationFilePath"] != nil
     }
 }
 

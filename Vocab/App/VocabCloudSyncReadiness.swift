@@ -159,12 +159,13 @@ struct VocabCloudSyncReadiness: Equatable {
 enum VocabCloudSyncReadinessPolicy {
     static func current(
         accountState: VocabCloudKitAccountState,
-        runtimeConditions: VocabCloudSyncRuntimeConditions = .automaticDefault
+        runtimeConditions: VocabCloudSyncRuntimeConditions = .automaticDefault,
+        hasCloudKitEntitlement: Bool = VocabCloudEntitlementStatus.hasRequiredCloudKitContainer()
     ) -> VocabCloudSyncReadiness {
         VocabCloudSyncReadiness(
             accountState: accountState,
             allowsCloudKitRuntime: true,
-            hasCloudKitEntitlement: VocabCloudEntitlementStatus.hasRequiredCloudKitContainer(),
+            hasCloudKitEntitlement: hasCloudKitEntitlement,
             isSchemaCloudKitReady: true,
             hasConfirmedFirstUpload: runtimeConditions.hasSyncBaseline,
             runtimeConditions: runtimeConditions

@@ -33,7 +33,8 @@ final class VocabCloudSyncReadinessTests: XCTestCase {
     func testCurrentPolicyAllowsBatchSyncWhenRuntimeConditionsAreSafe() {
         let readiness = VocabCloudSyncReadinessPolicy.current(
             accountState: .available,
-            runtimeConditions: readyRuntimeConditions()
+            runtimeConditions: readyRuntimeConditions(),
+            hasCloudKitEntitlement: true
         )
 
         XCTAssertTrue(readiness.isReadyForBatchSync)
