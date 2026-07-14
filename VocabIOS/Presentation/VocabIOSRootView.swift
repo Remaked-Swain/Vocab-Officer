@@ -140,6 +140,34 @@ private extension ProcessInfo {
     }
 }
 
+private struct CompactEmptyState: View {
+    let title: String
+    let systemImage: String
+    let description: String
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: systemImage)
+                .font(.system(size: 28, weight: .semibold))
+                .foregroundStyle(.secondary)
+
+            Text(title)
+                .font(.callout.weight(.semibold))
+                .multilineTextAlignment(.center)
+
+            Text(description)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 18)
+    }
+}
+
 private struct VocabIOSSetListView: View {
     @Query(sort: \DailySetRecord.createdAt, order: .reverse) private var sets: [DailySetRecord]
     @Query(
@@ -150,7 +178,11 @@ private struct VocabIOSSetListView: View {
     var body: some View {
         List {
             if sets.isEmpty {
-                ContentUnavailableView("학습세트 없음", systemImage: "rectangle.stack", description: Text("macOS 단어장이 iCloud로 동기화되면 여기서 볼 수 있습니다."))
+                CompactEmptyState(
+                    title: "학습세트 없음",
+                    systemImage: "rectangle.stack",
+                    description: "macOS 단어장이 iCloud로 동기화되면 여기서 볼 수 있습니다."
+                )
             } else {
                 ForEach(sets) { set in
                     NavigationLink {
@@ -210,7 +242,11 @@ private struct VocabIOSReviewListView: View {
     var body: some View {
         List {
             if reviewStates.isEmpty {
-                ContentUnavailableView("복습 대상 없음", systemImage: "checkmark.circle", description: Text("복습이 필요한 단어가 생기면 여기에 표시됩니다."))
+                CompactEmptyState(
+                    title: "복습 대상 없음",
+                    systemImage: "checkmark.circle",
+                    description: "복습이 필요한 단어가 생기면 여기에 표시됩니다."
+                )
             } else {
                 ForEach(reviewStates.compactMap(\.word)) { word in
                     VocabIOSWordSummaryRow(word: word)
@@ -262,7 +298,11 @@ private struct VocabIOSTestSetupView: View {
                     .disabled(currentIndex >= words.count - 1)
                 }
             } else {
-                ContentUnavailableView("테스트할 단어 없음", systemImage: "checkmark.rectangle", description: Text("단어장이 동기화된 뒤 이동 중에도 카드 테스트를 볼 수 있습니다."))
+                CompactEmptyState(
+                    title: "테스트할 단어 없음",
+                    systemImage: "checkmark.rectangle",
+                    description: "단어장이 동기화된 뒤 이동 중에도 카드 테스트를 볼 수 있습니다."
+                )
             }
         }
         .padding(12)
@@ -382,6 +422,8 @@ private struct VocabIOSSyncStatusView: View {
                     Label(syncMessage, systemImage: syncMessageIsError ? "exclamationmark.triangle" : "checkmark.circle")
                         .foregroundStyle(syncMessageIsError ? .red : .green)
                         .font(.footnote)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
 
                 Text("가져오기는 이 iPhone의 Vocab 로컬 데이터를 iCloud 스냅샷으로 교체합니다. macOS 원본 단어장은 삭제하지 않습니다.")
@@ -394,12 +436,24 @@ private struct VocabIOSSyncStatusView: View {
                     Label(automaticSyncMessage, systemImage: automaticSyncIsRunning ? "arrow.triangle.2.circlepath.icloud" : "icloud")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
             Section("상세 상태") {
                 LabeledContent("현재 모드", value: VocabSyncMode.current().displayName)
-                LabeledContent("CloudKit", value: VocabSyncMode.cloudKitContainerIdentifier)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("CloudKit")
+                        .font(.subheadline)
+                    Text(VocabSyncMode.cloudKitContainerIdentifier)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
 
                 DisclosureGroup("자동 iCloud batch 동기화 조건") {
                     Text("앱 실행 및 활성화 시점에 네트워크, 저전력 모드, iCloud 권한, 기준 스냅샷을 확인한 뒤 안전한 경우에만 자동 batch 동기화를 수행합니다.")
@@ -488,16 +542,30 @@ private struct VocabIOSSyncStatusView: View {
                         .background(.blue, in: Circle())
 
                     VStack(alignment: .leading, spacing: 3) {
-                        Label(title, systemImage: systemImage)
-                            .font(.callout.weight(.semibold))
+                        Label {
+                            Text(title)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                        } icon: {
+                            Image(systemName: systemImage)
+                        }
+                        .font(.callout.weight(.semibold))
+
                         Text(detail)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .layoutPriority(1)
                 }
 
                 action()
                     .controlSize(.small)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
             .padding(.vertical, 4)
         }
