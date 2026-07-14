@@ -81,6 +81,18 @@ provisioning problems. Sync status and CTA UI must stay out of the tab bar
 area, with staged sync actions moved into the Sync tab. The iPhone 12 mini
 compact-first layout changes still require real-device verification.
 
+Recorder close addendum: the iPhone 12 mini screenshot issue was likely not
+only internal SwiftUI sizing. A missing iOS launch screen could leave the app
+displayed in letterboxed compatibility mode, so the accepted fix added
+`VocabIOS/LaunchScreen.storyboard`, registered it in the iOS resources phase,
+and set `INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen` for iOS Debug
+and Release. The iOS empty state was also replaced with `CompactEmptyState`,
+and wrapping was hardened for `SyncStepRow`, long sync messages and CloudKit
+identifiers. The deployment targets stayed at
+`IPHONEOS_DEPLOYMENT_TARGET = 26.0` and `MACOSX_DEPLOYMENT_TARGET = 14.0`.
+Verification passed with an iOS Simulator generic build, and the built
+`Info.plist` contained `UILaunchStoryboardName = LaunchScreen`.
+
 Still out of scope: SwiftData CloudKit mirroring, per-record merge, tombstone
 replay, CloudKit change-token sync and field-level merge. Future work that adds
 any of those must create or update a separate decision record.
