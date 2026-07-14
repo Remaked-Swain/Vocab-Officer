@@ -38,6 +38,35 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["subway"])
     }
 
+    func testDownloadSnapshotStopsBeforeReplaceWhenCheckpointFails() async throws {
+        let context = try makeContext()
+        context.insert(WordRecord(term: "old"))
+        try context.save()
+        let snapshot = makeSnapshot(term: "subway", meaning: "지하철")
+        let stateStore = MemoryBatchSyncStateStore()
+        let originalCursor = try cursor(for: snapshot)
+        stateStore.saveCursor(originalCursor)
+        let service = VocabCloudSnapshotSyncService(
+            store: MemorySnapshotStore(snapshot: snapshot),
+            stateStore: stateStore,
+            localStoreCheckpointCreator: { _ in throw TestCheckpointError.failed }
+        )
+
+        do {
+            _ = try await service.replaceLocalStoreFromCloud(
+                context: context,
+                syncedAt: Date(timeIntervalSince1970: 500)
+            )
+            XCTFail("Expected checkpoint failure to stop cloud import.")
+        } catch VocabCloudBatchSyncError.localCheckpointFailed {
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["old"])
+        XCTAssertEqual(stateStore.cursor, originalCursor)
+    }
+
     func testInspectCloudSnapshotReturnsSummaryWithoutReplacingLocalStore() async throws {
         let context = try makeContext()
         context.insert(WordRecord(term: "local"))
@@ -254,6 +283,66 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
         XCTAssertEqual(stateStore.cursor?.syncedAt, Date(timeIntervalSince1970: 500))
     }
 
+    func testBatchSyncSuccessfulDownloadReturnsCheckpointDirectoryName() async throws {
+        let context = try makeContext()
+        let baseline = makeSnapshot(term: "baseline", meaning: "기준")
+        let cloud = makeSnapshot(term: "cloud", meaning: "구름")
+        let store = MemorySnapshotStore(snapshot: cloud)
+        let stateStore = MemoryBatchSyncStateStore()
+        stateStore.saveCursor(try cursor(for: baseline))
+        let checkpoint = VocabLocalStoreCheckpoint(
+            directory: URL(fileURLWithPath: "/tmp/VocabStoreCheckpoint-test"),
+            copiedFiles: ["Vocab.store"]
+        )
+        let service = VocabCloudSnapshotSyncService(
+            store: store,
+            stateStore: stateStore,
+            localStoreCheckpointCreator: { _ in checkpoint }
+        )
+        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context)
+
+        let result = try await service.runBatchSyncIfReady(
+            context: context,
+            readiness: readyForBatchSync(),
+            now: Date(timeIntervalSince1970: 500)
+        )
+
+        XCTAssertEqual(result.action, .downloadCloudSnapshot)
+        XCTAssertEqual(result.snapshotResult?.checkpointDirectoryName, "VocabStoreCheckpoint-test")
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["cloud"])
+    }
+
+    func testBatchSyncDownloadStopsBeforeReplaceAndCursorUpdateWhenCheckpointFails() async throws {
+        let context = try makeContext()
+        let baseline = makeSnapshot(term: "baseline", meaning: "기준")
+        let cloud = makeSnapshot(term: "cloud", meaning: "구름")
+        let store = MemorySnapshotStore(snapshot: cloud)
+        let stateStore = MemoryBatchSyncStateStore()
+        let originalCursor = try cursor(for: baseline)
+        stateStore.saveCursor(originalCursor)
+        let service = VocabCloudSnapshotSyncService(
+            store: store,
+            stateStore: stateStore,
+            localStoreCheckpointCreator: { _ in throw TestCheckpointError.failed }
+        )
+        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context)
+
+        do {
+            _ = try await service.runBatchSyncIfReady(
+                context: context,
+                readiness: readyForBatchSync(),
+                now: Date(timeIntervalSince1970: 500)
+            )
+            XCTFail("Expected checkpoint failure to stop batch download.")
+        } catch VocabCloudBatchSyncError.localCheckpointFailed {
+        } catch {
+            XCTFail("Unexpected error: \(error)")
+        }
+
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["baseline"])
+        XCTAssertEqual(stateStore.cursor, originalCursor)
+    }
+
     private func makeContext() throws -> ModelContext {
         let schema = Schema(VocabModelContainerFactory.schemaModels)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -314,6 +403,10 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
             )
         )
     }
+}
+
+private enum TestCheckpointError: Error {
+    case failed
 }
 
 private final class MemorySnapshotStore: VocabCloudSnapshotStoring {
