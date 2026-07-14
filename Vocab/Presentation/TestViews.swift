@@ -318,6 +318,7 @@ struct TestRunnerView: View {
             if index + 1 == run.questions.count {
                 run.session.completedAt = .now
                 try context.save()
+                NotificationCenter.default.post(name: .vocabLearningStoreDidChange, object: nil)
                 dismiss()
             } else {
                 index += 1

@@ -97,6 +97,18 @@ Still out of scope: SwiftData CloudKit mirroring, per-record merge, tombstone
 replay, CloudKit change-token sync and field-level merge. Future work that adds
 any of those must create or update a separate decision record.
 
+Recorder close addendum 2026-07-14: Mac and iOS now trigger automatic batch
+sync after `LearningCoordinator` write operations by posting
+`vocabLearningStoreDidChange`. The root views do not run CloudKit immediately
+for every write; they debounce learning-change notifications for two seconds
+and preserve a pending reason when a sync is already running, so test sessions
+do not fan out into per-question CloudKit uploads while the final state still
+gets a follow-up sync opportunity. iOS also shares the real
+`LearningCoordinator`-backed test flow and study-set card flip interaction
+instead of using a read-only placeholder test screen. Verified with
+`diff --check`, `VocabIOS` iOS Simulator Debug build, and changed-file
+verification through `script/verify_changed.sh`.
+
 ## Relationships
 
 This extends `Docs/iCloudIOSSyncPlan.md` and preserves the manual snapshot

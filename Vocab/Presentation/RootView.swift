@@ -31,6 +31,8 @@ struct RootView: View {
     @State private var studyCardFaceStates: [UUID: Bool] = [:]
     @State private var automaticSyncMessage: String?
     @State private var automaticSyncIsRunning = false
+    @State private var automaticSyncPendingReason: String?
+    @State private var automaticSyncDebounceTask: Task<Void, Never>?
 
     var body: some View {
         NavigationSplitView {
@@ -79,14 +81,35 @@ struct RootView: View {
             guard phase == .active else { return }
             Task { await runAutomaticCloudSync(reason: "앱 활성화") }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .vocabLearningStoreDidChange)) { _ in
+            scheduleAutomaticCloudSync(reason: "학습 데이터 변경")
+        }
+    }
+
+    private func scheduleAutomaticCloudSync(reason: String) {
+        automaticSyncDebounceTask?.cancel()
+        automaticSyncDebounceTask = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            await runAutomaticCloudSync(reason: reason)
+        }
     }
 
     private func runAutomaticCloudSync(reason: String) async {
         guard !ProcessInfo.processInfo.isRunningXCTest else { return }
-        guard !automaticSyncIsRunning else { return }
+        guard !automaticSyncIsRunning else {
+            automaticSyncPendingReason = reason
+            return
+        }
         automaticSyncIsRunning = true
         automaticSyncMessage = "\(reason): iCloud 자동 동기화 조건을 확인하는 중입니다."
-        defer { automaticSyncIsRunning = false }
+        defer {
+            automaticSyncIsRunning = false
+            if let pendingReason = automaticSyncPendingReason {
+                automaticSyncPendingReason = nil
+                scheduleAutomaticCloudSync(reason: pendingReason)
+            }
+        }
 
         let accountState = await VocabCloudKitStatusService().accountStatus()
         let conditions = await VocabCloudSyncNetworkMonitor.currentRuntimeConditions()
@@ -124,7 +147,9 @@ struct RootView: View {
             }
             return "iCloud 변경 사항을 이 Mac에 반영했습니다."
         case .alreadyInSync:
-            return "이미 최신 동기화 상태입니다."
+            let localCount = result.local.dailySetCount
+            let cloudCount = result.cloud?.dailySetCount ?? localCount
+            return "이미 최신 동기화 상태입니다. 로컬 \(localCount)개 세트 · iCloud \(cloudCount)개 세트"
         case .blocked:
             return "현재 조건에서는 자동 동기화를 실행하지 않았습니다."
         case .conflict:

@@ -1,6 +1,10 @@
 import Foundation
 import SwiftData
 
+extension Notification.Name {
+    static let vocabLearningStoreDidChange = Notification.Name("vocabLearningStoreDidChange")
+}
+
 struct WordDraft: Identifiable {
     let id = UUID()
     var term = ""
@@ -258,6 +262,11 @@ final class LearningCoordinator {
         self.context = context
     }
 
+    private func saveAndNotifyChange() throws {
+        try context.save()
+        NotificationCenter.default.post(name: .vocabLearningStoreDidChange, object: nil)
+    }
+
     func saveDailySet(_ drafts: [WordDraft], date: Date = .now) throws {
         let validDrafts = drafts.filter { !$0.term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard validDrafts.count == 100 else {
@@ -315,7 +324,7 @@ final class LearningCoordinator {
         }
         set.completedAt = date
         context.insert(set)
-        try context.save()
+        try saveAndNotifyChange()
         invalidateSessionCandidateCache()
     }
 
@@ -352,7 +361,7 @@ final class LearningCoordinator {
             word.meanings.append(meaning)
             context.insert(meaning)
         }
-        try context.save()
+        try saveAndNotifyChange()
         invalidateSessionCandidateCache()
         return word
     }
@@ -443,7 +452,7 @@ final class LearningCoordinator {
         let session = TestSessionRecord(directionRaw: direction.rawValue, modeRaw: mode.rawValue, seoulDay: day, wordIDs: selected.map(\.id), wasReduced: selected.count < 20, startedAt: date)
         context.insert(session)
         recordPresentation(for: selected, at: date)
-        try context.save()
+        try saveAndNotifyChange()
         return (session, selected.enumerated().map { SessionQuestion(word: $0.element, direction: direction, index: $0.offset) })
     }
 
@@ -475,7 +484,7 @@ final class LearningCoordinator {
         apply(result: result, matchedMeaningID: matchedMeaningID, direction: question.direction, to: question.word, date: date)
         context.insert(attempt)
         compactAttempts(for: question.word, now: date)
-        try context.save()
+        try saveAndNotifyChange()
     }
 
     func updateWord(_ word: WordRecord, term: String, meaningsText: String) throws {
@@ -527,7 +536,7 @@ final class LearningCoordinator {
         if word.statusRaw == "mastered" {
             word.statusRaw = "active"
         }
-        try context.save()
+        try saveAndNotifyChange()
     }
 
     func compactLearningHistory(now: Date = .now) throws {
@@ -535,7 +544,7 @@ final class LearningCoordinator {
             compactAttempts(for: word, now: now)
         }
         compactSessionHistory(now: now)
-        try context.save()
+        try saveAndNotifyChange()
     }
 
     func deleteMastered(_ word: WordRecord) throws {
@@ -554,7 +563,7 @@ final class LearningCoordinator {
             session.wordIDs.removeAll { $0 == word.id }
         }
         context.delete(word)
-        try context.save()
+        try saveAndNotifyChange()
         invalidateSessionCandidateCache()
     }
 
@@ -563,7 +572,7 @@ final class LearningCoordinator {
         for word in words where deletedIDs.insert(word.id).inserted {
             try deleteWordRecord(word)
         }
-        try context.save()
+        try saveAndNotifyChange()
         invalidateSessionCandidateCache()
     }
 
@@ -584,7 +593,7 @@ final class LearningCoordinator {
         }
 
         context.delete(set)
-        try context.save()
+        try saveAndNotifyChange()
         invalidateSessionCandidateCache()
     }
 
