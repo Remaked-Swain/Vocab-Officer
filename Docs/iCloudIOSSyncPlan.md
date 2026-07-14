@@ -209,6 +209,36 @@ the conflict stop or treating this as full live bidirectional sync.
 The manual snapshot upload/import UI remains the fallback and recovery path.
 It is also how the initial shared baseline is created.
 
+This transport detects whether either side changed by comparing full-snapshot
+content fingerprints against the last synced cursor. It does not compute or
+send per-record diffs. Therefore it is appropriate as a safe baseline and
+recovery transport, but it must not be described as efficient incremental sync.
+
+The efficient final form is per-record mirroring or an explicit delta protocol:
+
+- every mutable record needs a stable UUID and an app-managed `updatedAt`;
+- deletes should sync as tombstones before any hard-delete cleanup;
+- append-only learning events such as attempts should merge by record ID;
+- derived summaries such as review state should be rebuildable from events or
+  reconciled by a deterministic rule;
+- concurrent edits must compare record IDs, timestamps and domain rules instead
+  of replacing the whole store.
+
+Until that exists, automatic batch sync must keep the current one-sided-change
+rule and conflict stop.
+
+## iOS Sync Status UI Policy
+
+iPhone sync status must not be shown as a persistent banner on every tab. The
+study, review and test tabs are primary learning surfaces; sync feedback should
+not shift their content or compete with navigation titles.
+
+The iOS app should expose durable sync state in the Settings tab. Only
+action-required failures, conflicts or destructive confirmations should become
+app-level interruptions. macOS can use a wider detail-area banner because its
+sidebar/detail layout has more stable space, but that desktop placement should
+not be copied to iPhone.
+
 Any download or import path that destructively replaces a local SwiftData
 store must first create a local store checkpoint and must stop before replace
 or cursor advancement if checkpoint creation fails. This applies to iOS manual

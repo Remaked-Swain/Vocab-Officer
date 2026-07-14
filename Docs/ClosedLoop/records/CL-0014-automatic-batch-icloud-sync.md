@@ -109,6 +109,16 @@ instead of using a read-only placeholder test screen. Verified with
 `diff --check`, `VocabIOS` iOS Simulator Debug build, and changed-file
 verification through `script/verify_changed.sh`.
 
+Recorder close addendum 2026-07-14 UI/scope correction: iOS must not show
+automatic sync status as a persistent banner on every tab. The iPhone learning
+tabs are primary task surfaces, so durable sync state belongs in Settings while
+only failures/conflicts should interrupt globally. The current automatic sync
+implementation remains snapshot-cursor batch sync: it detects change direction
+with full-snapshot fingerprints and a cursor, then uploads or downloads the
+whole snapshot for one-sided changes. It is not per-record diff sync and must
+not be described as such. Efficient incremental sync belongs to the per-record
+mirroring/delta work tracked by `CL-0016`.
+
 ## Relationships
 
 This extends `Docs/iCloudIOSSyncPlan.md` and preserves the manual snapshot

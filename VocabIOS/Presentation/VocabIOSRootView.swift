@@ -37,17 +37,8 @@ struct VocabIOSRootView: View {
         TabView {
             ForEach(VocabIOSTab.allCases) { tab in
                 NavigationStack {
-                    VStack(spacing: 0) {
-                        if let automaticSyncMessage {
-                            VocabIOSAutomaticSyncStatusBanner(
-                                message: automaticSyncMessage,
-                                isRunning: automaticSyncIsRunning
-                            )
-                        }
-
-                        content(for: tab)
-                            .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
+                    content(for: tab)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .navigationTitle(tab.rawValue)
                 }
                 .tabItem {
@@ -80,7 +71,10 @@ struct VocabIOSRootView: View {
         case .test:
             VocabIOSTestSetupView()
         case .settings:
-            VocabIOSSyncStatusView()
+            VocabIOSSyncStatusView(
+                automaticSyncMessage: automaticSyncMessage,
+                automaticSyncIsRunning: automaticSyncIsRunning
+            )
         }
     }
 
@@ -167,28 +161,6 @@ struct VocabIOSRootView: View {
             return description
         }
         return "iCloud 자동 동기화 중 문제가 발생했습니다."
-    }
-}
-
-private struct VocabIOSAutomaticSyncStatusBanner: View {
-    let message: String
-    let isRunning: Bool
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: isRunning ? "arrow.triangle.2.circlepath.icloud" : "icloud")
-            Text(message)
-                .font(.footnote)
-                .lineLimit(3)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
-        .accessibilityElement(children: .combine)
     }
 }
 
@@ -430,6 +402,8 @@ private struct VocabIOSTestRun: Identifiable {
 
 private struct VocabIOSSyncStatusView: View {
     @Environment(\.modelContext) private var modelContext
+    let automaticSyncMessage: String?
+    let automaticSyncIsRunning: Bool
 
     @State private var cloudKitState: VocabCloudKitAccountState = .unknown
     @State private var isChecking = false
@@ -442,8 +416,23 @@ private struct VocabIOSSyncStatusView: View {
 
     var body: some View {
         List {
+            Section("동기화 상태") {
+                Label(
+                    automaticSyncMessage ?? "자동 동기화는 앱 실행, 활성화, 학습 데이터 변경 시 조건을 확인한 뒤 백그라운드로 시도합니다.",
+                    systemImage: automaticSyncIsRunning ? "arrow.triangle.2.circlepath.icloud" : "icloud"
+                )
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+
+                if automaticSyncIsRunning {
+                    ProgressView("동기화 조건을 확인하는 중입니다.")
+                }
+            }
+
             Section {
-                Text("Mac에서 올린 스냅샷을 iPhone에 가져와 기준점을 만든 뒤, 앱 실행/활성화 때 자동 동기화가 작동합니다.")
+                Text("현재 iPhone 동기화는 설정 탭에서 상태를 확인하고, 학습 화면을 방해하지 않는 방식으로 동작합니다. Mac에서 올린 스냅샷을 가져와 기준점을 만든 뒤 앱 실행/활성화 때 자동 batch 동기화를 시도합니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

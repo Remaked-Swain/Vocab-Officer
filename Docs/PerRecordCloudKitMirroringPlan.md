@@ -163,8 +163,6 @@ Long-term safest shape:
 
 ## Open Questions
 
-- Whether the current `@Attribute(.unique)` IDs are acceptable in the
-  CloudKit-backed SwiftData schema.
 - Whether current array fields are acceptable for conflict-heavy data.
 - Whether `MemoryAidCacheRecord` and `AnonymousAggregateRecord` should remain
   in the mirrored schema or be moved to a separate local-only store.
