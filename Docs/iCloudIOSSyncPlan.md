@@ -209,6 +209,13 @@ the conflict stop or treating this as full live bidirectional sync.
 The manual snapshot upload/import UI remains the fallback and recovery path.
 It is also how the initial shared baseline is created.
 
+Any download or import path that destructively replaces a local SwiftData
+store must first create a local store checkpoint and must stop before replace
+or cursor advancement if checkpoint creation fails. This applies to iOS manual
+import, iOS automatic download and macOS automatic download. Successful
+download/import messages may include the checkpoint directory name so the user
+can find the recovery copy.
+
 ## Developer Program Expiration Policy
 
 Developer Program expiration should not erase the vocabulary database by itself.

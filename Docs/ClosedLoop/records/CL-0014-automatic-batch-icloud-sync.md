@@ -34,6 +34,9 @@
   successful upload, and must not advance the local cursor.
 - The sync cursor advances only after successful upload, successful download,
   or already-in-sync decisions.
+- iOS manual import, iOS automatic download and macOS automatic download must
+  create a local store checkpoint before destructively replacing local data.
+  If checkpoint creation fails, replace and cursor advancement must stop.
 
 ## Excluded Scope
 
@@ -60,6 +63,13 @@
 Monitor rejected the first upload guard because a metadata preflight followed
 by an unconditional save left a time-of-check/time-of-use window. The approved
 follow-up closed that window with the conditional save behavior above.
+
+Monitor later rejected the first destructive-download hardening pass because
+the macOS automatic sync call site still constructed the sync service without
+a checkpoint creator. The approved follow-up injected checkpoint creation into
+the macOS RootView automatic sync path, kept the iOS manual import and iOS
+automatic download checkpoint guard, and expanded success messaging/tests so a
+successful download can expose the checkpoint directory name.
 
 Still out of scope: SwiftData CloudKit mirroring, per-record merge, tombstone
 replay, CloudKit change-token sync and field-level merge. Future work that adds
