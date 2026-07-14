@@ -42,21 +42,6 @@ struct VocabIOSRootView: View {
                 }
             }
         }
-        .safeAreaInset(edge: .bottom) {
-            if let automaticSyncMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: automaticSyncIsRunning ? "arrow.triangle.2.circlepath.icloud" : "icloud")
-                    Text(automaticSyncMessage)
-                        .lineLimit(2)
-                    Spacer()
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.bar)
-            }
-        }
         .task {
             await runAutomaticCloudSync(reason: "앱 실행")
         }
@@ -76,7 +61,10 @@ struct VocabIOSRootView: View {
         case .test:
             VocabIOSTestSetupView()
         case .settings:
-            VocabIOSSyncStatusView()
+            VocabIOSSyncStatusView(
+                automaticSyncMessage: automaticSyncMessage,
+                automaticSyncIsRunning: automaticSyncIsRunning
+            )
         }
     }
 
@@ -193,14 +181,14 @@ private struct VocabIOSSetDetailView: View {
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 12) {
+            LazyVStack(spacing: 8) {
                 ForEach(sortedItems) { item in
                     if let word = wordsByID[item.wordID] {
                         VocabIOSWordCard(word: word)
                     }
                 }
             }
-            .padding(16)
+            .padding(12)
         }
         .navigationTitle(dailySet.seoulDay)
     }
@@ -243,7 +231,7 @@ private struct VocabIOSTestSetupView: View {
     @State private var showMeaning = false
 
     var body: some View {
-        VStack(spacing: 20) {
+        VStack(spacing: 12) {
             if let word = currentWord {
                 VocabIOSWordCard(word: word, showsMeaning: showMeaning)
                     .onTapGesture {
@@ -256,6 +244,7 @@ private struct VocabIOSTestSetupView: View {
                     Button("이전") {
                         move(by: -1)
                     }
+                    .buttonStyle(.bordered)
                     .disabled(currentIndex == 0)
 
                     Spacer()
@@ -269,13 +258,14 @@ private struct VocabIOSTestSetupView: View {
                     Button("다음") {
                         move(by: 1)
                     }
+                    .buttonStyle(.borderedProminent)
                     .disabled(currentIndex >= words.count - 1)
                 }
             } else {
                 ContentUnavailableView("테스트할 단어 없음", systemImage: "checkmark.rectangle", description: Text("단어장이 동기화된 뒤 이동 중에도 카드 테스트를 볼 수 있습니다."))
             }
         }
-        .padding(20)
+        .padding(12)
     }
 
     private var currentWord: WordRecord? {
@@ -291,6 +281,9 @@ private struct VocabIOSTestSetupView: View {
 
 private struct VocabIOSSyncStatusView: View {
     @Environment(\.modelContext) private var modelContext
+    let automaticSyncMessage: String?
+    let automaticSyncIsRunning: Bool
+
     @State private var cloudKitState: VocabCloudKitAccountState = .unknown
     @State private var isChecking = false
     @State private var isInspectingSnapshot = false
@@ -302,61 +295,80 @@ private struct VocabIOSSyncStatusView: View {
 
     var body: some View {
         List {
-            Section("저장 상태") {
-                LabeledContent("현재 모드", value: VocabSyncMode.current().displayName)
-                LabeledContent("CloudKit", value: VocabSyncMode.cloudKitContainerIdentifier)
-            }
-
-            Section("iCloud 준비 상태") {
-                Label(cloudKitState.title, systemImage: cloudKitState.isReadyForSync ? "checkmark.icloud" : "icloud")
-                Text(cloudKitState.message)
+            Section {
+                Text("Mac에서 올린 스냅샷을 iPhone에 가져와 기준점을 만든 뒤, 앱 실행/활성화 때 자동 동기화가 작동합니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-
-                Button {
-                    Task { await checkCloudKitStatus() }
-                } label: {
-                    if isChecking {
-                        ProgressView()
-                    } else {
-                        Text("iCloud 상태 확인")
-                    }
-                }
-                .disabled(isChecking)
             }
 
-            Section("단어장 가져오기") {
-                Button {
-                    Task { await inspectCloudSnapshot() }
-                } label: {
-                    if isInspectingSnapshot {
-                        Label("확인 중", systemImage: "doc.text.magnifyingglass")
-                    } else {
-                        Label("가져올 스냅샷 확인", systemImage: "doc.text.magnifyingglass")
+            Section("동기화를 켜는 순서") {
+                SyncStepRow(
+                    index: 1,
+                    title: "iCloud 상태 확인",
+                    detail: cloudKitState.message,
+                    systemImage: cloudKitState.isReadyForSync ? "checkmark.icloud" : "icloud"
+                ) {
+                    Button {
+                        Task { await checkCloudKitStatus() }
+                    } label: {
+                        if isChecking {
+                            Label("확인 중", systemImage: "icloud")
+                        } else {
+                            Text("iCloud 상태 확인")
+                        }
                     }
+                    .disabled(isChecking)
                 }
-                .disabled(!canInspectSnapshot)
 
-                Button {
-                    showImportConfirmation = true
-                } label: {
-                    if isImporting {
-                        Label("가져오는 중", systemImage: "icloud.and.arrow.down")
-                    } else {
-                        Label("iCloud에서 Mac 단어장 가져오기", systemImage: "icloud.and.arrow.down")
+                SyncStepRow(
+                    index: 2,
+                    title: "Mac 스냅샷 확인",
+                    detail: "Mac에서 업로드한 단어장 스냅샷이 iCloud에 있는지 확인합니다.",
+                    systemImage: "doc.text.magnifyingglass"
+                ) {
+                    Button {
+                        Task { await inspectCloudSnapshot() }
+                    } label: {
+                        if isInspectingSnapshot {
+                            Label("확인 중", systemImage: "doc.text.magnifyingglass")
+                        } else {
+                            Text("가져올 스냅샷 확인")
+                        }
                     }
+                    .disabled(!canInspectSnapshot)
                 }
-                .disabled(!canImportSnapshot)
 
-                if let cloudSnapshotSummary {
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text("가져올 스냅샷")
-                            .font(.headline)
-                        Text("\(cloudSnapshotSummary.wordCount)개 단어 · \(cloudSnapshotSummary.dailySetCount)개 학습세트")
-                        Text("업로드 시각: \(cloudSnapshotSummary.exportedAt.formatted(date: .abbreviated, time: .shortened))")
+                SyncStepRow(
+                    index: 3,
+                    title: "iPhone에 가져오기",
+                    detail: "확인한 스냅샷으로 이 iPhone의 Vocab 로컬 데이터를 교체합니다.",
+                    systemImage: "icloud.and.arrow.down"
+                ) {
+                    Button {
+                        showImportConfirmation = true
+                    } label: {
+                        if isImporting {
+                            Label("가져오는 중", systemImage: "icloud.and.arrow.down")
+                        } else {
+                            Text("Mac 단어장 가져오기")
+                        }
                     }
-                    .font(.callout)
+                    .buttonStyle(.borderedProminent)
+                    .disabled(!canImportSnapshot)
                 }
+
+                SyncStepRow(
+                    index: 4,
+                    title: "기준점 생성 후 자동 sync",
+                    detail: "가져오기가 완료되면 보호 사본과 기준점이 만들어지고 이후 안전 조건에서 자동 동기화합니다.",
+                    systemImage: "arrow.triangle.2.circlepath.icloud"
+                ) {
+                    EmptyView()
+                }
+            }
+
+            Section("스냅샷 및 진행 상태") {
+                snapshotSummaryView
 
                 if isInspectingSnapshot {
                     ProgressView("iCloud 스냅샷 정보를 확인하는 중입니다.")
@@ -366,31 +378,52 @@ private struct VocabIOSSyncStatusView: View {
                     ProgressView("iCloud 스냅샷을 가져오는 중입니다.")
                 }
 
-                Text("가져오기는 이 iPhone의 Vocab 로컬 데이터를 iCloud 스냅샷으로 교체합니다. iPhone 쪽 기존 Vocab 데이터는 되돌릴 수 없지만, macOS 원본 단어장은 삭제하지 않습니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-
                 if let syncMessage {
                     Label(syncMessage, systemImage: syncMessageIsError ? "exclamationmark.triangle" : "checkmark.circle")
                         .foregroundStyle(syncMessageIsError ? .red : .green)
-                        .font(.callout)
+                        .font(.footnote)
+                }
+
+                Text("가져오기는 이 iPhone의 Vocab 로컬 데이터를 iCloud 스냅샷으로 교체합니다. macOS 원본 단어장은 삭제하지 않습니다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let automaticSyncMessage {
+                Section("자동 sync 상태") {
+                    Label(automaticSyncMessage, systemImage: automaticSyncIsRunning ? "arrow.triangle.2.circlepath.icloud" : "icloud")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
 
-            Section("자동 iCloud batch 동기화 조건") {
-                ForEach(readiness.blockers) { blocker in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(blocker.title)
-                            .font(.headline)
-                        Text(blocker.message)
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
+            Section("상세 상태") {
+                LabeledContent("현재 모드", value: VocabSyncMode.current().displayName)
+                LabeledContent("CloudKit", value: VocabSyncMode.cloudKitContainerIdentifier)
+
+                DisclosureGroup("자동 iCloud batch 동기화 조건") {
+                    Text("앱 실행 및 활성화 시점에 네트워크, 저전력 모드, iCloud 권한, 기준 스냅샷을 확인한 뒤 안전한 경우에만 자동 batch 동기화를 수행합니다.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .padding(.vertical, 4)
+
+                    if readiness.blockers.isEmpty {
+                        Label("자동 동기화 조건 충족", systemImage: "checkmark.circle")
+                            .font(.footnote)
+                            .foregroundStyle(.green)
                     }
-                    .padding(.vertical, 4)
+
+                    ForEach(readiness.blockers) { blocker in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(blocker.title)
+                                .font(.footnote.weight(.semibold))
+                            Text(blocker.message)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 3)
+                    }
                 }
-                Text("앱 실행 및 활성화 시점에 네트워크, 저전력 모드, iCloud 권한, 기준 스냅샷을 확인한 뒤 안전한 경우에만 자동 batch 동기화를 수행합니다. 위의 가져오기 버튼은 최초 기준점 생성 및 수동 복구용 스냅샷 가져오기입니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
         }
         .confirmationDialog(
@@ -407,20 +440,83 @@ private struct VocabIOSSyncStatusView: View {
         }
     }
 
+    @ViewBuilder
+    private var snapshotSummaryView: some View {
+        if let cloudSnapshotSummary {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("가져올 스냅샷")
+                    .font(.headline)
+                Text("\(cloudSnapshotSummary.wordCount)개 단어 · \(cloudSnapshotSummary.dailySetCount)개 학습세트")
+                Text("업로드 시각: \(cloudSnapshotSummary.exportedAt.formatted(date: .abbreviated, time: .shortened))")
+            }
+            .font(.callout)
+        } else {
+            Text("먼저 iCloud 상태를 확인하고 Mac 스냅샷을 조회하세요.")
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private struct SyncStepRow<Action: View>: View {
+        let index: Int
+        let title: String
+        let detail: String
+        let systemImage: String
+        @ViewBuilder var action: () -> Action
+
+        init(
+            index: Int,
+            title: String,
+            detail: String,
+            systemImage: String,
+            @ViewBuilder action: @escaping () -> Action
+        ) {
+            self.index = index
+            self.title = title
+            self.detail = detail
+            self.systemImage = systemImage
+            self.action = action
+        }
+
+        var body: some View {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(alignment: .top, spacing: 8) {
+                    Text("\(index)")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 22, height: 22)
+                        .background(.blue, in: Circle())
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Label(title, systemImage: systemImage)
+                            .font(.callout.weight(.semibold))
+                        Text(detail)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                action()
+                    .controlSize(.small)
+            }
+            .padding(.vertical, 4)
+        }
+    }
+
     private var readiness: VocabCloudSyncReadiness {
         VocabCloudSyncReadinessPolicy.current(accountState: cloudKitState)
     }
 
     private var canInspectSnapshot: Bool {
         cloudKitState.isReadyForSync
-            && VocabCloudEntitlementStatus.hasRequiredCloudKitContainer()
+            && VocabCloudEntitlementStatus.allowsCloudKitRequests()
             && !isInspectingSnapshot
             && !isImporting
     }
 
     private var canImportSnapshot: Bool {
         cloudKitState.isReadyForSync
-            && VocabCloudEntitlementStatus.hasRequiredCloudKitContainer()
+            && VocabCloudEntitlementStatus.allowsCloudKitRequests()
             && !isImporting
             && cloudSnapshotSummary != nil
     }
@@ -516,22 +612,23 @@ private struct VocabIOSWordCard: View {
     var showsMeaning = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(word.term)
-                .font(.system(size: 34, weight: .bold, design: .rounded))
+                .font(.system(size: 28, weight: .bold, design: .rounded))
+                .minimumScaleFactor(0.72)
             if showsMeaning {
                 Text(meaningsText)
-                    .font(.title3)
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             } else {
                 Text("탭해서 의미 보기")
-                    .font(.title3)
+                    .font(.callout)
                     .foregroundStyle(.tertiary)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(20)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .padding(14)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private var meaningsText: String {
