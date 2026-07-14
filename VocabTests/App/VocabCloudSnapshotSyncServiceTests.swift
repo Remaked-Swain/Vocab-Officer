@@ -4,12 +4,16 @@ import XCTest
 
 @MainActor
 final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
+    func testMirroredModeNeverAllowsAutomaticSnapshotBatchSync() {
+        XCTAssertFalse(VocabAutomaticSnapshotSyncPolicy.allowsAutomaticBatchSync(syncMode: .cloudKitPrivate))
+    }
+
     func testUploadLocalSnapshotSavesExportedWordsToStore() async throws {
         let context = try makeContext()
         let word = WordRecord(term: "train")
         let meaning = MeaningRecord(text: "기차")
         meaning.word = word
-        word.meanings.append(meaning)
+        word.appendMeaning(meaning)
         context.insert(word)
         context.insert(meaning)
         try context.save()
@@ -106,7 +110,7 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
         let stateStore = MemoryBatchSyncStateStore()
         stateStore.saveCursor(try cursor(for: baseline))
         let service = VocabCloudSnapshotSyncService(store: store, stateStore: stateStore)
-        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context)
+        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context, syncMode: .localOnly)
 
         let plan = try await service.planBatchSync(context: context)
 
@@ -219,7 +223,7 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
         let stateStore = MemoryBatchSyncStateStore()
         stateStore.saveCursor(try cursor(for: baseline))
         let service = VocabCloudSnapshotSyncService(store: store, stateStore: stateStore)
-        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context)
+        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context, syncMode: .localOnly)
         let originalCursor = stateStore.cursor
 
         let plan = try await service.planBatchSync(context: context)
@@ -269,7 +273,7 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
         let stateStore = MemoryBatchSyncStateStore()
         stateStore.saveCursor(try cursor(for: baseline))
         let service = VocabCloudSnapshotSyncService(store: store, stateStore: stateStore)
-        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context)
+        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context, syncMode: .localOnly)
 
         let result = try await service.runBatchSyncIfReady(
             context: context,
@@ -299,7 +303,7 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
             stateStore: stateStore,
             localStoreCheckpointCreator: { _ in checkpoint }
         )
-        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context)
+        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context, syncMode: .localOnly)
 
         let result = try await service.runBatchSyncIfReady(
             context: context,
@@ -325,7 +329,7 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
             stateStore: stateStore,
             localStoreCheckpointCreator: { _ in throw TestCheckpointError.failed }
         )
-        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context)
+        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context, syncMode: .localOnly)
 
         do {
             _ = try await service.runBatchSyncIfReady(
@@ -345,15 +349,36 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
 
     private func makeContext() throws -> ModelContext {
         let schema = Schema(VocabModelContainerFactory.schemaModels)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try ModelContainer(for: schema, configurations: [configuration])
         return ModelContext(container)
     }
 
     private func makeSnapshot(term: String, meaning: String) -> VocabSyncSnapshot {
-        VocabSyncSnapshot(
-            formatVersion: 1,
+        let metadataDate = Date(timeIntervalSince1970: 300)
+        var snapshot = VocabSyncSnapshot(
+            formatVersion: VocabSyncSnapshotService.currentFormatVersion,
             exportedAt: Date(timeIntervalSince1970: 300),
+            syncMetadata: VocabSyncSnapshot.SyncMetadataPayload(
+                schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+                bootstrapUUID: UUID(uuidString: "00000000-0000-0000-0000-000000000000")!,
+                contentFingerprint: "",
+                expectedCounts: VocabEntityCounts(
+                    words: 1,
+                    meanings: 1,
+                    dailySets: 0,
+                    dailySetItems: 0,
+                    testSessions: 0,
+                    attempts: 0,
+                    anonymousAggregates: 0,
+                    memoryAidCaches: 0,
+                    tombstones: 0
+                ),
+                createdAt: metadataDate,
+                completedAt: metadataDate,
+                updatedAt: metadataDate,
+                originDeviceID: "fixture-device"
+            ),
             words: [
                 VocabSyncSnapshot.WordPayload(
                     id: UUID(),
@@ -361,6 +386,8 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
                     englishAliases: [],
                     createdAt: Date(timeIntervalSince1970: 100),
                     statusRaw: "active",
+                    updatedAt: metadataDate,
+                    originDeviceID: "fixture-device",
                     deletedAt: nil,
                     meanings: [
                         VocabSyncSnapshot.MeaningPayload(
@@ -368,7 +395,9 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
                             text: meaning,
                             isCore: true,
                             aliases: [],
-                            successDays: []
+                            successDays: [],
+                            updatedAt: metadataDate,
+                            originDeviceID: "fixture-device"
                         )
                     ],
                     reviewState: nil
@@ -376,6 +405,9 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
             ],
             dailySets: []
         )
+        let fingerprint = try! snapshot.contentFingerprint()
+        snapshot.syncMetadata?.contentFingerprint = fingerprint
+        return snapshot
     }
 
     private func cursor(for snapshot: VocabSyncSnapshot) throws -> VocabCloudBatchSyncCursor {

@@ -28,18 +28,30 @@ enum VocabSyncMode: String, CaseIterable, Identifiable {
         }
     }
 
-    static func current(defaults: UserDefaults = .standard, allowsCloudKit: Bool = false) -> VocabSyncMode {
+    static func current(
+        defaults: UserDefaults = .standard,
+        allowsCloudKit: Bool = false,
+        defaultMode: VocabSyncMode = .localOnly
+    ) -> VocabSyncMode {
         guard
             let rawValue = defaults.string(forKey: userDefaultsKey),
             let mode = VocabSyncMode(rawValue: rawValue)
         else {
-            return .localOnly
+            return defaultMode
         }
         guard allowsCloudKit || mode == .localOnly else {
             return .localOnly
         }
         return mode
     }
+}
+
+struct VocabLaunchPlan {
+    let container: ModelContainer
+    let mode: VocabSyncMode
+    let connectionError: String?
+
+    var isUsable: Bool { connectionError == nil }
 }
 
 enum VocabModelContainerFactory {
@@ -52,28 +64,78 @@ enum VocabModelContainerFactory {
         AttemptRecord.self,
         ReviewStateRecord.self,
         AnonymousAggregateRecord.self,
-        MemoryAidCacheRecord.self
+        MemoryAidCacheRecord.self,
+        CloudBootstrapRecord.self,
+        RecordTombstone.self
     ]
 
     static func makeContainer(syncMode: VocabSyncMode = .current()) throws -> ModelContainer {
-        let configuration = try makeConfiguration(syncMode: syncMode)
-        return try ModelContainer(for: Schema(schemaModels), configurations: configuration)
+        try makeContainer(syncMode: syncMode, storeURL: nil)
+    }
+
+    static func makeContainer(syncMode: VocabSyncMode, storeURL: URL) throws -> ModelContainer {
+        try makeContainer(syncMode: syncMode, storeURL: Optional(storeURL))
+    }
+
+    private static func makeContainer(syncMode: VocabSyncMode, storeURL: URL?) throws -> ModelContainer {
+        let configuration = try makeConfiguration(syncMode: syncMode, storeURL: storeURL)
+        return try ModelContainer(
+            for: Schema(VocabSchemaV2.models),
+            migrationPlan: VocabSchemaMigrationPlan.self,
+            configurations: configuration
+        )
+    }
+
+    static func makeInMemoryContainer() throws -> ModelContainer {
+        let schema = Schema(schemaModels)
+        return try ModelContainer(
+            for: schema,
+            configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
+        )
+    }
+
+    static func makeLaunchPlan(
+        preferredMode: VocabSyncMode,
+        open: (VocabSyncMode) throws -> ModelContainer = makeContainer(syncMode:)
+    ) -> VocabLaunchPlan {
+        do {
+            return VocabLaunchPlan(container: try open(preferredMode), mode: preferredMode, connectionError: nil)
+        } catch {
+            let errorContainer: ModelContainer
+            do {
+                let schema = Schema(schemaModels)
+                let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+                errorContainer = try ModelContainer(for: schema, configurations: configuration)
+            } catch {
+                fatalError("Unable to prepare recovery UI data: \(error.localizedDescription)")
+            }
+            let target = preferredMode == .cloudKitPrivate ? "iCloud mirrored 저장소" : "로컬 저장소"
+            return VocabLaunchPlan(
+                container: errorContainer,
+                mode: preferredMode,
+                connectionError: "\(target)를 열지 못했습니다. 기존 저장소와 체크포인트는 변경하거나 삭제하지 않았습니다. \(error.localizedDescription)"
+            )
+        }
     }
 
     static func makeConfiguration(syncMode: VocabSyncMode) throws -> ModelConfiguration {
+        try makeConfiguration(syncMode: syncMode, storeURL: nil)
+    }
+
+    private static func makeConfiguration(syncMode: VocabSyncMode, storeURL: URL?) throws -> ModelConfiguration {
         switch syncMode {
         case .localOnly:
             return ModelConfiguration(
                 "VocabLocal",
                 schema: Schema(schemaModels),
-                url: try localStoreURL(),
+                url: try storeURL ?? localStoreURL(),
                 cloudKitDatabase: .none
             )
         case .cloudKitPrivate:
             return ModelConfiguration(
                 "VocabCloud",
                 schema: Schema(schemaModels),
-                url: try mirroredStoreURL(),
+                url: try storeURL ?? mirroredStoreURL(),
                 cloudKitDatabase: .private(VocabSyncMode.cloudKitContainerIdentifier)
             )
         }

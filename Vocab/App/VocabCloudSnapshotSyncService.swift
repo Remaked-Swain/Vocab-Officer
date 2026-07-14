@@ -151,7 +151,7 @@ struct VocabCloudSnapshotSyncService {
     func replaceLocalStoreFromCloud(context: ModelContext, syncedAt: Date = .now) async throws -> VocabCloudSnapshotSyncResult? {
         guard let snapshot = try await store.load() else { return nil }
         let checkpoint = try createLocalStoreCheckpointIfNeeded(now: syncedAt)
-        try VocabSyncSnapshotService.replaceLocalStore(with: snapshot, context: context)
+        try VocabSyncSnapshotService.replaceLocalStore(with: snapshot, context: context, syncMode: .localOnly)
         try recordSyncedSnapshot(snapshot, syncedAt: syncedAt)
         return VocabCloudSnapshotSyncResult(snapshot: snapshot, checkpoint: checkpoint)
     }
@@ -302,10 +302,10 @@ struct VocabCloudSnapshotSyncService {
         let checkpoint = try createLocalStoreCheckpointIfNeeded(now: syncedAt)
 
         do {
-            try VocabSyncSnapshotService.replaceLocalStore(with: cloudSnapshot, context: context)
+            try VocabSyncSnapshotService.replaceLocalStore(with: cloudSnapshot, context: context, syncMode: .localOnly)
         } catch {
             do {
-                try VocabSyncSnapshotService.replaceLocalStore(with: localCheckpoint, context: context)
+                try VocabSyncSnapshotService.replaceLocalStore(with: localCheckpoint, context: context, syncMode: .localOnly)
             } catch {
                 throw VocabCloudBatchSyncError.localCheckpointRestoreFailed
             }
@@ -363,6 +363,13 @@ struct VocabCloudSnapshotSyncService {
                 syncedAt: syncedAt
             )
         )
+    }
+}
+
+enum VocabAutomaticSnapshotSyncPolicy {
+    static func allowsAutomaticBatchSync(syncMode: VocabSyncMode) -> Bool {
+        // Snapshot transport is retained only for explicit recovery operations.
+        false
     }
 }
 

@@ -1,5 +1,12 @@
 # iCloud And iPhone Sync Plan
 
+> Current implementation (2026-07-14): SwiftData private CloudKit per-record
+> mirroring is the active final direction. Snapshot batch transport described
+> below is retained only as design history and an explicit local-only recovery
+> path; it never runs automatically in mirrored mode. See
+> `Docs/PerRecordCloudKitMirroringPlan.md` and `CL-0016` for the current safety
+> and bootstrap contract.
+
 ## Goal
 
 Allow the user's iPhone to continue vocabulary study during travel while keeping
@@ -140,12 +147,16 @@ until the CloudKit migration is proven safe.
 The iPhone target can build before sync is enabled, but it will only show the
 phone-local store until the CloudKit activation gate is opened.
 
-## Cloud Snapshot Transport
+## Legacy Cloud Snapshot Transport
 
-The first cross-device transport is an internal snapshot, not direct SwiftData
-CloudKit mirroring. The app serializes words, meanings, review state and daily
-set membership into one versioned JSON payload, stores it as a private CloudKit
-asset, and lets the receiving device replace its local store from that snapshot.
+The first cross-device transport was an internal snapshot. It is no longer the
+automatic cross-device transport. Snapshot v2 remains for explicit recovery and
+guarded Mac bootstrap transfer after an atomic server claim; iPhone never seeds
+from a phone-local snapshot, and mirrored whole-store replacement is blocked.
+The fixed private claim persists through `claimed`, `seeding` and `completed`
+states. Only the exact `(claimID, requestID, ownerDeviceID, sourceFingerprint,
+schemaVersion)` tuple may resume partial UUID-based import; foreign ownership
+and unconfirmed timeout outcomes fail closed, and the claim is never deleted.
 
 This keeps the existing macOS store local-first while avoiding premature
 migration of the production SwiftData schema into CloudKit. The upload/download
@@ -172,7 +183,11 @@ Profile and sign the installed app with the CloudKit entitlement. SwiftData unit
 tests should continue to use `CODE_SIGNING_ALLOWED=NO` when they only verify
 local in-memory model behavior.
 
-## Automatic Batch Bidirectional Sync Policy
+## Superseded Automatic Batch Bidirectional Sync Policy
+
+The batch policy in this section is historical. App launch, foreground
+activation and learning changes do not invoke it. Mirrored mode always rejects
+automatic snapshot batch synchronization.
 
 Automatic iCloud sync is batch-based and snapshot-cursor driven. It is not
 real-time record mirroring. The app keeps local SwiftData as the offline-first
@@ -224,8 +239,9 @@ The efficient final form is per-record mirroring or an explicit delta protocol:
 - concurrent edits must compare record IDs, timestamps and domain rules instead
   of replacing the whole store.
 
-Until that exists, automatic batch sync must keep the current one-sided-change
-rule and conflict stop.
+Per-record mirroring now implements the final direction described above.
+Snapshots remain explicit recovery artifacts and do not establish sync
+freshness.
 
 ## iOS Sync Status UI Policy
 

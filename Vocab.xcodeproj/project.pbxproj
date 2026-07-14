@@ -1,56 +1,89 @@
 // !$*UTF8*$!
 {
 	archiveVersion = 1;
-	classes = {};
-	objectVersion = 77;
+	classes = {
+	};
+	objectVersion = 71;
 	objects = {
 
 /* Begin PBXBuildFile section */
-		A00000000000000000000301 /* VocabIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000321 /* VocabIOSApp.swift */; };
-		A00000000000000000000302 /* VocabIOSRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000322 /* VocabIOSRootView.swift */; };
-		A00000000000000000000303 /* Records.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000323 /* Records.swift */; };
-		A00000000000000000000304 /* TextNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000324 /* TextNormalizer.swift */; };
-		A00000000000000000000305 /* VocabModelContainerFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000325 /* VocabModelContainerFactory.swift */; };
-		A00000000000000000000306 /* VocabCloudKitStatusService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000326 /* VocabCloudKitStatusService.swift */; };
-		A00000000000000000000307 /* VocabCloudSyncReadiness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000327 /* VocabCloudSyncReadiness.swift */; };
-		A00000000000000000000308 /* VocabLocalStoreCheckpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000328 /* VocabLocalStoreCheckpoint.swift */; };
-		A00000000000000000000309 /* VocabSyncSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000329 /* VocabSyncSnapshot.swift */; };
-		A0000000000000000000030A /* VocabCloudSnapshotSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032A /* VocabCloudSnapshotSyncService.swift */; };
-		A0000000000000000000030B /* VocabCloudEntitlementStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032B /* VocabCloudEntitlementStatus.swift */; };
-		A0000000000000000000030C /* VocabCloudSyncNetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032C /* VocabCloudSyncNetworkMonitor.swift */; };
+		A00000000000000000000301 /* App/VocabIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000321 /* App/VocabIOSApp.swift */; };
+		A00000000000000000000302 /* Presentation/VocabIOSRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000322 /* Presentation/VocabIOSRootView.swift */; };
+		A00000000000000000000303 /* Vocab/Data/Records.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000323 /* Vocab/Data/Records.swift */; };
+		A00000000000000000000304 /* Vocab/Infrastructure/TextNormalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000324 /* Vocab/Infrastructure/TextNormalizer.swift */; };
+		A00000000000000000000305 /* Vocab/App/VocabModelContainerFactory.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000325 /* Vocab/App/VocabModelContainerFactory.swift */; };
+		A00000000000000000000306 /* Vocab/App/VocabCloudKitStatusService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000326 /* Vocab/App/VocabCloudKitStatusService.swift */; };
+		A00000000000000000000307 /* Vocab/App/VocabCloudSyncReadiness.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000327 /* Vocab/App/VocabCloudSyncReadiness.swift */; };
+		A00000000000000000000308 /* Vocab/App/VocabLocalStoreCheckpoint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000328 /* Vocab/App/VocabLocalStoreCheckpoint.swift */; };
+		A00000000000000000000309 /* Vocab/App/VocabSyncSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = A00000000000000000000329 /* Vocab/App/VocabSyncSnapshot.swift */; };
+		A0000000000000000000030A /* Vocab/App/VocabCloudSnapshotSyncService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032A /* Vocab/App/VocabCloudSnapshotSyncService.swift */; };
+		A0000000000000000000030B /* Vocab/App/VocabCloudEntitlementStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032B /* Vocab/App/VocabCloudEntitlementStatus.swift */; };
+		A0000000000000000000030C /* Vocab/App/VocabCloudSyncNetworkMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032C /* Vocab/App/VocabCloudSyncNetworkMonitor.swift */; };
 		A0000000000000000000030D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032D /* LaunchScreen.storyboard */; };
-		A0000000000000000000030E /* LearningCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032E /* LearningCoordinator.swift */; };
+		A0000000000000000000030E /* Vocab/Application/LearningCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032E /* Vocab/Application/LearningCoordinator.swift */; };
+		B00000000000000000000001 /* Vocab/App/VocabBootstrapClaimService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000011 /* Vocab/App/VocabBootstrapClaimService.swift */; };
+		B00000000000000000000002 /* Vocab/Data/VocabSchemaMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000012 /* Vocab/Data/VocabSchemaMigration.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A00000000000000000000131 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A00000000000000000000050 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A00000000000000000000030;
+			remoteInfo = Vocab;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
 		A00000000000000000000001 /* Vocab.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = Vocab.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A00000000000000000000002 /* VocabTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; path = VocabTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		A00000000000000000000003 /* VocabIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; path = VocabIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
-		A00000000000000000000321 /* VocabIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/VocabIOSApp.swift; sourceTree = "<group>"; };
-		A00000000000000000000322 /* VocabIOSRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Presentation/VocabIOSRootView.swift; sourceTree = "<group>"; };
-		A00000000000000000000323 /* Records.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Data/Records.swift; sourceTree = "<group>"; };
-		A00000000000000000000324 /* TextNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Infrastructure/TextNormalizer.swift; sourceTree = "<group>"; };
-		A00000000000000000000325 /* VocabModelContainerFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabModelContainerFactory.swift; sourceTree = "<group>"; };
-		A00000000000000000000326 /* VocabCloudKitStatusService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudKitStatusService.swift; sourceTree = "<group>"; };
-		A00000000000000000000327 /* VocabCloudSyncReadiness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudSyncReadiness.swift; sourceTree = "<group>"; };
-		A00000000000000000000328 /* VocabLocalStoreCheckpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabLocalStoreCheckpoint.swift; sourceTree = "<group>"; };
-		A00000000000000000000329 /* VocabSyncSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabSyncSnapshot.swift; sourceTree = "<group>"; };
-		A0000000000000000000032A /* VocabCloudSnapshotSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudSnapshotSyncService.swift; sourceTree = "<group>"; };
-		A0000000000000000000032B /* VocabCloudEntitlementStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudEntitlementStatus.swift; sourceTree = "<group>"; };
-		A0000000000000000000032C /* VocabCloudSyncNetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudSyncNetworkMonitor.swift; sourceTree = "<group>"; };
+		A00000000000000000000003 /* VocabIOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; name = VocabIOS.app; path = Vocab.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A00000000000000000000321 /* App/VocabIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App/VocabIOSApp.swift; sourceTree = "<group>"; };
+		A00000000000000000000322 /* Presentation/VocabIOSRootView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Presentation/VocabIOSRootView.swift; sourceTree = "<group>"; };
+		A00000000000000000000323 /* Vocab/Data/Records.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Data/Records.swift; sourceTree = "<group>"; };
+		A00000000000000000000324 /* Vocab/Infrastructure/TextNormalizer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Infrastructure/TextNormalizer.swift; sourceTree = "<group>"; };
+		A00000000000000000000325 /* Vocab/App/VocabModelContainerFactory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabModelContainerFactory.swift; sourceTree = "<group>"; };
+		A00000000000000000000326 /* Vocab/App/VocabCloudKitStatusService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudKitStatusService.swift; sourceTree = "<group>"; };
+		A00000000000000000000327 /* Vocab/App/VocabCloudSyncReadiness.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudSyncReadiness.swift; sourceTree = "<group>"; };
+		A00000000000000000000328 /* Vocab/App/VocabLocalStoreCheckpoint.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabLocalStoreCheckpoint.swift; sourceTree = "<group>"; };
+		A00000000000000000000329 /* Vocab/App/VocabSyncSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabSyncSnapshot.swift; sourceTree = "<group>"; };
+		A0000000000000000000032A /* Vocab/App/VocabCloudSnapshotSyncService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudSnapshotSyncService.swift; sourceTree = "<group>"; };
+		A0000000000000000000032B /* Vocab/App/VocabCloudEntitlementStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudEntitlementStatus.swift; sourceTree = "<group>"; };
+		A0000000000000000000032C /* Vocab/App/VocabCloudSyncNetworkMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudSyncNetworkMonitor.swift; sourceTree = "<group>"; };
 		A0000000000000000000032D /* LaunchScreen.storyboard */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; path = LaunchScreen.storyboard; sourceTree = "<group>"; };
-		A0000000000000000000032E /* LearningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/LearningCoordinator.swift; sourceTree = "<group>"; };
+		A0000000000000000000032E /* Vocab/Application/LearningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/LearningCoordinator.swift; sourceTree = "<group>"; };
+		B00000000000000000000011 /* Vocab/App/VocabBootstrapClaimService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabBootstrapClaimService.swift; sourceTree = "<group>"; };
+		B00000000000000000000012 /* Vocab/Data/VocabSchemaMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Data/VocabSchemaMigration.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		A00000000000000000000010 /* Vocab */ = {isa = PBXFileSystemSynchronizedRootGroup; path = Vocab; sourceTree = "<group>"; };
-		A00000000000000000000011 /* VocabTests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = VocabTests; sourceTree = "<group>"; };
+		A00000000000000000000010 /* Vocab */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = Vocab; sourceTree = "<group>"; };
+		A00000000000000000000011 /* VocabTests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = VocabTests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
-		A00000000000000000000100 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A00000000000000000000101 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A00000000000000000000351 /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000100 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000101 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000351 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -65,17 +98,64 @@
 			);
 			sourceTree = "<group>";
 		};
-		A00000000000000000000021 /* Products */ = {isa = PBXGroup; children = (A00000000000000000000001 /* Vocab.app */, A00000000000000000000003 /* VocabIOS.app */, A00000000000000000000002 /* VocabTests.xctest */); name = Products; sourceTree = "<group>"; };
-		A00000000000000000000310 /* VocabIOS */ = {isa = PBXGroup; children = (A00000000000000000000321 /* VocabIOSApp.swift */, A00000000000000000000322 /* VocabIOSRootView.swift */, A0000000000000000000032D /* LaunchScreen.storyboard */); path = VocabIOS; sourceTree = "<group>"; };
-		A00000000000000000000311 /* Shared For iOS */ = {isa = PBXGroup; children = (A00000000000000000000323 /* Records.swift */, A00000000000000000000324 /* TextNormalizer.swift */, A00000000000000000000325 /* VocabModelContainerFactory.swift */, A00000000000000000000326 /* VocabCloudKitStatusService.swift */, A00000000000000000000327 /* VocabCloudSyncReadiness.swift */, A00000000000000000000328 /* VocabLocalStoreCheckpoint.swift */, A00000000000000000000329 /* VocabSyncSnapshot.swift */, A0000000000000000000032A /* VocabCloudSnapshotSyncService.swift */, A0000000000000000000032B /* VocabCloudEntitlementStatus.swift */, A0000000000000000000032C /* VocabCloudSyncNetworkMonitor.swift */, A0000000000000000000032E /* LearningCoordinator.swift */); name = "Shared For iOS"; sourceTree = "<group>"; };
+		A00000000000000000000021 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000001 /* Vocab.app */,
+				A00000000000000000000003 /* VocabIOS.app */,
+				A00000000000000000000002 /* VocabTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000310 /* VocabIOS */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000321 /* App/VocabIOSApp.swift */,
+				A00000000000000000000322 /* Presentation/VocabIOSRootView.swift */,
+				A0000000000000000000032D /* LaunchScreen.storyboard */,
+			);
+			path = VocabIOS;
+			sourceTree = "<group>";
+		};
+		A00000000000000000000311 /* Shared For iOS */ = {
+			isa = PBXGroup;
+			children = (
+				A00000000000000000000323 /* Vocab/Data/Records.swift */,
+				A00000000000000000000324 /* Vocab/Infrastructure/TextNormalizer.swift */,
+				A00000000000000000000325 /* Vocab/App/VocabModelContainerFactory.swift */,
+				A00000000000000000000326 /* Vocab/App/VocabCloudKitStatusService.swift */,
+				A00000000000000000000327 /* Vocab/App/VocabCloudSyncReadiness.swift */,
+				A00000000000000000000328 /* Vocab/App/VocabLocalStoreCheckpoint.swift */,
+				A00000000000000000000329 /* Vocab/App/VocabSyncSnapshot.swift */,
+				A0000000000000000000032A /* Vocab/App/VocabCloudSnapshotSyncService.swift */,
+				A0000000000000000000032B /* Vocab/App/VocabCloudEntitlementStatus.swift */,
+				A0000000000000000000032C /* Vocab/App/VocabCloudSyncNetworkMonitor.swift */,
+				A0000000000000000000032E /* Vocab/Application/LearningCoordinator.swift */,
+				B00000000000000000000011 /* Vocab/App/VocabBootstrapClaimService.swift */,
+				B00000000000000000000012 /* Vocab/Data/VocabSchemaMigration.swift */,
+			);
+			name = "Shared For iOS";
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
 		A00000000000000000000030 /* Vocab */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A00000000000000000000040 /* Build configuration list for PBXNativeTarget "Vocab" */;
-			buildPhases = (A00000000000000000000110 /* Sources */, A00000000000000000000100 /* Frameworks */, A00000000000000000000120 /* Resources */);
-			fileSystemSynchronizedGroups = (A00000000000000000000010 /* Vocab */);
+			buildPhases = (
+				A00000000000000000000110 /* Sources */,
+				A00000000000000000000100 /* Frameworks */,
+				A00000000000000000000120 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A00000000000000000000010 /* Vocab */,
+			);
 			name = Vocab;
 			productName = Vocab;
 			productReference = A00000000000000000000001 /* Vocab.app */;
@@ -84,9 +164,19 @@
 		A00000000000000000000031 /* VocabTests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A00000000000000000000041 /* Build configuration list for PBXNativeTarget "VocabTests" */;
-			buildPhases = (A00000000000000000000111 /* Sources */, A00000000000000000000101 /* Frameworks */, A00000000000000000000121 /* Resources */);
-			dependencies = (A00000000000000000000130 /* PBXTargetDependency */);
-			fileSystemSynchronizedGroups = (A00000000000000000000011 /* VocabTests */);
+			buildPhases = (
+				A00000000000000000000111 /* Sources */,
+				A00000000000000000000101 /* Frameworks */,
+				A00000000000000000000121 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A00000000000000000000130 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A00000000000000000000011 /* VocabTests */,
+			);
 			name = VocabTests;
 			productName = VocabTests;
 			productReference = A00000000000000000000002 /* VocabTests.xctest */;
@@ -95,7 +185,15 @@
 		A00000000000000000000330 /* VocabIOS */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A00000000000000000000340 /* Build configuration list for PBXNativeTarget "VocabIOS" */;
-			buildPhases = (A00000000000000000000350 /* Sources */, A00000000000000000000351 /* Frameworks */, A00000000000000000000352 /* Resources */);
+			buildPhases = (
+				A00000000000000000000350 /* Sources */,
+				A00000000000000000000351 /* Frameworks */,
+				A00000000000000000000352 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
 			name = VocabIOS;
 			productName = VocabIOS;
 			productReference = A00000000000000000000003 /* VocabIOS.app */;
@@ -111,60 +209,318 @@
 				LastSwiftUpdateCheck = 2600;
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
-					A00000000000000000000030 = {CreatedOnToolsVersion = 26.0; };
-					A00000000000000000000031 = {CreatedOnToolsVersion = 26.0; TestTargetID = A00000000000000000000030; };
-					A00000000000000000000330 = {CreatedOnToolsVersion = 26.0; };
+					A00000000000000000000030 = {
+						CreatedOnToolsVersion = 26.0;
+					};
+					A00000000000000000000031 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = A00000000000000000000030;
+					};
+					A00000000000000000000330 = {
+						CreatedOnToolsVersion = 26.0;
+					};
 				};
 			};
 			buildConfigurationList = A00000000000000000000042 /* Build configuration list for PBXProject "Vocab" */;
 			compatibilityVersion = "Xcode 16.0";
 			developmentRegion = en;
 			hasScannedForEncodings = 0;
-			knownRegions = (en, Base);
+			knownRegions = (
+				en,
+				Base,
+			);
 			mainGroup = A00000000000000000000020;
 			productRefGroup = A00000000000000000000021 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
-			targets = (A00000000000000000000030 /* Vocab */, A00000000000000000000330 /* VocabIOS */, A00000000000000000000031 /* VocabTests */);
+			targets = (
+				A00000000000000000000030 /* Vocab */,
+				A00000000000000000000330 /* VocabIOS */,
+				A00000000000000000000031 /* VocabTests */,
+			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A00000000000000000000120 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A00000000000000000000121 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A00000000000000000000352 /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (A0000000000000000000030D /* LaunchScreen.storyboard in Resources */); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000120 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000121 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000352 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A0000000000000000000030D /* LaunchScreen.storyboard in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
-		A00000000000000000000110 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A00000000000000000000111 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
-		A00000000000000000000350 /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (A00000000000000000000301 /* VocabIOSApp.swift in Sources */, A00000000000000000000302 /* VocabIOSRootView.swift in Sources */, A00000000000000000000303 /* Records.swift in Sources */, A00000000000000000000304 /* TextNormalizer.swift in Sources */, A00000000000000000000305 /* VocabModelContainerFactory.swift in Sources */, A00000000000000000000306 /* VocabCloudKitStatusService.swift in Sources */, A00000000000000000000307 /* VocabCloudSyncReadiness.swift in Sources */, A00000000000000000000308 /* VocabLocalStoreCheckpoint.swift in Sources */, A00000000000000000000309 /* VocabSyncSnapshot.swift in Sources */, A0000000000000000000030A /* VocabCloudSnapshotSyncService.swift in Sources */, A0000000000000000000030B /* VocabCloudEntitlementStatus.swift in Sources */, A0000000000000000000030C /* VocabCloudSyncNetworkMonitor.swift in Sources */, A0000000000000000000030E /* LearningCoordinator.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		A00000000000000000000110 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000111 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A00000000000000000000350 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A00000000000000000000301 /* App/VocabIOSApp.swift in Sources */,
+				A00000000000000000000302 /* Presentation/VocabIOSRootView.swift in Sources */,
+				A00000000000000000000303 /* Vocab/Data/Records.swift in Sources */,
+				A00000000000000000000304 /* Vocab/Infrastructure/TextNormalizer.swift in Sources */,
+				A00000000000000000000305 /* Vocab/App/VocabModelContainerFactory.swift in Sources */,
+				A00000000000000000000306 /* Vocab/App/VocabCloudKitStatusService.swift in Sources */,
+				A00000000000000000000307 /* Vocab/App/VocabCloudSyncReadiness.swift in Sources */,
+				A00000000000000000000308 /* Vocab/App/VocabLocalStoreCheckpoint.swift in Sources */,
+				A00000000000000000000309 /* Vocab/App/VocabSyncSnapshot.swift in Sources */,
+				A0000000000000000000030A /* Vocab/App/VocabCloudSnapshotSyncService.swift in Sources */,
+				A0000000000000000000030B /* Vocab/App/VocabCloudEntitlementStatus.swift in Sources */,
+				A0000000000000000000030C /* Vocab/App/VocabCloudSyncNetworkMonitor.swift in Sources */,
+				A0000000000000000000030E /* Vocab/Application/LearningCoordinator.swift in Sources */,
+				B00000000000000000000001 /* Vocab/App/VocabBootstrapClaimService.swift in Sources */,
+				B00000000000000000000002 /* Vocab/Data/VocabSchemaMigration.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
-/* Begin PBXContainerItemProxy section */
-		A00000000000000000000131 = {isa = PBXContainerItemProxy; containerPortal = A00000000000000000000050 /* Project object */; proxyType = 1; remoteGlobalIDString = A00000000000000000000030; remoteInfo = Vocab; };
-/* End PBXContainerItemProxy section */
-
 /* Begin PBXTargetDependency section */
-		A00000000000000000000130 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = A00000000000000000000030 /* Vocab */; targetProxy = A00000000000000000000131; };
+		A00000000000000000000130 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A00000000000000000000030 /* Vocab */;
+			targetProxy = A00000000000000000000131 /* PBXContainerItemProxy */;
+		};
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
-		A00000000000000000000200 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Debug; };
-		A00000000000000000000201 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_VERSION = 5.0; }; name = Release; };
-		A00000000000000000000210 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Vocab/Vocab.entitlements; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = P85DW78LYM; ENABLE_HARDENED_RUNTIME = YES; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = Vocab; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.Vocab; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 5.0; }; name = Debug; };
-		A00000000000000000000211 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = Vocab/Vocab.entitlements; CODE_SIGN_STYLE = Automatic; COMBINE_HIDPI_IMAGES = YES; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = P85DW78LYM; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = Vocab; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.Vocab; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; }; name = Release; };
-		A00000000000000000000220 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = P85DW78LYM; GENERATE_INFOPLIST_FILE = YES; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.VocabTests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Vocab.app/Contents/MacOS/Vocab"; }; name = Debug; };
-		A00000000000000000000221 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_STYLE = Automatic; DEVELOPMENT_TEAM = P85DW78LYM; GENERATE_INFOPLIST_FILE = YES; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks @loader_path/../Frameworks"; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.VocabTests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Vocab.app/Contents/MacOS/Vocab"; }; name = Release; };
-		A00000000000000000000341 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = VocabIOS/VocabIOS.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = P85DW78LYM; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = Vocab; INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen; INFOPLIST_KEY_VocabCloudKitEntitlementExpected = YES; IPHONEOS_DEPLOYMENT_TARGET = 26.0; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.Vocab.iOS; PRODUCT_NAME = Vocab; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Debug; };
-		A00000000000000000000342 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_ENTITLEMENTS = VocabIOS/VocabIOS.entitlements; CODE_SIGN_STYLE = Automatic; CURRENT_PROJECT_VERSION = 1; DEVELOPMENT_TEAM = P85DW78LYM; GENERATE_INFOPLIST_FILE = YES; INFOPLIST_KEY_CFBundleDisplayName = Vocab; INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen; INFOPLIST_KEY_VocabCloudKitEntitlementExpected = YES; IPHONEOS_DEPLOYMENT_TARGET = 26.0; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks"; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.Vocab.iOS; PRODUCT_NAME = Vocab; SDKROOT = iphoneos; SUPPORTED_PLATFORMS = "iphoneos iphonesimulator"; SWIFT_EMIT_LOC_STRINGS = YES; SWIFT_VERSION = 5.0; TARGETED_DEVICE_FAMILY = 1; }; name = Release; };
+		A00000000000000000000200 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000201 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				SDKROOT = macosx;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000210 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Vocab/Vocab.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P85DW78LYM;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Vocab;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.Vocab;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		A00000000000000000000211 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = Vocab/Vocab.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P85DW78LYM;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Vocab;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.Vocab;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		A00000000000000000000220 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = P85DW78LYM;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.VocabTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Vocab.app/Contents/MacOS/Vocab";
+			};
+			name = Debug;
+		};
+		A00000000000000000000221 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = P85DW78LYM;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.VocabTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Vocab.app/Contents/MacOS/Vocab";
+			};
+			name = Release;
+		};
+		A00000000000000000000341 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = VocabIOS/VocabIOS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P85DW78LYM;
+				ENABLE_TESTABILITY = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Vocab;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_VocabCloudKitEntitlementExpected = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.Vocab.iOS;
+				PRODUCT_NAME = Vocab;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		A00000000000000000000342 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = VocabIOS/VocabIOS.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = P85DW78LYM;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Vocab;
+				INFOPLIST_KEY_UILaunchStoryboardName = LaunchScreen;
+				INFOPLIST_KEY_VocabCloudKitEntitlementExpected = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.swainyun.Vocab.iOS;
+				PRODUCT_NAME = Vocab;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
-		A00000000000000000000040 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000210, A00000000000000000000211); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		A00000000000000000000041 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000220, A00000000000000000000221); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		A00000000000000000000042 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000200, A00000000000000000000201); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
-		A00000000000000000000340 = {isa = XCConfigurationList; buildConfigurations = (A00000000000000000000341, A00000000000000000000342); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		A00000000000000000000040 /* Build configuration list for PBXNativeTarget "Vocab" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000210 /* Debug */,
+				A00000000000000000000211 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000000000000000000041 /* Build configuration list for PBXNativeTarget "VocabTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000220 /* Debug */,
+				A00000000000000000000221 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000000000000000000042 /* Build configuration list for PBXProject "Vocab" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000200 /* Debug */,
+				A00000000000000000000201 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A00000000000000000000340 /* Build configuration list for PBXNativeTarget "VocabIOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A00000000000000000000341 /* Debug */,
+				A00000000000000000000342 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 	};
 	rootObject = A00000000000000000000050 /* Project object */;

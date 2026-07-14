@@ -3,7 +3,7 @@ import SwiftUI
 
 struct MasteredView: View {
     @Environment(\.modelContext) private var context
-    @Query private var words: [WordRecord]
+    @Query(filter: #Predicate<WordRecord> { $0.deletedAt == nil }) private var words: [WordRecord]
     @State private var pendingDeletion: WordRecord?
     @State private var confirmationText = ""
     @State private var notice: String?
@@ -30,7 +30,7 @@ struct MasteredView: View {
                 HStack {
                     VStack(alignment: .leading) {
                         Text(word.term).font(.title3.weight(.semibold))
-                        Text(word.meanings.map(\.text).joined(separator: ", "))
+                        Text(word.activeMeanings.map(\.text).joined(separator: ", "))
                             .font(.body)
                             .foregroundStyle(.secondary)
                     }

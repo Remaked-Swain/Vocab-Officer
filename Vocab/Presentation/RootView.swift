@@ -1,4 +1,5 @@
 import CloudKit
+import CoreData
 import SwiftData
 import SwiftUI
 
@@ -26,15 +27,14 @@ enum NavigationItem: String, CaseIterable, Identifiable {
 }
 
 struct RootView: View {
-    let launchWarning: String?
+    let connectionError: String?
+    let syncMode: VocabSyncMode
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
     @State private var selection: NavigationItem? = .intake
     @State private var studyCardFaceStates: [UUID: Bool] = [:]
-    @State private var automaticSyncMessage: String?
-    @State private var automaticSyncIsRunning = false
-    @State private var automaticSyncPendingReason: String?
-    @State private var automaticSyncDebounceTask: Task<Void, Never>?
+    @State private var hydrationState: VocabHydrationState = .localOnly
+    @State private var hydrationMessage: String?
 
     var body: some View {
         NavigationSplitView {
@@ -47,14 +47,19 @@ struct RootView: View {
             .listStyle(.sidebar)
             .navigationTitle("Vocab")
         } detail: {
-            VStack(spacing: 0) {
-                if let automaticSyncMessage {
-                    AutomaticSyncStatusBanner(
-                        message: automaticSyncMessage,
-                        isRunning: automaticSyncIsRunning
-                    )
-                }
-
+            if let connectionError {
+                ContentUnavailableView(
+                    "저장소 연결 오류",
+                    systemImage: "externaldrive.badge.exclamationmark",
+                    description: Text(connectionError + " 설정에서 저장 모드와 복구 정보를 확인하세요.")
+                )
+            } else if hydrationState != .localOnly && hydrationState != .ready {
+                ContentUnavailableView(
+                    "iCloud 연결 준비 중",
+                    systemImage: "icloud",
+                    description: Text(hydrationDescription)
+                )
+            } else {
                 switch selection ?? .intake {
                 case .intake: TodayIntakeView()
                 case .test: TestSetupView()
@@ -65,135 +70,39 @@ struct RootView: View {
                 case .history: HistoryView()
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .frame(minWidth: 900, minHeight: 600)
-        .task {
-            if automaticSyncMessage == nil, let launchWarning {
-                automaticSyncMessage = launchWarning
-            }
-            await runAutomaticCloudSync(reason: "앱 실행")
-        }
+        .task { refreshHydration() }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            Task { await runAutomaticCloudSync(reason: "앱 활성화") }
+            refreshHydration()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .vocabLearningStoreDidChange)) { _ in
-            scheduleAutomaticCloudSync(reason: "학습 데이터 변경")
-        }
-    }
-
-    private func scheduleAutomaticCloudSync(reason: String) {
-        automaticSyncDebounceTask?.cancel()
-        automaticSyncDebounceTask = Task {
-            try? await Task.sleep(for: .seconds(2))
-            guard !Task.isCancelled else { return }
-            await runAutomaticCloudSync(reason: reason)
+        .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
+            refreshHydration()
         }
     }
 
-    private func runAutomaticCloudSync(reason: String) async {
-        guard !ProcessInfo.processInfo.isRunningXCTest else { return }
-        guard !automaticSyncIsRunning else {
-            automaticSyncPendingReason = reason
-            return
-        }
-        automaticSyncIsRunning = true
-        automaticSyncMessage = "\(reason): iCloud 자동 동기화 조건을 확인하는 중입니다."
-        defer {
-            automaticSyncIsRunning = false
-            if let pendingReason = automaticSyncPendingReason {
-                automaticSyncPendingReason = nil
-                scheduleAutomaticCloudSync(reason: pendingReason)
-            }
-        }
-
-        let accountState = await VocabCloudKitStatusService().accountStatus()
-        let conditions = await VocabCloudSyncNetworkMonitor.currentRuntimeConditions()
-        let readiness = VocabCloudSyncReadinessPolicy.current(
-            accountState: accountState,
-            runtimeConditions: conditions
-        )
-        guard readiness.isReadyForBatchSync else {
-            automaticSyncMessage = "\(reason): \(readiness.blockers.first?.message ?? "자동 동기화 조건이 충족되지 않았습니다.")"
-            return
-        }
-
+    private func refreshHydration() {
         do {
-            let result = try await VocabCloudSnapshotSyncService(
-                localStoreCheckpointCreator: { now in
-                    try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint(now: now)
-                }
-            ).runBatchSyncIfReady(
-                context: modelContext,
-                readiness: readiness
-            )
-            automaticSyncMessage = "\(reason): \(batchSyncMessage(for: result))"
-        } catch {
-            automaticSyncMessage = "\(reason): \(userFacingSyncError(error))"
-        }
-    }
-
-    private func batchSyncMessage(for result: VocabCloudBatchSyncResult) -> String {
-        switch result.action {
-        case .uploadLocalSnapshot:
-            return "로컬 변경 사항을 iCloud에 업로드했습니다."
-        case .downloadCloudSnapshot:
-            if let checkpointDirectoryName = result.snapshotResult?.checkpointDirectoryName {
-                return "iCloud 변경 사항을 이 Mac에 반영했습니다. 체크포인트: \(checkpointDirectoryName)"
+            let status = try VocabCloudReconciler.hydrationStatus(context: modelContext, syncMode: syncMode)
+            if status.state == .reconciling || status.state == .ready || status.state == .localOnly {
+                let result = try VocabCloudReconciler.reconcile(context: modelContext, syncMode: syncMode)
+                hydrationState = result.state
+                hydrationMessage = result.message
+            } else {
+                hydrationState = status.state
+                hydrationMessage = status.message
             }
-            return "iCloud 변경 사항을 이 Mac에 반영했습니다."
-        case .alreadyInSync:
-            let localCount = result.local.dailySetCount
-            let cloudCount = result.cloud?.dailySetCount ?? localCount
-            return "이미 최신 동기화 상태입니다. 로컬 \(localCount)개 세트 · iCloud \(cloudCount)개 세트"
-        case .blocked:
-            return "현재 조건에서는 자동 동기화를 실행하지 않았습니다."
-        case .conflict:
-            return "Mac 또는 iCloud가 동기화 중 변경되어 자동 적용을 중단했습니다. 수동 확인이 필요합니다."
+        } catch {
+            hydrationState = .failed
+            hydrationMessage = error.localizedDescription
         }
     }
 
-    private func userFacingSyncError(_ error: Error) -> String {
-        if error is CKError {
-            return "iCloud 요청을 완료하지 못했습니다. 네트워크, iCloud 로그인, 앱 권한을 확인하세요."
-        }
-        if error is VocabSyncSnapshotService.SnapshotValidationError {
-            return "iCloud 단어장 데이터가 현재 앱에서 복원할 수 없는 형식입니다."
-        }
-        if let localizedError = error as? LocalizedError,
-           let description = localizedError.errorDescription {
-            return description
-        }
-        return "iCloud 자동 동기화 중 문제가 발생했습니다."
-    }
-}
-
-private struct AutomaticSyncStatusBanner: View {
-    let message: String
-    let isRunning: Bool
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: isRunning ? "arrow.triangle.2.circlepath.icloud" : "icloud")
-            Text(message)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 0)
-        }
-        .font(.callout)
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 18)
-        .padding(.vertical, 10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.bar)
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private extension ProcessInfo {
-    var isRunningXCTest: Bool {
-        environment["XCTestConfigurationFilePath"] != nil
+    private var hydrationDescription: String {
+        let base = "현재 상태: \(hydrationState.rawValue). metadata와 예상 레코드가 모두 도착하기 전에는 학습 데이터를 변경하지 않습니다."
+        guard let hydrationMessage, !hydrationMessage.isEmpty else { return base }
+        return base + "\n\n" + hydrationMessage
     }
 }
 
@@ -214,6 +123,8 @@ struct SettingsView: View {
     @State private var showMirroringConfirmation = false
     @State private var syncMessage: String?
     @State private var syncMessageIsError = false
+    @State private var hydrationState: VocabHydrationState = .localOnly
+    @State private var hydrationMessage: String?
 
     var body: some View {
         Form {
@@ -226,29 +137,16 @@ struct SettingsView: View {
             LabeledContent("학습 날짜 기준", value: "Asia/Seoul")
 
             Section("iPhone / iCloud 동기화") {
-                LabeledContent("현재 저장 방식", value: VocabSyncMode.current().displayName)
+                LabeledContent("현재 저장 방식", value: VocabSyncMode.current(allowsCloudKit: true).displayName)
                 LabeledContent("CloudKit 컨테이너", value: VocabSyncMode.cloudKitContainerIdentifier)
-                FeedbackPanel(items: cloudKitFeedbackItems)
-                DisclosureGroup("자동 iCloud batch 동기화 조건") {
-                    VStack(alignment: .leading, spacing: 10) {
-                        if cloudSyncReadiness.isReadyToEnable {
-                            Label("모든 안전 조건을 통과했습니다.", systemImage: "checkmark.shield")
-                                .foregroundStyle(.green)
-                        } else {
-                            ForEach(cloudSyncReadiness.blockers) { blocker in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Label(blocker.title, systemImage: "lock.shield")
-                                        .font(.body.weight(.semibold))
-                                    Text(blocker.message)
-                                        .font(.callout)
-                                        .foregroundStyle(.secondary)
-                                }
-                            }
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.top, 6)
+                LabeledContent("Hydration", value: hydrationState.rawValue)
+                if let hydrationMessage {
+                    Label(hydrationMessage, systemImage: hydrationState == .failed ? "exclamationmark.triangle" : "info.circle")
+                        .foregroundStyle(hydrationState == .failed ? .red : .secondary)
                 }
+                FeedbackPanel(items: cloudKitFeedbackItems)
+                Label("mirrored 모드에서는 snapshot batch 자동 동기화를 실행하지 않습니다.", systemImage: "checkmark.shield")
+                    .foregroundStyle(.secondary)
                 HStack {
                     Button {
                         Task { await checkCloudKitStatus() }
@@ -273,7 +171,7 @@ struct SettingsView: View {
                     if isUploadingSnapshot {
                         Label("업로드 중", systemImage: "icloud.and.arrow.up")
                     } else {
-                        Label("현재 Mac 단어장을 iCloud에 업로드", systemImage: "icloud.and.arrow.up")
+                        Label("수동 복구 snapshot 업로드", systemImage: "icloud.and.arrow.up")
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -322,7 +220,7 @@ struct SettingsView: View {
                         .font(.callout)
                 }
 
-                Text("앱 실행 및 활성화 시점에 네트워크, 저전력 모드, iCloud 권한, 기준 스냅샷을 확인한 뒤 안전한 경우에만 자동 batch 동기화를 수행합니다. 아래 업로드 버튼은 최초 기준점 생성 및 수동 복구용 스냅샷 업로드입니다.")
+                Text("snapshot은 자동 동기화에 사용하지 않으며, local 모드에서 운영자가 명시적으로 실행하는 복구 사본으로만 남겨 둡니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 Text(localStoreDescription)
@@ -373,6 +271,7 @@ struct SettingsView: View {
         .frame(width: 480)
         .task {
             await loadAPIKey()
+            refreshHydrationStatus()
         }
         .confirmationDialog(
             "현재 Mac 단어장을 iCloud에 업로드할까요?",
@@ -384,7 +283,7 @@ struct SettingsView: View {
             }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("업로드 전에 현재 로컬 저장소 체크포인트를 생성합니다. iPhone에서는 이 스냅샷을 가져와 phone-local Vocab 데이터를 교체하게 됩니다.")
+            Text("업로드 전에 현재 로컬 저장소 체크포인트를 생성합니다. 이 snapshot은 자동으로 적용되지 않는 수동 복구 사본입니다.")
         }
         .confirmationDialog(
             "per-record iCloud mirrored store로 전환할까요?",
@@ -392,7 +291,8 @@ struct SettingsView: View {
             titleVisibility: .visible
         ) {
             Button("체크포인트 생성 후 mirrored store 준비") {
-                Task { await migrateToMirroredStore() }
+                let token = VocabBootstrapTokenStore.pendingOrCreate()
+                Task { await migrateToMirroredStore(bootstrapToken: token) }
             }
             Button("취소", role: .cancel) {}
         } message: {
@@ -422,13 +322,15 @@ struct SettingsView: View {
     }
 
     private var canUploadSnapshot: Bool {
-        cloudKitState.isReadyForSync
+        VocabSyncMode.current(allowsCloudKit: true) == .localOnly
+            && cloudKitState.isReadyForSync
             && VocabCloudEntitlementStatus.allowsCloudKitRequests()
             && !isUploadingSnapshot
     }
 
     private var canMigrateToMirroredStore: Bool {
-        cloudKitState.isReadyForSync
+        VocabSyncMode.current(allowsCloudKit: true) == .localOnly
+            && cloudKitState.isReadyForSync
             && VocabCloudEntitlementStatus.allowsCloudKitRequests()
             && !isMigratingToMirroredStore
     }
@@ -438,6 +340,19 @@ struct SettingsView: View {
         isCheckingCloudKit = true
         defer { isCheckingCloudKit = false }
         cloudKitState = await VocabCloudKitStatusService().accountStatus()
+        refreshHydrationStatus()
+    }
+
+    private func refreshHydrationStatus() {
+        let mode = VocabSyncMode.current(allowsCloudKit: true)
+        do {
+            let status = try VocabCloudReconciler.hydrationStatus(context: modelContext, syncMode: mode)
+            hydrationState = status.state
+            hydrationMessage = status.message
+        } catch {
+            hydrationState = .failed
+            hydrationMessage = error.localizedDescription
+        }
     }
 
     private func uploadSnapshotToCloud() async {
@@ -460,7 +375,7 @@ struct SettingsView: View {
         }
     }
 
-    private func migrateToMirroredStore() async {
+    private func migrateToMirroredStore(bootstrapToken: VocabBootstrapToken) async {
         guard !isMigratingToMirroredStore else { return }
         isMigratingToMirroredStore = true
         syncMessage = nil
@@ -469,9 +384,11 @@ struct SettingsView: View {
 
         do {
             let mirroredContainer = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
-            let report = try VocabStoreMigrationService.migrateLocalSnapshotToMirroredStore(
+            let report = try await VocabStoreMigrationService.claimAndMigrateLocalSnapshotToMirroredStore(
                 localContext: modelContext,
                 mirroredContext: ModelContext(mirroredContainer),
+                bootstrapToken: bootstrapToken,
+                claimService: VocabCloudKitBootstrapClaimService(),
                 createCheckpoint: {
                     let checkpoint = try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint()
                     _ = try VocabLocalStoreCheckpointStore.rehearseCheckpoint(checkpoint)
@@ -479,6 +396,7 @@ struct SettingsView: View {
                 }
             )
             UserDefaults.standard.set(VocabSyncMode.cloudKitPrivate.rawValue, forKey: VocabSyncMode.userDefaultsKey)
+            VocabBootstrapTokenStore.clear()
             syncMessage = "\(report.wordCount)개 단어, \(report.dailySetCount)개 세트, \(report.attemptCount)개 시도 기록을 mirrored store로 검증 이관했습니다. 다음 앱 실행부터 per-record iCloud 저장소를 사용합니다. 체크포인트: \(report.checkpointDirectoryName)"
         } catch {
             syncMessage = userFacingSyncError(error)

@@ -10,7 +10,7 @@ final class VocabSyncSnapshotTests: XCTestCase {
         let meaning = MeaningRecord(text: "통근하다")
         meaning.successDays = ["2026-07-13"]
         meaning.word = word
-        word.meanings.append(meaning)
+        word.appendMeaning(meaning)
         let state = ReviewStateRecord()
         state.activePriority = 2
         state.failureCheck = 1
@@ -19,7 +19,7 @@ final class VocabSyncSnapshotTests: XCTestCase {
         let dailySet = DailySetRecord(seoulDay: "2026-07-13", createdAt: Date(timeIntervalSince1970: 100))
         let item = DailySetItemRecord(orderIndex: 0, entryKind: "newHeadword", wordID: word.id)
         item.set = dailySet
-        dailySet.items.append(item)
+        dailySet.appendItem(item)
         let session = TestSessionRecord(
             directionRaw: PracticeDirection.enToKo.rawValue,
             modeRaw: SessionMode.mixed.rawValue,
@@ -53,6 +53,25 @@ final class VocabSyncSnapshotTests: XCTestCase {
             markdown: "memory aid",
             generatedAt: Date(timeIntervalSince1970: 190)
         )
+        let metadataDate = Date(timeIntervalSince1970: 195)
+        word.updatedAt = metadataDate
+        word.originDeviceID = "word-device"
+        meaning.updatedAt = metadataDate
+        meaning.originDeviceID = "meaning-device"
+        state.updatedAt = metadataDate
+        state.originDeviceID = "review-device"
+        dailySet.updatedAt = metadataDate
+        dailySet.originDeviceID = "set-device"
+        item.updatedAt = metadataDate
+        item.originDeviceID = "item-device"
+        session.updatedAt = metadataDate
+        session.originDeviceID = "session-device"
+        attempt.updatedAt = metadataDate
+        attempt.originDeviceID = "attempt-device"
+        aggregate.updatedAt = metadataDate
+        aggregate.originDeviceID = "aggregate-device"
+        cache.updatedAt = metadataDate
+        cache.originDeviceID = "cache-device"
 
         sourceContext.insert(word)
         sourceContext.insert(meaning)
@@ -71,7 +90,7 @@ final class VocabSyncSnapshotTests: XCTestCase {
         )
         let destinationContext = try makeContext()
 
-        try VocabSyncSnapshotService.replaceLocalStore(with: snapshot, context: destinationContext)
+        try VocabSyncSnapshotService.replaceLocalStore(with: snapshot, context: destinationContext, syncMode: .localOnly)
 
         let restoredWords = try destinationContext.fetch(FetchDescriptor<WordRecord>())
         let restoredSets = try destinationContext.fetch(FetchDescriptor<DailySetRecord>())
@@ -80,9 +99,9 @@ final class VocabSyncSnapshotTests: XCTestCase {
         let restoredAggregates = try destinationContext.fetch(FetchDescriptor<AnonymousAggregateRecord>())
         let restoredCaches = try destinationContext.fetch(FetchDescriptor<MemoryAidCacheRecord>())
         XCTAssertEqual(restoredWords.map(\.term), ["commute"])
-        XCTAssertEqual(restoredWords.first?.meanings.map(\.text), ["통근하다"])
+        XCTAssertEqual(restoredWords.first?.allMeanings.map(\.text), ["통근하다"])
         XCTAssertEqual(restoredWords.first?.reviewState?.activePriority, 2)
-        XCTAssertEqual(restoredSets.first?.items.first?.wordID, word.id)
+        XCTAssertEqual(restoredSets.first?.allItems.first?.wordID, word.id)
         XCTAssertEqual(restoredSessions.first?.id, session.id)
         XCTAssertEqual(restoredSessions.first?.wordIDs, [word.id])
         XCTAssertEqual(restoredAttempts.first?.id, attempt.id)
@@ -91,6 +110,35 @@ final class VocabSyncSnapshotTests: XCTestCase {
         XCTAssertEqual(restoredAggregates.first?.correctCount, 1)
         XCTAssertEqual(restoredCaches.first?.wordID, word.id)
         XCTAssertEqual(restoredCaches.first?.markdown, "memory aid")
+        XCTAssertEqual(snapshot.words.first?.originDeviceID, "word-device")
+        XCTAssertEqual(snapshot.words.first?.meanings.first?.originDeviceID, "meaning-device")
+        XCTAssertEqual(snapshot.words.first?.reviewState?.originDeviceID, "review-device")
+        XCTAssertEqual(snapshot.dailySets.first?.originDeviceID, "set-device")
+        XCTAssertEqual(snapshot.dailySets.first?.items.first?.originDeviceID, "item-device")
+        XCTAssertEqual(snapshot.testSessions.first?.originDeviceID, "session-device")
+        XCTAssertEqual(snapshot.attempts.first?.originDeviceID, "attempt-device")
+        XCTAssertEqual(snapshot.anonymousAggregates.first?.originDeviceID, "aggregate-device")
+        XCTAssertEqual(snapshot.memoryAidCaches.first?.originDeviceID, "cache-device")
+        XCTAssertEqual(restoredWords.first?.originDeviceID, "word-device")
+        XCTAssertEqual(restoredWords.first?.reviewState?.originDeviceID, "review-device")
+        XCTAssertEqual(restoredAttempts.first?.originDeviceID, "attempt-device")
+        XCTAssertEqual(restoredAggregates.first?.originDeviceID, "aggregate-device")
+        XCTAssertEqual(restoredCaches.first?.originDeviceID, "cache-device")
+    }
+
+    func testSnapshotV2FingerprintIncludesRecordMergeMetadata() throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "metadata")
+        context.insert(word)
+        try context.save()
+        let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: context)
+        var changed = snapshot
+        changed.words[0].updatedAt = snapshot.words[0].updatedAt?.addingTimeInterval(1)
+        let changedFingerprint = try changed.contentFingerprint()
+        changed.syncMetadata?.contentFingerprint = changedFingerprint
+
+        XCTAssertNotEqual(try snapshot.contentFingerprint(), try changed.contentFingerprint())
+        XCTAssertNoThrow(try VocabSyncSnapshotService.validate(changed))
     }
 
     func testSnapshotRestoreReplacesExistingPhoneLocalData() throws {
@@ -124,7 +172,7 @@ final class VocabSyncSnapshotTests: XCTestCase {
             dailySets: []
         )
 
-        try VocabSyncSnapshotService.replaceLocalStore(with: snapshot, context: context)
+        try VocabSyncSnapshotService.replaceLocalStore(with: snapshot, context: context, syncMode: .localOnly)
 
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["fresh"])
     }
@@ -148,6 +196,67 @@ final class VocabSyncSnapshotTests: XCTestCase {
         XCTAssertTrue(snapshot.attempts.isEmpty)
         XCTAssertTrue(snapshot.anonymousAggregates.isEmpty)
         XCTAssertTrue(snapshot.memoryAidCaches.isEmpty)
+        XCTAssertNil(snapshot.syncMetadata)
+        XCTAssertTrue(snapshot.tombstones.isEmpty)
+    }
+
+    func testSnapshotV2RoundTripPreservesMetadataTombstonesAndDeletedMeaning() throws {
+        let source = try makeContext()
+        let word = WordRecord(term: "archive")
+        word.deletedAt = Date(timeIntervalSince1970: 21)
+        let meaning = MeaningRecord(text: "보관")
+        meaning.deletedAt = Date(timeIntervalSince1970: 20)
+        meaning.word = word
+        word.appendMeaning(meaning)
+        source.insert(word)
+        source.insert(meaning)
+        let set = DailySetRecord(seoulDay: "2026-07-14")
+        set.deletedAt = Date(timeIntervalSince1970: 22)
+        let item = DailySetItemRecord(orderIndex: 0, entryKind: "newHeadword", wordID: word.id)
+        item.deletedAt = Date(timeIntervalSince1970: 23)
+        item.set = set
+        set.appendItem(item)
+        source.insert(set)
+        source.insert(item)
+        source.insert(RecordTombstone(recordID: meaning.id, recordType: "MeaningRecord", deletedAt: meaning.deletedAt!))
+        try source.save()
+
+        let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: source, exportedAt: Date(timeIntervalSince1970: 30))
+        let destination = try makeContext()
+        try VocabSyncSnapshotService.replaceLocalStore(with: snapshot, context: destination, syncMode: .localOnly)
+
+        XCTAssertEqual(snapshot.formatVersion, 2)
+        XCTAssertNotNil(snapshot.syncMetadata)
+        XCTAssertFalse(try snapshot.contentFingerprint().isEmpty)
+        XCTAssertEqual(try destination.fetch(FetchDescriptor<CloudBootstrapRecord>()).count, 1)
+        XCTAssertEqual(try destination.fetch(FetchDescriptor<WordRecord>()).first?.deletedAt, word.deletedAt)
+        XCTAssertEqual(try destination.fetch(FetchDescriptor<MeaningRecord>()).first?.deletedAt, meaning.deletedAt)
+        XCTAssertEqual(try destination.fetch(FetchDescriptor<DailySetRecord>()).first?.deletedAt, set.deletedAt)
+        XCTAssertEqual(try destination.fetch(FetchDescriptor<DailySetItemRecord>()).first?.deletedAt, item.deletedAt)
+        XCTAssertEqual(try destination.fetch(FetchDescriptor<RecordTombstone>()).first?.recordID, meaning.id)
+    }
+
+    func testV1SnapshotIsRejectedForMirroredWholeReplace() throws {
+        let context = try makeContext()
+        let legacy = VocabSyncSnapshot(
+            formatVersion: 1,
+            exportedAt: Date(timeIntervalSince1970: 1),
+            words: [],
+            dailySets: []
+        )
+
+        XCTAssertThrowsError(
+            try VocabSyncSnapshotService.replaceLocalStore(
+                with: legacy,
+                context: context,
+                syncMode: .cloudKitPrivate
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? VocabSyncSnapshotService.SnapshotValidationError,
+                .mirroredWholeReplaceForbidden
+            )
+        }
     }
 
     func testInvalidSnapshotDoesNotDeleteExistingPhoneLocalData() throws {
@@ -177,7 +286,7 @@ final class VocabSyncSnapshotTests: XCTestCase {
             ]
         )
 
-        XCTAssertThrowsError(try VocabSyncSnapshotService.replaceLocalStore(with: invalidSnapshot, context: context)) { error in
+        XCTAssertThrowsError(try VocabSyncSnapshotService.replaceLocalStore(with: invalidSnapshot, context: context, syncMode: .localOnly)) { error in
             XCTAssertEqual(
                 error as? VocabSyncSnapshotService.SnapshotValidationError,
                 .missingWordForDailySetItem(missingWordID)
@@ -186,13 +295,13 @@ final class VocabSyncSnapshotTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["keep"])
     }
 
-    func testMigrationServiceCopiesFullFidelitySnapshotIntoMirroredContext() throws {
+    func testMigrationServiceCopiesFullFidelitySnapshotIntoMirroredContext() async throws {
         let localContext = try makeContext()
         let mirroredContext = try makeContext()
         let word = WordRecord(term: "mirror")
         let meaning = MeaningRecord(text: "거울")
         meaning.word = word
-        word.meanings.append(meaning)
+        word.appendMeaning(meaning)
         let session = TestSessionRecord(
             directionRaw: PracticeDirection.enToKo.rawValue,
             modeRaw: SessionMode.mixed.rawValue,
@@ -219,9 +328,11 @@ final class VocabSyncSnapshotTests: XCTestCase {
         localContext.insert(attempt)
         try localContext.save()
 
-        let report = try VocabStoreMigrationService.migrateLocalSnapshotToMirroredStore(
+        let report = try await VocabStoreMigrationService.claimAndMigrateLocalSnapshotToMirroredStore(
             localContext: localContext,
             mirroredContext: mirroredContext,
+            bootstrapToken: VocabBootstrapToken(),
+            claimService: ApprovingClaimService(),
             createCheckpoint: {
                 VocabLocalStoreCheckpoint(
                     directory: URL(fileURLWithPath: "/tmp/VocabStoreCheckpoint-test", isDirectory: true),
@@ -237,9 +348,35 @@ final class VocabSyncSnapshotTests: XCTestCase {
         XCTAssertFalse(report.contentFingerprint.isEmpty)
         XCTAssertEqual(try mirroredContext.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["mirror"])
         XCTAssertEqual(try mirroredContext.fetch(FetchDescriptor<AttemptRecord>()).first?.word?.id, word.id)
+        XCTAssertEqual(try mirroredContext.fetch(FetchDescriptor<CloudBootstrapRecord>()).count, 1)
     }
 
-    func testMigrationServiceBlocksWhenMirroredStoreAlreadyContainsData() throws {
+    func testMigrationServiceDoesNotSeedAgainAfterBootstrapMarker() async throws {
+        let localContext = try makeContext()
+        let mirroredContext = try makeContext()
+        localContext.insert(WordRecord(term: "local-source"))
+        mirroredContext.insert(CloudBootstrapRecord())
+        try localContext.save()
+        try mirroredContext.save()
+
+        do {
+            _ = try await VocabStoreMigrationService.claimAndMigrateLocalSnapshotToMirroredStore(
+                localContext: localContext,
+                mirroredContext: mirroredContext,
+                bootstrapToken: VocabBootstrapToken(),
+                claimService: DenyingClaimService(reason: .unknown),
+                createCheckpoint: {
+                    return VocabLocalStoreCheckpoint(directory: URL(fileURLWithPath: "/tmp/unused"), copiedFiles: [])
+                }
+            )
+            XCTFail("Expected an unknown server claim to block seed.")
+        } catch {
+            XCTAssertEqual(error as? VocabStoreMigrationError, .bootstrapClaimDenied(.unknown))
+        }
+        XCTAssertTrue(try mirroredContext.fetch(FetchDescriptor<WordRecord>()).isEmpty)
+    }
+
+    func testMigrationServiceBlocksWhenMirroredStoreAlreadyContainsData() async throws {
         let localContext = try makeContext()
         let mirroredContext = try makeContext()
         localContext.insert(WordRecord(term: "source"))
@@ -247,10 +384,12 @@ final class VocabSyncSnapshotTests: XCTestCase {
         try localContext.save()
         try mirroredContext.save()
 
-        XCTAssertThrowsError(
-            try VocabStoreMigrationService.migrateLocalSnapshotToMirroredStore(
+        do {
+            _ = try await VocabStoreMigrationService.claimAndMigrateLocalSnapshotToMirroredStore(
                 localContext: localContext,
                 mirroredContext: mirroredContext,
+                bootstrapToken: VocabBootstrapToken(),
+                claimService: ApprovingClaimService(),
                 createCheckpoint: {
                     VocabLocalStoreCheckpoint(
                         directory: URL(fileURLWithPath: "/tmp/VocabStoreCheckpoint-test", isDirectory: true),
@@ -258,7 +397,8 @@ final class VocabSyncSnapshotTests: XCTestCase {
                     )
                 }
             )
-        ) { error in
+            XCTFail("Expected non-empty mirrored store to block seed.")
+        } catch {
             guard case .mirroredStoreAlreadyContainsData(let counts) = error as? VocabStoreMigrationError else {
                 return XCTFail("Expected mirroredStoreAlreadyContainsData, got \(error)")
             }
@@ -269,8 +409,48 @@ final class VocabSyncSnapshotTests: XCTestCase {
 
     private func makeContext() throws -> ModelContext {
         let schema = Schema(VocabModelContainerFactory.schemaModels)
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         let container = try ModelContainer(for: schema, configurations: [configuration])
         return ModelContext(container)
+    }
+
+    private struct ApprovingClaimService: VocabBootstrapClaiming {
+        func claim(_ request: VocabBootstrapClaimRequest) async -> VocabBootstrapClaimResult {
+            .resumed(VocabBootstrapClaimApproval(
+                request: request,
+                state: .claimed,
+                recordName: VocabCloudKitBootstrapClaimService.recordName,
+                wasCreated: true
+            ))
+        }
+
+        func transition(
+            _ request: VocabBootstrapClaimRequest,
+            from expectedState: VocabBootstrapClaimState,
+            to newState: VocabBootstrapClaimState
+        ) async -> VocabBootstrapClaimResult {
+            .resumed(VocabBootstrapClaimApproval(
+                request: request,
+                state: newState,
+                recordName: VocabCloudKitBootstrapClaimService.recordName,
+                wasCreated: false
+            ))
+        }
+    }
+
+    private struct DenyingClaimService: VocabBootstrapClaiming {
+        let reason: VocabBootstrapClaimDenial
+
+        func claim(_ request: VocabBootstrapClaimRequest) async -> VocabBootstrapClaimResult {
+            .denied(reason)
+        }
+
+        func transition(
+            _ request: VocabBootstrapClaimRequest,
+            from expectedState: VocabBootstrapClaimState,
+            to newState: VocabBootstrapClaimState
+        ) async -> VocabBootstrapClaimResult {
+            .denied(reason)
+        }
     }
 }

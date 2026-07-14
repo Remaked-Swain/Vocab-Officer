@@ -53,7 +53,7 @@ final class MemoryAidServiceTests: XCTestCase {
         let word = WordRecord(term: "derive")
         let meaning = MeaningRecord(text: "끌어내다")
         meaning.word = word
-        word.meanings.append(meaning)
+        word.appendMeaning(meaning)
 
         let prompt = MemoryAidPromptBuilder.build(for: word)
 

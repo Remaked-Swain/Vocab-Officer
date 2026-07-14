@@ -60,7 +60,7 @@ private struct WordMemoryAidSheet: View {
                         .font(.title.weight(.semibold))
                     Text(word.term)
                         .font(.title2.weight(.bold))
-                    Text(word.meanings.map(\.text).joined(separator: ", "))
+                    Text(word.activeMeanings.map(\.text).joined(separator: ", "))
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }

@@ -53,7 +53,7 @@ struct WordLibrarySearch {
     private func fetchMeaningMatchedWordIDs(_ normalizedMeaning: String) throws -> [UUID] {
         let descriptor = FetchDescriptor<MeaningRecord>(
             predicate: #Predicate { meaning in
-                meaning.normalizedText.contains(normalizedMeaning)
+                meaning.deletedAt == nil && meaning.normalizedText.contains(normalizedMeaning)
             }
         )
         return try context.fetch(descriptor).compactMap { $0.word?.id }
