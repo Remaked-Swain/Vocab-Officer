@@ -99,21 +99,28 @@ struct VocabIOSRootView: View {
         }
 
         do {
-            let result = try await VocabCloudSnapshotSyncService().runBatchSyncIfReady(
+            let result = try await VocabCloudSnapshotSyncService(
+                localStoreCheckpointCreator: { now in
+                    try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint(now: now)
+                }
+            ).runBatchSyncIfReady(
                 context: modelContext,
                 readiness: readiness
             )
-            automaticSyncMessage = "\(reason): \(batchSyncMessage(for: result.action))"
+            automaticSyncMessage = "\(reason): \(batchSyncMessage(for: result))"
         } catch {
             automaticSyncMessage = "\(reason): \(userFacingSyncError(error))"
         }
     }
 
-    private func batchSyncMessage(for action: VocabCloudBatchSyncAction) -> String {
-        switch action {
+    private func batchSyncMessage(for result: VocabCloudBatchSyncResult) -> String {
+        switch result.action {
         case .uploadLocalSnapshot:
             return "iPhone 학습 변경 사항을 iCloud에 업로드했습니다."
         case .downloadCloudSnapshot:
+            if let checkpointDirectoryName = result.snapshotResult?.checkpointDirectoryName {
+                return "iCloud 변경 사항을 이 iPhone에 반영했습니다. 보호 사본: \(checkpointDirectoryName)"
+            }
             return "iCloud 변경 사항을 이 iPhone에 반영했습니다."
         case .alreadyInSync:
             return "이미 최신 동기화 상태입니다."
@@ -468,13 +475,21 @@ private struct VocabIOSSyncStatusView: View {
         defer { isImporting = false }
 
         do {
-            guard let result = try await VocabCloudSnapshotSyncService().replaceLocalStoreFromCloud(context: modelContext) else {
+            guard let result = try await VocabCloudSnapshotSyncService(
+                localStoreCheckpointCreator: { now in
+                    try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint(now: now)
+                }
+            ).replaceLocalStoreFromCloud(context: modelContext) else {
                 syncMessage = "iCloud에 아직 가져올 단어장 스냅샷이 없습니다. 먼저 Mac에서 업로드하세요."
                 syncMessageIsError = true
                 return
             }
             cloudSnapshotSummary = result
-            syncMessage = "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 가져왔습니다."
+            if let checkpointDirectoryName = result.checkpointDirectoryName {
+                syncMessage = "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 가져왔습니다. 보호 사본: \(checkpointDirectoryName)"
+            } else {
+                syncMessage = "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 가져왔습니다."
+            }
         } catch {
             syncMessage = userFacingSyncError(error)
             syncMessageIsError = true

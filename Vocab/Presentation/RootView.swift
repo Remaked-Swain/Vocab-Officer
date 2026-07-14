@@ -100,21 +100,28 @@ struct RootView: View {
         }
 
         do {
-            let result = try await VocabCloudSnapshotSyncService().runBatchSyncIfReady(
+            let result = try await VocabCloudSnapshotSyncService(
+                localStoreCheckpointCreator: { now in
+                    try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint(now: now)
+                }
+            ).runBatchSyncIfReady(
                 context: modelContext,
                 readiness: readiness
             )
-            automaticSyncMessage = "\(reason): \(batchSyncMessage(for: result.action))"
+            automaticSyncMessage = "\(reason): \(batchSyncMessage(for: result))"
         } catch {
             automaticSyncMessage = "\(reason): \(userFacingSyncError(error))"
         }
     }
 
-    private func batchSyncMessage(for action: VocabCloudBatchSyncAction) -> String {
-        switch action {
+    private func batchSyncMessage(for result: VocabCloudBatchSyncResult) -> String {
+        switch result.action {
         case .uploadLocalSnapshot:
             return "로컬 변경 사항을 iCloud에 업로드했습니다."
         case .downloadCloudSnapshot:
+            if let checkpointDirectoryName = result.snapshotResult?.checkpointDirectoryName {
+                return "iCloud 변경 사항을 이 Mac에 반영했습니다. 체크포인트: \(checkpointDirectoryName)"
+            }
             return "iCloud 변경 사항을 이 Mac에 반영했습니다."
         case .alreadyInSync:
             return "이미 최신 동기화 상태입니다."
