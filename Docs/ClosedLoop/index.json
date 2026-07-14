@@ -299,6 +299,23 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": []
+    },
+    {
+      "id": "CL-0014",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Automatic batch iCloud sync",
+      "date": "2026-07-14",
+      "tags": ["icloud", "sync", "ios", "cloudkit", "conflict-stop", "snapshot-cursor"],
+      "affectedPaths": ["Vocab/App/", "Vocab/Presentation/RootView.swift", "VocabIOS/", "VocabTests/App/", "Docs/iCloudIOSSyncPlan.md"],
+      "path": "Docs/ClosedLoop/records/CL-0014-automatic-batch-icloud-sync.md",
+      "references": ["CL-0001", "CL-0002", "CL-0007", "CL-0012"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["per-record merge, tombstone replay, CloudKit change-token sync and field-level conflict resolution remain future work"]
     }
   ]
 }

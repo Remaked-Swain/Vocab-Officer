@@ -25,6 +25,11 @@ private enum VocabIOSTab: String, CaseIterable, Identifiable {
 }
 
 struct VocabIOSRootView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var automaticSyncMessage: String?
+    @State private var automaticSyncIsRunning = false
+
     var body: some View {
         TabView {
             ForEach(VocabIOSTab.allCases) { tab in
@@ -36,6 +41,28 @@ struct VocabIOSRootView: View {
                     Label(tab.rawValue, systemImage: tab.symbol)
                 }
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if let automaticSyncMessage {
+                HStack(spacing: 8) {
+                    Image(systemName: automaticSyncIsRunning ? "arrow.triangle.2.circlepath.icloud" : "icloud")
+                    Text(automaticSyncMessage)
+                        .lineLimit(2)
+                    Spacer()
+                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.bar)
+            }
+        }
+        .task {
+            await runAutomaticCloudSync(reason: "앱 실행")
+        }
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await runAutomaticCloudSync(reason: "앱 활성화") }
         }
     }
 
@@ -51,6 +78,63 @@ struct VocabIOSRootView: View {
         case .settings:
             VocabIOSSyncStatusView()
         }
+    }
+
+    private func runAutomaticCloudSync(reason: String) async {
+        guard !automaticSyncIsRunning else { return }
+        automaticSyncIsRunning = true
+        automaticSyncMessage = "\(reason): iCloud 자동 동기화 조건을 확인하는 중입니다."
+        defer { automaticSyncIsRunning = false }
+
+        let accountState = await VocabCloudKitStatusService().accountStatus()
+        let conditions = await VocabCloudSyncNetworkMonitor.currentRuntimeConditions()
+        let readiness = VocabCloudSyncReadinessPolicy.current(
+            accountState: accountState,
+            runtimeConditions: conditions
+        )
+        guard readiness.isReadyForBatchSync else {
+            automaticSyncMessage = "\(reason): \(readiness.blockers.first?.message ?? "자동 동기화 조건이 충족되지 않았습니다.")"
+            return
+        }
+
+        do {
+            let result = try await VocabCloudSnapshotSyncService().runBatchSyncIfReady(
+                context: modelContext,
+                readiness: readiness
+            )
+            automaticSyncMessage = "\(reason): \(batchSyncMessage(for: result.action))"
+        } catch {
+            automaticSyncMessage = "\(reason): \(userFacingSyncError(error))"
+        }
+    }
+
+    private func batchSyncMessage(for action: VocabCloudBatchSyncAction) -> String {
+        switch action {
+        case .uploadLocalSnapshot:
+            return "iPhone 학습 변경 사항을 iCloud에 업로드했습니다."
+        case .downloadCloudSnapshot:
+            return "iCloud 변경 사항을 이 iPhone에 반영했습니다."
+        case .alreadyInSync:
+            return "이미 최신 동기화 상태입니다."
+        case .blocked:
+            return "현재 조건에서는 자동 동기화를 실행하지 않았습니다."
+        case .conflict:
+            return "이 iPhone과 iCloud가 모두 변경되어 자동 적용을 중단했습니다. 수동 확인이 필요합니다."
+        }
+    }
+
+    private func userFacingSyncError(_ error: Error) -> String {
+        if error is CKError {
+            return "iCloud 요청을 완료하지 못했습니다. 네트워크, iCloud 로그인, 앱 권한을 확인하세요."
+        }
+        if error is VocabSyncSnapshotService.SnapshotValidationError {
+            return "iCloud 단어장 데이터가 현재 앱에서 복원할 수 없는 형식입니다."
+        }
+        if let localizedError = error as? LocalizedError,
+           let description = localizedError.errorDescription {
+            return description
+        }
+        return "iCloud 자동 동기화 중 문제가 발생했습니다."
     }
 }
 
@@ -279,7 +363,7 @@ private struct VocabIOSSyncStatusView: View {
                 }
             }
 
-            Section("자동 iCloud 저장소 전환 조건") {
+            Section("자동 iCloud batch 동기화 조건") {
                 ForEach(readiness.blockers) { blocker in
                     VStack(alignment: .leading, spacing: 4) {
                         Text(blocker.title)
@@ -290,7 +374,7 @@ private struct VocabIOSSyncStatusView: View {
                     }
                     .padding(.vertical, 4)
                 }
-                Text("이 조건은 앱 저장소 자체를 iCloud 모드로 전환할 때의 안전 조건입니다. 위의 가져오기 버튼은 Mac에서 업로드한 수동 스냅샷을 이 iPhone 로컬 저장소에 복원합니다.")
+                Text("앱 실행 및 활성화 시점에 네트워크, 저전력 모드, iCloud 권한, 기준 스냅샷을 확인한 뒤 안전한 경우에만 자동 batch 동기화를 수행합니다. 위의 가져오기 버튼은 최초 기준점 생성 및 수동 복구용 스냅샷 가져오기입니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

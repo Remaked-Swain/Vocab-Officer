@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import SwiftData
 
 struct VocabSyncSnapshot: Codable, Equatable {
@@ -52,6 +53,16 @@ struct VocabSyncSnapshot: Codable, Equatable {
         var orderIndex: Int
         var entryKind: String
         var wordID: UUID
+    }
+}
+
+extension VocabSyncSnapshot {
+    func contentFingerprint() throws -> String {
+        var normalized = self
+        normalized.exportedAt = Date(timeIntervalSince1970: 0)
+        let data = try JSONEncoder.vocabSnapshotEncoder.encode(normalized)
+        let digest = SHA256.hash(data: data)
+        return digest.map { String(format: "%02x", $0) }.joined()
     }
 }
 

@@ -53,6 +53,82 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).map(\.term), ["local"])
     }
 
+    func testBatchSyncUploadsWhenOnlyLocalChangedAfterBaseline() async throws {
+        let context = try makeContext()
+        let baseline = makeSnapshot(term: "baseline", meaning: "기준")
+        let store = MemorySnapshotStore(snapshot: baseline)
+        let stateStore = MemoryBatchSyncStateStore()
+        stateStore.saveCursor(try cursor(for: baseline))
+        let service = VocabCloudSnapshotSyncService(store: store, stateStore: stateStore)
+        let word = WordRecord(term: "local")
+        context.insert(word)
+        try context.save()
+
+        let plan = try await service.planBatchSync(context: context)
+
+        XCTAssertEqual(plan.action, .uploadLocalSnapshot)
+    }
+
+    func testBatchSyncDownloadsWhenOnlyCloudChangedAfterBaseline() async throws {
+        let context = try makeContext()
+        let baseline = makeSnapshot(term: "baseline", meaning: "기준")
+        let cloud = makeSnapshot(term: "cloud", meaning: "구름")
+        let store = MemorySnapshotStore(snapshot: cloud)
+        let stateStore = MemoryBatchSyncStateStore()
+        stateStore.saveCursor(try cursor(for: baseline))
+        let service = VocabCloudSnapshotSyncService(store: store, stateStore: stateStore)
+        try VocabSyncSnapshotService.replaceLocalStore(with: baseline, context: context)
+
+        let plan = try await service.planBatchSync(context: context)
+
+        XCTAssertEqual(plan.action, .downloadCloudSnapshot)
+    }
+
+    func testBatchSyncConflictsWhenLocalAndCloudBothChangedAfterBaseline() async throws {
+        let context = try makeContext()
+        let baseline = makeSnapshot(term: "baseline", meaning: "기준")
+        let cloud = makeSnapshot(term: "cloud", meaning: "구름")
+        let store = MemorySnapshotStore(snapshot: cloud)
+        let stateStore = MemoryBatchSyncStateStore()
+        stateStore.saveCursor(try cursor(for: baseline))
+        let service = VocabCloudSnapshotSyncService(store: store, stateStore: stateStore)
+        let word = WordRecord(term: "local")
+        context.insert(word)
+        try context.save()
+
+        let plan = try await service.planBatchSync(context: context)
+
+        XCTAssertEqual(plan.action, .conflict)
+    }
+
+    func testBatchSyncRequiresReadinessBeforeMutatingStore() async throws {
+        let context = try makeContext()
+        let snapshot = makeSnapshot(term: "cloud", meaning: "구름")
+        let store = MemorySnapshotStore(snapshot: snapshot)
+        let stateStore = MemoryBatchSyncStateStore()
+        let service = VocabCloudSnapshotSyncService(store: store, stateStore: stateStore)
+        let readiness = VocabCloudSyncReadiness(
+            accountState: .available,
+            allowsCloudKitRuntime: true,
+            hasCloudKitEntitlement: true,
+            isSchemaCloudKitReady: true,
+            hasConfirmedFirstUpload: true,
+            runtimeConditions: VocabCloudSyncRuntimeConditions(
+                hasSyncBaseline: false,
+                isNetworkAvailable: true,
+                isNetworkConstrained: false,
+                isLowPowerModeEnabled: false,
+                isUserInitiated: false
+            )
+        )
+
+        let result = try await service.runBatchSyncIfReady(context: context, readiness: readiness)
+
+        XCTAssertEqual(result.action, .blocked)
+        XCTAssertNil(stateStore.cursor)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<WordRecord>()).isEmpty)
+    }
+
     private func makeContext() throws -> ModelContext {
         let schema = Schema(VocabModelContainerFactory.schemaModels)
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
@@ -87,6 +163,15 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
             dailySets: []
         )
     }
+
+    private func cursor(for snapshot: VocabSyncSnapshot) throws -> VocabCloudBatchSyncCursor {
+        let metadata = try VocabCloudSnapshotMetadata(snapshot: snapshot)
+        return VocabCloudBatchSyncCursor(
+            snapshotFingerprint: metadata.fingerprint,
+            cloudExportedAt: metadata.exportedAt,
+            syncedAt: Date(timeIntervalSince1970: 400)
+        )
+    }
 }
 
 private final class MemorySnapshotStore: VocabCloudSnapshotStoring {
@@ -102,5 +187,17 @@ private final class MemorySnapshotStore: VocabCloudSnapshotStoring {
 
     func load() async throws -> VocabSyncSnapshot? {
         snapshot
+    }
+}
+
+private final class MemoryBatchSyncStateStore: VocabCloudBatchSyncStateStoring {
+    var cursor: VocabCloudBatchSyncCursor?
+
+    func loadCursor() -> VocabCloudBatchSyncCursor? {
+        cursor
+    }
+
+    func saveCursor(_ cursor: VocabCloudBatchSyncCursor) {
+        self.cursor = cursor
     }
 }

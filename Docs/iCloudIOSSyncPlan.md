@@ -172,6 +172,43 @@ Profile and sign the installed app with the CloudKit entitlement. SwiftData unit
 tests should continue to use `CODE_SIGNING_ALLOWED=NO` when they only verify
 local in-memory model behavior.
 
+## Automatic Batch Bidirectional Sync Policy
+
+Automatic iCloud sync is batch-based and snapshot-cursor driven. It is not
+real-time record mirroring. The app keeps local SwiftData as the offline-first
+store and uses CloudKit as an eventual transport when runtime conditions are
+safe.
+
+Automatic sync may run on app launch and foreground activation only after these
+conditions pass:
+
+- iCloud account is available.
+- The signed app has the `iCloud.com.swainyun.Vocab` CloudKit entitlement.
+- A previous manual upload or import created a shared baseline cursor.
+- Network is available.
+- Low Power Mode is off for non-user-initiated automatic sync.
+- Constrained network mode is off for non-user-initiated automatic sync.
+
+The first automatic implementation uses the existing snapshot transport as a
+guarded batch. It stores compact metadata with a content fingerprint in the
+CloudKit snapshot record and stores a local cursor after successful upload or
+download. On the next automatic run:
+
+- local changed, cloud unchanged from cursor: upload local snapshot.
+- cloud changed, local unchanged from cursor: download cloud snapshot.
+- both unchanged: skip.
+- both changed from cursor: stop and report conflict; do not overwrite either
+  side automatically.
+
+This prevents the main data-loss case where an iPhone learning session and a
+Mac authoring session both change data before sync. The current stage still
+does not provide per-record merge, tombstone replay, CloudKit change-token
+sync, or field-level conflict resolution. Those remain required before removing
+the conflict stop or treating this as full live bidirectional sync.
+
+The manual snapshot upload/import UI remains the fallback and recovery path.
+It is also how the initial shared baseline is created.
+
 ## Developer Program Expiration Policy
 
 Developer Program expiration should not erase the vocabulary database by itself.

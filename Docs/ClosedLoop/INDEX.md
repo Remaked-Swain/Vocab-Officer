@@ -23,6 +23,7 @@ only when its scope applies to the current change.
 | CL-0011 | active | 2026-06-24 | OCR intake, input IO and performance refactor | [OCR intake, input IO and performance refactor](records/CL-0011-ocr-intake-input-io-performance-refactor.md) | retain while OCR intake, paste intake or performance acceptance exists |
 | CL-0012 | active | 2026-06-28 | JIT role registration, ordered identity/hash handoffs, scoped verification and validated Recorder close | [Sequential agent handoffs](records/CL-0012-sequential-agent-handoffs.md) | retain while Codex Closed-Loop workflow exists |
 | CL-0013 | active | 2026-06-28 | `Vocab/Presentation/LibraryViews.swift` and review UI | [Review grid cards](records/CL-0013-review-grid-cards.md) | retain while review UI exists |
+| CL-0014 | active | 2026-07-14 | automatic batch iCloud sync, snapshot cursor and conflict stop | [Automatic batch iCloud sync](records/CL-0014-automatic-batch-icloud-sync.md) | retain while iCloud sync or migration behavior exists |
 
 ## Load Rules
 
@@ -50,6 +51,8 @@ only when its scope applies to the current change.
 - Any future task that uses agents or edits the app must apply `CL-0007`.
   Reading its full record is required when changing session bootstrap, sandbox
   handling, root-path handling or implementation tooling rules.
+- iCloud, iPhone sync, CloudKit, migration, cross-device data-loss or sync
+  conflict work must load `CL-0014` and `Docs/iCloudIOSSyncPlan.md`.
 - Superseded or archived records are read only when investigating regression,
   migration history or a stated dependency.
 - `index.json` is the machine-readable companion for validation tooling only.
