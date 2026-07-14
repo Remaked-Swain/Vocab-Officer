@@ -66,20 +66,32 @@ enum VocabModelContainerFactory {
             return ModelConfiguration(
                 "VocabLocal",
                 schema: Schema(schemaModels),
-                url: try storeURL(),
+                url: try localStoreURL(),
                 cloudKitDatabase: .none
             )
         case .cloudKitPrivate:
             return ModelConfiguration(
                 "VocabCloud",
                 schema: Schema(schemaModels),
-                url: try storeURL(),
+                url: try mirroredStoreURL(),
                 cloudKitDatabase: .private(VocabSyncMode.cloudKitContainerIdentifier)
             )
         }
     }
 
+    static func localStoreURL() throws -> URL {
+        try storeURL(named: "Vocab.store", migrateLegacyDefaultStore: true)
+    }
+
+    static func mirroredStoreURL() throws -> URL {
+        try storeURL(named: "VocabMirrored.store", migrateLegacyDefaultStore: false)
+    }
+
     static func storeURL() throws -> URL {
+        try localStoreURL()
+    }
+
+    private static func storeURL(named storeName: String, migrateLegacyDefaultStore: Bool) throws -> URL {
         let fileManager = FileManager.default
         let appSupport = try fileManager.url(
             for: .applicationSupportDirectory,
@@ -92,8 +104,10 @@ enum VocabModelContainerFactory {
             try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
-        let destination = directory.appendingPathComponent("Vocab.store")
-        try migrateLegacyStoreIfNeeded(to: destination, fileManager: fileManager, appSupport: appSupport)
+        let destination = directory.appendingPathComponent(storeName)
+        if migrateLegacyDefaultStore {
+            try migrateLegacyStoreIfNeeded(to: destination, fileManager: fileManager, appSupport: appSupport)
+        }
         return destination
     }
 

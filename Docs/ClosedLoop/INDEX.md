@@ -24,6 +24,7 @@ only when its scope applies to the current change.
 | CL-0013 | active | 2026-06-28 | `Vocab/Presentation/LibraryViews.swift` and review UI | [Review grid cards](records/CL-0013-review-grid-cards.md) | retain while review UI exists |
 | CL-0014 | active | 2026-07-14 | automatic batch iCloud sync, snapshot cursor and conflict stop | [Automatic batch iCloud sync](records/CL-0014-automatic-batch-icloud-sync.md) | retain while iCloud sync or migration behavior exists |
 | CL-0015 | active | 2026-07-14 | Director-gated Closed-Loop use, use/non-use criteria, main-agent orchestration boundary and role lifecycle | [Director-gated Closed-Loop use](records/CL-0015-director-gated-closed-loop.md) | retain while Codex Closed-Loop workflow exists |
+| CL-0016 | active | 2026-07-14 | per-record SwiftData CloudKit mirroring, store separation and migration safety | [Per-record CloudKit mirroring migration](records/CL-0016-per-record-cloudkit-mirroring.md) | retain while per-record CloudKit mirroring or migration behavior exists |
 
 ## Load Rules
 
@@ -55,6 +56,9 @@ only when its scope applies to the current change.
   handling, root-path handling or implementation tooling rules.
 - iCloud, iPhone sync, CloudKit, migration, cross-device data-loss or sync
   conflict work must load `CL-0014` and `Docs/iCloudIOSSyncPlan.md`.
+- Per-record CloudKit mirroring, mirrored-store migration, CloudKit-backed
+  SwiftData schema compatibility or rollback work must also load `CL-0016` and
+  `Docs/PerRecordCloudKitMirroringPlan.md`.
 - Superseded or archived records are read only when investigating regression,
   migration history or a stated dependency.
 - `index.json` is the machine-readable companion for validation tooling only.
