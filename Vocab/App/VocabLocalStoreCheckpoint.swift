@@ -17,6 +17,25 @@ enum VocabLocalStoreCheckpointError: LocalizedError, Equatable {
 }
 
 enum VocabLocalStoreCheckpointStore {
+    static func createDefaultStoreCheckpoint(now: Date = Date()) throws -> VocabLocalStoreCheckpoint {
+        try createCheckpoint(
+            storeURL: try VocabModelContainerFactory.storeURL(),
+            destinationRoot: try defaultDestinationRoot(),
+            now: now
+        )
+    }
+
+    static func defaultDestinationRoot() throws -> URL {
+        try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        .appendingPathComponent("Vocab", isDirectory: true)
+        .appendingPathComponent("SyncCheckpoints", isDirectory: true)
+    }
+
     static func createCheckpoint(
         storeURL: URL,
         destinationRoot: URL,
