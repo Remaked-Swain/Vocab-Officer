@@ -332,7 +332,7 @@ struct SettingsView: View {
 
     private var canUploadSnapshot: Bool {
         cloudKitState.isReadyForSync
-            && VocabCloudEntitlementStatus.hasRequiredCloudKitContainer()
+            && VocabCloudEntitlementStatus.allowsCloudKitRequests()
             && !isUploadingSnapshot
     }
 

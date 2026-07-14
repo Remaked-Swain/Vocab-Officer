@@ -160,7 +160,7 @@ enum VocabCloudSyncReadinessPolicy {
     static func current(
         accountState: VocabCloudKitAccountState,
         runtimeConditions: VocabCloudSyncRuntimeConditions = .automaticDefault,
-        hasCloudKitEntitlement: Bool = VocabCloudEntitlementStatus.hasRequiredCloudKitContainer()
+        hasCloudKitEntitlement: Bool = VocabCloudEntitlementStatus.allowsCloudKitRequests()
     ) -> VocabCloudSyncReadiness {
         VocabCloudSyncReadiness(
             accountState: accountState,

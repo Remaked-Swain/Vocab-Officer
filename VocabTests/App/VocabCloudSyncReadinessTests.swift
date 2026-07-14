@@ -41,6 +41,38 @@ final class VocabCloudSyncReadinessTests: XCTestCase {
         XCTAssertFalse(readiness.blockers.contains(.syncBaselineRequired))
     }
 
+    func testUnavailableRuntimeEntitlementCheckDoesNotBlockReadiness() {
+        let readiness = VocabCloudSyncReadinessPolicy.current(
+            accountState: .available,
+            runtimeConditions: readyRuntimeConditions(),
+            hasCloudKitEntitlement: VocabCloudEntitlementStatus.allowsCloudKitRequests(
+                containerIdentifier: "iCloud.com.example.Vocab",
+                entitlementValue: { _ in nil },
+                infoDictionaryValue: { _ in false },
+                canReadSignedEntitlements: false
+            )
+        )
+
+        XCTAssertTrue(readiness.isReadyForBatchSync)
+        XCTAssertFalse(readiness.blockers.contains(.entitlementPending))
+    }
+
+    func testMissingEntitlementStillBlocksWhenRuntimeCheckIsAvailable() {
+        let readiness = VocabCloudSyncReadinessPolicy.current(
+            accountState: .available,
+            runtimeConditions: readyRuntimeConditions(),
+            hasCloudKitEntitlement: VocabCloudEntitlementStatus.allowsCloudKitRequests(
+                containerIdentifier: "iCloud.com.example.Vocab",
+                entitlementValue: { _ in nil },
+                infoDictionaryValue: { _ in false },
+                canReadSignedEntitlements: true
+            )
+        )
+
+        XCTAssertFalse(readiness.isReadyForBatchSync)
+        XCTAssertTrue(readiness.blockers.contains(.entitlementPending))
+    }
+
     func testUnknownAccountStateRemainsBlockedUntilUserChecksICloud() {
         let readiness = VocabCloudSyncReadinessPolicy.current(
             accountState: .unknown,
