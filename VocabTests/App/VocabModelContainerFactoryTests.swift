@@ -113,6 +113,14 @@ final class VocabModelContainerFactoryTests: XCTestCase {
             word.originDeviceID = "test-device"
             context.insert(word)
             context.insert(RecordTombstone(recordID: word.id, recordType: "WordRecord"))
+            context.insert(BootstrapExportReceipt(
+                requestID: UUID(),
+                fingerprint: "persistent-fingerprint",
+                storeUUID: "persistent-store",
+                transactionCommittedAt: Date(timeIntervalSince1970: 123),
+                probeGeneration: 2,
+                nonce: UUID()
+            ))
             try context.save()
         }
 
@@ -123,6 +131,10 @@ final class VocabModelContainerFactoryTests: XCTestCase {
         let context = ModelContext(reopened)
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).first?.originDeviceID, "test-device")
         XCTAssertEqual(try context.fetch(FetchDescriptor<RecordTombstone>()).first?.recordType, "WordRecord")
+        let receipt = try XCTUnwrap(context.fetch(FetchDescriptor<BootstrapExportReceipt>()).first)
+        XCTAssertEqual(receipt.fingerprint, "persistent-fingerprint")
+        XCTAssertEqual(receipt.storeUUID, "persistent-store")
+        XCTAssertEqual(receipt.probeGeneration, 2)
     }
 
     func testExactLegacyProductionSchemaMigratesThroughFactoryAndReopens() throws {

@@ -157,6 +157,21 @@ The fixed private claim persists through `claimed`, `seeding` and `completed`
 states. Only the exact `(claimID, requestID, ownerDeviceID, sourceFingerprint,
 schemaVersion)` tuple may resume partial UUID-based import; foreign ownership
 and unconfirmed timeout outcomes fail closed, and the claim is never deleted.
+The Mac keeps that claim at `seeding` after the local mirrored save. It changes
+to `completed` only after a successful `NSPersistentCloudKitContainer` export
+event for the same persistent store that started after the bootstrap save.
+Export errors and timeouts never complete the claim or switch the active mode.
+The observer is installed before the seed/probe save. A persisted export receipt
+binds the request ID and source fingerprint to the mirrored store UUID and save
+boundary. Resume creates a durable generation/nonce probe update, so an old or
+unrelated successful export cannot complete the fixed claim.
+
+iPhone Settings combines iCloud account status, fixed claim status and local
+hydration. It distinguishes Mac migration not started, Mac upload in progress,
+and completed upload whose metadata import is delayed. The last case becomes an
+explicit retryable diagnostic after a bounded grace period. Manual refresh and
+successful import events reevaluate immediately; foreground polling is limited
+to awaiting/hydrating states and stops in the background.
 
 This keeps the existing macOS store local-first while avoiding premature
 migration of the production SwiftData schema into CloudKit. The upload/download

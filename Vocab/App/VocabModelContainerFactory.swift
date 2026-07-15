@@ -66,6 +66,7 @@ enum VocabModelContainerFactory {
         AnonymousAggregateRecord.self,
         MemoryAidCacheRecord.self,
         CloudBootstrapRecord.self,
+        BootstrapExportReceipt.self,
         RecordTombstone.self
     ]
 
@@ -80,7 +81,7 @@ enum VocabModelContainerFactory {
     private static func makeContainer(syncMode: VocabSyncMode, storeURL: URL?) throws -> ModelContainer {
         let configuration = try makeConfiguration(syncMode: syncMode, storeURL: storeURL)
         return try ModelContainer(
-            for: Schema(VocabSchemaV2.models),
+            for: Schema(VocabSchemaV3.models),
             migrationPlan: VocabSchemaMigrationPlan.self,
             configurations: configuration
         )

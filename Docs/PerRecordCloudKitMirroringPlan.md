@@ -80,12 +80,22 @@ The mode flag changes only after a migration transaction completes:
    the exact same tuple, resume `claimed` or `seeding` work without deleting
    existing mirrored records. A foreign tuple fails closed.
 7. Import snapshot v2 by UUID, save, verify the complete fingerprint and
-   expected ID sets, then transition `claimed -> seeding -> completed`.
-8. In `seeding`, supplement only missing UUID records and verify again. In
+   expected ID sets, then transition `claimed -> seeding`. Keep the bootstrap
+   mirrored container alive while export is pending.
+8. Register the export observer before the seed/probe save. Persist a
+   `BootstrapExportReceipt` containing request ID, source fingerprint, store
+   UUID, transaction boundary, probe generation, state and nonce in the same
+   save as the first import. A later no-op save never replaces that boundary.
+9. On `seeding` resume, increment generation, replace the nonce and persist that
+   receipt update as a durable probe transaction. Accept only a clean successful
+   export for the same store/request/fingerprint whose start is on or after the
+   active receipt boundary. Export error or timeout leaves the claim at
+   `seeding`.
+10. Only after that export succeeds, transition `seeding -> completed`. In
    `completed`, verify and return success without another import.
-9. Reconcile tombstones and replay canonical Attempts only after completion.
-10. Persist `.cloudKitPrivate`.
-11. Ask the user to relaunch, or rebuild the root container through an app-level
+11. Reconcile tombstones and replay canonical Attempts only after completion.
+12. Persist `.cloudKitPrivate` and show completion only after server completion.
+13. Ask the user to relaunch, or rebuild the root container through an app-level
    restart flow.
 
 Rollback is just switching the mode flag back to `.localOnly`. The local store
@@ -197,6 +207,24 @@ Implemented conflict shape:
   verifies and returns without reseeding. Foreign ownership fails closed.
 - A local UI UUID token is only confirmation input. It cannot authorize import
   without matching server ownership and state.
+- Local SwiftData save is not proof of CloudKit upload. The claim remains
+  `seeding` until a successful, matching-store export event is observed. The
+  Settings task strongly retains the bootstrap `ModelContainer` until export
+  success or an explicit export error/timeout.
+- The receipt model is introduced by schema V3 through a lightweight V2-to-V3
+  migration; existing V1/V2 stores are opened in place and are never reset.
+
+### Phase 7: iPhone Hydration Diagnostics (implemented)
+
+- iPhone Settings queries account state, the fixed server claim and local
+  hydration together. Missing claim means Mac first migration is required;
+  `claimed`/`seeding` means Mac upload is in progress; `completed` without local
+  metadata means import is delayed.
+- Completed-without-metadata has a bounded grace period and becomes an explicit
+  diagnostic error with a manual recheck action instead of waiting forever.
+- Manual refresh reevaluates all three inputs. Successful CloudKit import events
+  refresh immediately. Polling runs only while the app is foreground-active and
+  hydration is `awaitingBootstrapMetadata` or `hydrating`.
 
 ## Verification Gates
 
@@ -204,15 +232,15 @@ Implemented conflict shape:
 - Unit tests for migration fingerprint/relationship integrity: passed.
 - Unit tests for blocking migration into a non-empty mirrored store: passed.
 - Unit tests for checkpoint restore rehearsal: passed.
-- Fourth-pass focused claim, exact legacy migration, hydration,
-  replay-conflict, snapshot-v2 and automatic-snapshot tests: 35 passed,
-  0 failures (`/tmp/VocabFourthFocused`).
+- Receipt/export-gate focused claim, container migration, hydration and snapshot
+  tests: 42 passed, 0 failures (`/tmp/VocabReceiptFocused`); the final
+  deterministic export-gate suite passed 12 of 12 tests.
 - macOS changed-file test suite: passed.
-- Final macOS XCTest: 155 passed, 3 skips, 0 failures
-  (`/tmp/VocabFourthFinalMacTests`). The skips are two
+- Final macOS XCTest: 163 passed, 3 skips, 0 failures
+  (`/tmp/VocabReceiptFinalFullMac`). The skips are two
   performance gates and the opt-in CloudKit integration test.
 - Final iOS simulator build: passed with signing disabled
-  (`/tmp/VocabFourthFinalIOS`).
+  (`/tmp/VocabReceiptFinalIOS`).
 - Signed Mac Debug build: passed with an Apple Development identity
   (`/tmp/VocabFourthFinalSignedMac`). Strict deep verification passed, and the
   embedded entitlement dump and generated `.xcent` carry

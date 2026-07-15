@@ -4,6 +4,208 @@ import XCTest
 
 @MainActor
 final class VocabBootstrapClaimTests: XCTestCase {
+    func testObserverRegistersBeforeImportAndInitialReceiptBoundaryIsNotOverwritten() async throws {
+        let local = try makeContext()
+        let mirrored = try makeContext()
+        seedLocalGraph(local)
+        let token = VocabBootstrapToken()
+        let service = FakeClaimService()
+        let firstTrace = FakeExportTrace()
+
+        do {
+            _ = try await migrate(
+                local: local,
+                mirrored: mirrored,
+                token: token,
+                service: service,
+                exportResult: .failure(VocabCloudExportWaitError.timedOut),
+                trace: firstTrace,
+                beforeImport: { XCTAssertTrue(firstTrace.didBeginWaiting) }
+            )
+            XCTFail("The first export wait must time out.")
+        } catch VocabCloudExportWaitError.timedOut {}
+
+        let firstReceipt = try XCTUnwrap(mirrored.fetch(FetchDescriptor<BootstrapExportReceipt>()).first)
+        let firstBoundary = try XCTUnwrap(firstTrace.boundaries.first)
+        XCTAssertEqual(firstTrace.boundaries.count, 1)
+        XCTAssertEqual(firstReceipt.probeGeneration, 0)
+        XCTAssertEqual(firstReceipt.transactionCommittedAt, firstBoundary.transactionCommittedAt)
+        XCTAssertEqual(firstReceipt.nonce, firstBoundary.nonce)
+        XCTAssertEqual(firstReceipt.state, "awaitingExport")
+
+        let secondTrace = FakeExportTrace()
+        do {
+            _ = try await migrate(
+                local: local,
+                mirrored: mirrored,
+                token: token,
+                service: service,
+                exportResult: .failure(VocabCloudExportWaitError.timedOut),
+                trace: secondTrace
+            )
+            XCTFail("The resume export wait must time out.")
+        } catch VocabCloudExportWaitError.timedOut {}
+
+        let resumedReceipt = try XCTUnwrap(mirrored.fetch(FetchDescriptor<BootstrapExportReceipt>()).first)
+        XCTAssertEqual(resumedReceipt.probeGeneration, 1)
+        XCTAssertNotEqual(resumedReceipt.nonce, firstBoundary.nonce)
+        XCTAssertGreaterThanOrEqual(resumedReceipt.transactionCommittedAt, firstBoundary.transactionCommittedAt)
+        XCTAssertEqual(try mirrored.fetchCount(FetchDescriptor<BootstrapExportReceipt>()), 1)
+    }
+
+    func testExportEventPolicyRequiresMatchingBoundaryStoreReceiptAndCleanSuccess() {
+        let requestID = UUID()
+        let boundary = VocabBootstrapExportBoundary(
+            requestID: requestID,
+            fingerprint: "fingerprint",
+            storeUUID: "store",
+            transactionCommittedAt: Date(timeIntervalSince1970: 100),
+            exportNotBefore: Date(timeIntervalSince1970: 100),
+            probeGeneration: 3,
+            nonce: UUID()
+        )
+        let success = VocabCloudExportEventEvidence(
+            storeIdentifier: "store",
+            startDate: Date(timeIntervalSince1970: 101),
+            succeeded: true,
+            errorDescription: nil
+        )
+        func decision(
+            _ event: VocabCloudExportEventEvidence = success,
+            request: UUID = requestID,
+            fingerprint: String = "fingerprint",
+            receiptMatches: Bool = true
+        ) -> VocabCloudExportEventDecision {
+            VocabCloudExportEventPolicy.evaluate(
+                event,
+                boundary: boundary,
+                expectedRequestID: request,
+                expectedFingerprint: fingerprint,
+                expectedStoreIdentifier: "store",
+                receiptMatches: receiptMatches
+            )
+        }
+
+        XCTAssertEqual(decision(), .success)
+        XCTAssertEqual(decision(request: UUID()), .ignore)
+        XCTAssertEqual(decision(fingerprint: "other"), .ignore)
+        XCTAssertEqual(decision(receiptMatches: false), .ignore)
+        XCTAssertEqual(decision(VocabCloudExportEventEvidence(
+            storeIdentifier: "other",
+            startDate: success.startDate,
+            succeeded: true,
+            errorDescription: nil
+        )), .ignore)
+        XCTAssertEqual(decision(VocabCloudExportEventEvidence(
+            storeIdentifier: "store",
+            startDate: Date(timeIntervalSince1970: 99),
+            succeeded: true,
+            errorDescription: nil
+        )), .ignore)
+        XCTAssertEqual(decision(VocabCloudExportEventEvidence(
+            storeIdentifier: "store",
+            startDate: success.startDate,
+            succeeded: true,
+            errorDescription: "injected"
+        )), .failure("injected"))
+    }
+
+    func testExportEventGateDeterministicallyQueuesEventUntilBoundaryIsCommitted() {
+        let requestID = UUID()
+        let boundary = VocabBootstrapExportBoundary(
+            requestID: requestID,
+            fingerprint: "fingerprint",
+            storeUUID: "store",
+            transactionCommittedAt: Date(timeIntervalSince1970: 100),
+            exportNotBefore: Date(timeIntervalSince1970: 100),
+            probeGeneration: 0,
+            nonce: UUID()
+        )
+        let gate = VocabCloudExportEventGate(
+            requestID: requestID,
+            fingerprint: "fingerprint",
+            storeIdentifier: "store",
+            receiptMatches: { $0 == boundary }
+        )
+        let event = VocabCloudExportEventEvidence(
+            storeIdentifier: "store",
+            startDate: Date(timeIntervalSince1970: 101),
+            succeeded: true,
+            errorDescription: nil
+        )
+
+        XCTAssertNil(gate.receive(event))
+        XCTAssertEqual(gate.setCommittedBoundary(boundary), .success)
+
+        let wrongBoundary = VocabBootstrapExportBoundary(
+            requestID: UUID(),
+            fingerprint: boundary.fingerprint,
+            storeUUID: boundary.storeUUID,
+            transactionCommittedAt: boundary.transactionCommittedAt,
+            exportNotBefore: boundary.exportNotBefore,
+            probeGeneration: boundary.probeGeneration,
+            nonce: boundary.nonce
+        )
+        XCTAssertNil(gate.setCommittedBoundary(wrongBoundary))
+    }
+
+    func testLocalSaveLeavesClaimSeedingUntilExportSucceeds() async throws {
+        let local = try makeContext()
+        let mirrored = try makeContext()
+        seedLocalGraph(local)
+        let service = FakeClaimService()
+
+        do {
+            _ = try await migrate(
+                local: local,
+                mirrored: mirrored,
+                token: VocabBootstrapToken(),
+                service: service,
+                exportResult: .failure(VocabCloudExportWaitError.timedOut)
+            )
+            XCTFail("Export timeout must stop completion.")
+        } catch VocabCloudExportWaitError.timedOut {}
+
+        let state = await service.currentState()
+        XCTAssertEqual(state, .seeding)
+        try assertSingleGraph(mirrored)
+    }
+
+    func testSuccessfulExportCompletesClaim() async throws {
+        let local = try makeContext()
+        let mirrored = try makeContext()
+        seedLocalGraph(local)
+        let service = FakeClaimService()
+
+        _ = try await migrate(local: local, mirrored: mirrored, token: VocabBootstrapToken(), service: service)
+
+        let state = await service.currentState()
+        XCTAssertEqual(state, .completed)
+    }
+
+    func testExportErrorDoesNotCompleteClaim() async throws {
+        let local = try makeContext()
+        let mirrored = try makeContext()
+        seedLocalGraph(local)
+        let service = FakeClaimService()
+        let exportError = VocabCloudExportWaitError.exportFailed("injected")
+
+        do {
+            _ = try await migrate(
+                local: local,
+                mirrored: mirrored,
+                token: VocabBootstrapToken(),
+                service: service,
+                exportResult: .failure(exportError)
+            )
+            XCTFail("Export error must stop completion.")
+        } catch {
+            XCTAssertEqual(error as? VocabCloudExportWaitError, exportError)
+        }
+        let state = await service.currentState()
+        XCTAssertEqual(state, .seeding)
+    }
+
     func testDeniedClaimsNeverSeed() async throws {
         for reason in [
             VocabBootstrapClaimDenial.competing,
@@ -214,6 +416,8 @@ final class VocabBootstrapClaimTests: XCTestCase {
         mirrored: ModelContext,
         token: VocabBootstrapToken,
         service: FakeClaimService,
+        exportResult: Result<Void, Error> = .success(()),
+        trace: FakeExportTrace? = nil,
         beforeImport: () throws -> Void = {}
     ) async throws -> VocabStoreMigrationReport {
         try await VocabStoreMigrationService.claimAndMigrateLocalSnapshotToMirroredStore(
@@ -221,6 +425,8 @@ final class VocabBootstrapClaimTests: XCTestCase {
             mirroredContext: mirrored,
             bootstrapToken: token,
             claimService: service,
+            mirroredStoreURL: URL(fileURLWithPath: "/tmp/fake-mirrored.store"),
+            exportObserver: FakeExportObserver(result: exportResult, trace: trace),
             createCheckpoint: {
                 VocabLocalStoreCheckpoint(
                     directory: URL(fileURLWithPath: "/tmp/fake-bootstrap-checkpoint"),
@@ -254,6 +460,72 @@ final class VocabBootstrapClaimTests: XCTestCase {
     private enum InjectedFailure: Error {
         case importFailed
         case partialSave
+    }
+}
+
+private struct FakeExportObserver: VocabCloudExportObserving {
+    let result: Result<Void, Error>
+    let trace: FakeExportTrace?
+
+    func beginWaiting(
+        storeURL: URL,
+        requestID: UUID,
+        fingerprint: String,
+        receiptMatches: @escaping @MainActor (VocabBootstrapExportBoundary) -> Bool
+    ) throws -> any VocabCloudExportExpectation {
+        trace?.didBeginWaiting = true
+        return FakeExportExpectation(
+            result: result,
+            requestID: requestID,
+            fingerprint: fingerprint,
+            receiptMatches: receiptMatches,
+            trace: trace
+        )
+    }
+}
+
+@MainActor
+private final class FakeExportTrace {
+    var didBeginWaiting = false
+    var boundaries: [VocabBootstrapExportBoundary] = []
+}
+
+@MainActor
+private final class FakeExportExpectation: VocabCloudExportExpectation {
+    let storeIdentifier = "fake-store-uuid"
+    let result: Result<Void, Error>
+    let requestID: UUID
+    let fingerprint: String
+    let receiptMatches: @MainActor (VocabBootstrapExportBoundary) -> Bool
+    let trace: FakeExportTrace?
+    var boundary: VocabBootstrapExportBoundary?
+
+    init(
+        result: Result<Void, Error>,
+        requestID: UUID,
+        fingerprint: String,
+        receiptMatches: @escaping @MainActor (VocabBootstrapExportBoundary) -> Bool,
+        trace: FakeExportTrace?
+    ) {
+        self.result = result
+        self.requestID = requestID
+        self.fingerprint = fingerprint
+        self.receiptMatches = receiptMatches
+        self.trace = trace
+    }
+
+    func setCommittedBoundary(_ boundary: VocabBootstrapExportBoundary) {
+        guard boundary.requestID == requestID,
+              boundary.fingerprint == fingerprint,
+              boundary.storeUUID == storeIdentifier else { return }
+        self.boundary = boundary
+        trace?.boundaries.append(boundary)
+    }
+
+    func waitForResult(timeout: TimeInterval) async throws {
+        let boundary = try XCTUnwrap(boundary)
+        XCTAssertTrue(receiptMatches(boundary))
+        try result.get()
     }
 }
 

@@ -981,6 +981,9 @@ enum VocabStoreMigrationService {
         mirroredContext: ModelContext,
         bootstrapToken: VocabBootstrapToken,
         claimService: any VocabBootstrapClaiming,
+        mirroredStoreURL: URL,
+        exportObserver: any VocabCloudExportObserving,
+        exportTimeout: TimeInterval = 120,
         createCheckpoint: () throws -> VocabLocalStoreCheckpoint,
         beforeImport: () throws -> Void = {}
     ) async throws -> VocabStoreMigrationReport {
@@ -1031,10 +1034,53 @@ enum VocabStoreMigrationService {
             return report(snapshot: sourceSnapshot, checkpoint: checkpoint, fingerprint: sourceFingerprint)
         }
 
+        let exportExpectation = try exportObserver.beginWaiting(
+            storeURL: mirroredStoreURL,
+            requestID: claimRequest.requestID,
+            fingerprint: sourceFingerprint,
+            receiptMatches: { boundary in
+                let receipts = try? mirroredContext.fetch(FetchDescriptor<BootstrapExportReceipt>())
+                return receipts?.filter {
+                    $0.requestID == boundary.requestID
+                        && $0.fingerprint == boundary.fingerprint
+                        && $0.storeUUID == boundary.storeUUID
+                        && $0.transactionCommittedAt == boundary.transactionCommittedAt
+                        && $0.probeGeneration == boundary.probeGeneration
+                        && $0.nonce == boundary.nonce
+                        && $0.state == "awaitingExport"
+                }.count == 1
+            }
+        )
+
+        var committedBoundary: VocabBootstrapExportBoundary?
         if state == .claimed {
+            var insertedInitialReceipt = false
             try beforeImport()
             try VocabSyncSnapshotService.importSnapshotRecords(sourceSnapshot, context: mirroredContext)
+            let existingReceipt = try matchingReceipt(
+                context: mirroredContext,
+                request: claimRequest,
+                storeUUID: exportExpectation.storeIdentifier
+            )
+            if existingReceipt == nil {
+                let committedAt = Date.now
+                let receipt = BootstrapExportReceipt(
+                    requestID: claimRequest.requestID,
+                    fingerprint: sourceFingerprint,
+                    storeUUID: exportExpectation.storeIdentifier,
+                    transactionCommittedAt: committedAt
+                )
+                mirroredContext.insert(receipt)
+                insertedInitialReceipt = true
+            }
             try mirroredContext.save()
+            if insertedInitialReceipt, let receipt = try matchingReceipt(
+                context: mirroredContext,
+                request: claimRequest,
+                storeUUID: exportExpectation.storeIdentifier
+            ), receipt.probeGeneration == 0 {
+                committedBoundary = exportBoundary(receipt, exportNotBefore: .now)
+            }
             try verifySeedingSnapshot(sourceSnapshot, context: mirroredContext)
             state = try await transition(
                 claimService,
@@ -1045,19 +1091,56 @@ enum VocabStoreMigrationService {
         }
 
         if state == .seeding {
-            try VocabSyncSnapshotService.importSnapshotRecords(
-                sourceSnapshot,
-                context: mirroredContext,
-                onlyInsertMissing: true
-            )
-            try mirroredContext.save()
+            if committedBoundary == nil {
+                try VocabSyncSnapshotService.importSnapshotRecords(
+                    sourceSnapshot,
+                    context: mirroredContext,
+                    onlyInsertMissing: true
+                )
+                let existingReceipt = try matchingReceipt(
+                    context: mirroredContext,
+                    request: claimRequest,
+                    storeUUID: exportExpectation.storeIdentifier
+                )
+                let receipt: BootstrapExportReceipt
+                if let existingReceipt {
+                    receipt = existingReceipt
+                } else {
+                    receipt = BootstrapExportReceipt(
+                        requestID: claimRequest.requestID,
+                        fingerprint: sourceFingerprint,
+                        storeUUID: exportExpectation.storeIdentifier,
+                        transactionCommittedAt: .distantPast,
+                        probeGeneration: -1
+                    )
+                    mirroredContext.insert(receipt)
+                }
+                receipt.probeGeneration += 1
+                receipt.nonce = UUID()
+                receipt.state = "awaitingExport"
+                receipt.transactionCommittedAt = .now
+                try mirroredContext.save()
+                committedBoundary = exportBoundary(receipt, exportNotBefore: .now)
+            }
+            guard let committedBoundary else {
+                throw VocabStoreMigrationError.verificationMismatch
+            }
+            exportExpectation.setCommittedBoundary(committedBoundary)
             try verifySeedingSnapshot(sourceSnapshot, context: mirroredContext)
-            state = try await transition(
-                claimService,
+            try await exportExpectation.waitForResult(timeout: exportTimeout)
+            guard let exportedReceipt = try matchingReceipt(
+                context: mirroredContext,
                 request: claimRequest,
-                from: .seeding,
-                to: .completed
-            )
+                storeUUID: exportExpectation.storeIdentifier
+            ), exportBoundary(
+                exportedReceipt,
+                exportNotBefore: committedBoundary.exportNotBefore
+            ) == committedBoundary else {
+                throw VocabStoreMigrationError.verificationMismatch
+            }
+            exportedReceipt.state = "exported"
+            try mirroredContext.save()
+            state = try await transition(claimService, request: claimRequest, from: .seeding, to: .completed)
         }
 
         guard state == .completed else {
@@ -1104,6 +1187,37 @@ enum VocabStoreMigrationService {
             anonymousAggregateCount: snapshot.anonymousAggregates.count,
             memoryAidCacheCount: snapshot.memoryAidCaches.count,
             contentFingerprint: fingerprint
+        )
+    }
+
+    private static func matchingReceipt(
+        context: ModelContext,
+        request: VocabBootstrapClaimRequest,
+        storeUUID: String
+    ) throws -> BootstrapExportReceipt? {
+        let matches = try context.fetch(FetchDescriptor<BootstrapExportReceipt>()).filter {
+            $0.requestID == request.requestID
+                && $0.fingerprint == request.sourceFingerprint
+                && $0.storeUUID == storeUUID
+        }
+        guard matches.count <= 1 else {
+            throw VocabStoreMigrationError.verificationMismatch
+        }
+        return matches.first
+    }
+
+    private static func exportBoundary(
+        _ receipt: BootstrapExportReceipt,
+        exportNotBefore: Date
+    ) -> VocabBootstrapExportBoundary {
+        VocabBootstrapExportBoundary(
+            requestID: receipt.requestID,
+            fingerprint: receipt.fingerprint,
+            storeUUID: receipt.storeUUID,
+            transactionCommittedAt: receipt.transactionCommittedAt,
+            exportNotBefore: exportNotBefore,
+            probeGeneration: receipt.probeGeneration,
+            nonce: receipt.nonce
         )
     }
 

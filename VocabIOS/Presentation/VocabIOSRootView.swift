@@ -30,6 +30,10 @@ struct VocabIOSRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var hydrationState: VocabHydrationState = .awaitingBootstrapMetadata
     @State private var hydrationMessage: String?
+    @State private var cloudKitState: VocabCloudKitAccountState = .unknown
+    @State private var claimStatus: VocabBootstrapServerClaimStatus = .unavailable("bootstrap claim을 아직 확인하지 않았습니다.")
+    @State private var completedMetadataMissingSince: Date?
+    @State private var isRefreshingConnection = false
 
     var body: some View {
         TabView {
@@ -44,13 +48,29 @@ struct VocabIOSRootView: View {
                 }
             }
         }
-        .task { refreshHydration() }
+        .task { await refreshConnectionStatus() }
+        .task(id: pollingTaskID) {
+            guard VocabHydrationDiagnosticPolicy.shouldRefresh(
+                reason: .pollingTick(sceneIsActive: scenePhase == .active),
+                state: hydrationState
+            ) else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                guard !Task.isCancelled else { return }
+                await refreshConnectionStatus()
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            refreshHydration()
+            Task { await refreshConnectionStatus() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
-            refreshHydration()
+            guard VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .remoteStoreChange, state: hydrationState) else { return }
+            Task { await refreshConnectionStatus() }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { notification in
+            guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
+            Task { await refreshConnectionStatus() }
         }
     }
 
@@ -79,14 +99,27 @@ struct VocabIOSRootView: View {
         case .settings:
                 VocabIOSConnectionStatusView(
                     connectionError: connectionError,
+                    cloudKitState: cloudKitState,
+                    claimStatus: claimStatus,
                     hydrationState: hydrationState,
-                    hydrationMessage: hydrationMessage
+                    hydrationMessage: hydrationMessage,
+                    isChecking: isRefreshingConnection,
+                    refresh: { await refreshConnectionStatus() }
                 )
             }
         }
     }
 
-    private func refreshHydration() {
+    @MainActor
+    private func refreshConnectionStatus() async {
+        guard !isRefreshingConnection else { return }
+        isRefreshingConnection = true
+        defer { isRefreshingConnection = false }
+
+        async let account = VocabCloudKitStatusService().accountStatus()
+        async let serverClaim = VocabCloudKitBootstrapClaimService().fixedClaimStatus()
+        let fetchedClaim = await serverClaim
+        claimStatus = fetchedClaim
         do {
             let status = try VocabCloudReconciler.hydrationStatus(context: modelContext, syncMode: .cloudKitPrivate)
             if status.state == .reconciling || status.state == .ready {
@@ -96,14 +129,26 @@ struct VocabIOSRootView: View {
                 )
                 hydrationState = result.state
                 hydrationMessage = result.message
+                completedMetadataMissingSince = nil
             } else {
-                hydrationState = status.state
-                hydrationMessage = status.message
+                let diagnosis = VocabHydrationDiagnosticPolicy.diagnose(
+                    localStatus: status,
+                    claimStatus: fetchedClaim,
+                    completedMetadataMissingSince: completedMetadataMissingSince
+                )
+                completedMetadataMissingSince = diagnosis.completedMetadataMissingSince
+                hydrationState = diagnosis.state
+                hydrationMessage = diagnosis.message
             }
         } catch {
             hydrationState = .failed
             hydrationMessage = error.localizedDescription
         }
+        cloudKitState = await account
+    }
+
+    private var pollingTaskID: String {
+        "\(scenePhase)-\(hydrationState.rawValue)"
     }
 
     private var hydrationDescription: String {
@@ -115,16 +160,19 @@ struct VocabIOSRootView: View {
 
 private struct VocabIOSConnectionStatusView: View {
     let connectionError: String?
+    let cloudKitState: VocabCloudKitAccountState
+    let claimStatus: VocabBootstrapServerClaimStatus
     let hydrationState: VocabHydrationState
     let hydrationMessage: String?
-    @State private var cloudKitState: VocabCloudKitAccountState = .unknown
-    @State private var isChecking = false
+    let isChecking: Bool
+    let refresh: () async -> Void
 
     var body: some View {
         List {
             Section("iCloud 연결") {
                 LabeledContent("저장 방식", value: "SwiftData per-record mirroring")
                 LabeledContent("계정 상태", value: cloudKitState.message)
+                LabeledContent("Mac bootstrap", value: claimDescription)
                 LabeledContent("Hydration", value: hydrationState.rawValue)
                 if let connectionError {
                     Label(connectionError, systemImage: "exclamationmark.triangle")
@@ -139,15 +187,25 @@ private struct VocabIOSConnectionStatusView: View {
                     Label("metadata와 예상 레코드를 기다리고 있습니다. 이 상태에서는 쓰기 작업을 하지 않습니다.", systemImage: "icloud.and.arrow.down")
                         .foregroundStyle(.secondary)
                 }
-                Button(isChecking ? "확인 중" : "iCloud 계정 상태 확인") {
-                    Task {
-                        isChecking = true
-                        cloudKitState = await VocabCloudKitStatusService().accountStatus()
-                        isChecking = false
-                    }
+                Button(isChecking ? "확인 중" : "동기화 상태 다시 확인") {
+                    guard VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .manual, state: hydrationState) else { return }
+                    Task { await refresh() }
                 }
                 .disabled(isChecking)
             }
+        }
+    }
+
+    private var claimDescription: String {
+        switch claimStatus {
+        case .missing:
+            "Mac 최초 전환 필요"
+        case .available(.claimed), .available(.seeding):
+            "Mac 업로드 중"
+        case .available(.completed):
+            "Mac 업로드 완료"
+        case .unavailable:
+            "확인 오류"
         }
     }
 }

@@ -250,16 +250,39 @@ enum VocabSchemaV2: VersionedSchema {
     static var versionIdentifier = Schema.Version(2, 0, 0)
 
     static var models: [any PersistentModel.Type] {
+        [
+            WordRecord.self,
+            MeaningRecord.self,
+            DailySetRecord.self,
+            DailySetItemRecord.self,
+            TestSessionRecord.self,
+            AttemptRecord.self,
+            ReviewStateRecord.self,
+            AnonymousAggregateRecord.self,
+            MemoryAidCacheRecord.self,
+            CloudBootstrapRecord.self,
+            RecordTombstone.self
+        ]
+    }
+}
+
+enum VocabSchemaV3: VersionedSchema {
+    static var versionIdentifier = Schema.Version(3, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
         VocabModelContainerFactory.schemaModels
     }
 }
 
 enum VocabSchemaMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [VocabSchemaV1.self, VocabSchemaV2.self]
+        [VocabSchemaV1.self, VocabSchemaV2.self, VocabSchemaV3.self]
     }
 
     static var stages: [MigrationStage] {
-        [.lightweight(fromVersion: VocabSchemaV1.self, toVersion: VocabSchemaV2.self)]
+        [
+            .lightweight(fromVersion: VocabSchemaV1.self, toVersion: VocabSchemaV2.self),
+            .lightweight(fromVersion: VocabSchemaV2.self, toVersion: VocabSchemaV3.self)
+        ]
     }
 }

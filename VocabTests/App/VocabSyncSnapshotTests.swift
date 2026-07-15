@@ -333,6 +333,8 @@ final class VocabSyncSnapshotTests: XCTestCase {
             mirroredContext: mirroredContext,
             bootstrapToken: VocabBootstrapToken(),
             claimService: ApprovingClaimService(),
+            mirroredStoreURL: URL(fileURLWithPath: "/tmp/fake-mirrored.store"),
+            exportObserver: ImmediateExportObserver(),
             createCheckpoint: {
                 VocabLocalStoreCheckpoint(
                     directory: URL(fileURLWithPath: "/tmp/VocabStoreCheckpoint-test", isDirectory: true),
@@ -365,6 +367,8 @@ final class VocabSyncSnapshotTests: XCTestCase {
                 mirroredContext: mirroredContext,
                 bootstrapToken: VocabBootstrapToken(),
                 claimService: DenyingClaimService(reason: .unknown),
+                mirroredStoreURL: URL(fileURLWithPath: "/tmp/fake-mirrored.store"),
+                exportObserver: ImmediateExportObserver(),
                 createCheckpoint: {
                     return VocabLocalStoreCheckpoint(directory: URL(fileURLWithPath: "/tmp/unused"), copiedFiles: [])
                 }
@@ -390,6 +394,8 @@ final class VocabSyncSnapshotTests: XCTestCase {
                 mirroredContext: mirroredContext,
                 bootstrapToken: VocabBootstrapToken(),
                 claimService: ApprovingClaimService(),
+                mirroredStoreURL: URL(fileURLWithPath: "/tmp/fake-mirrored.store"),
+                exportObserver: ImmediateExportObserver(),
                 createCheckpoint: {
                     VocabLocalStoreCheckpoint(
                         directory: URL(fileURLWithPath: "/tmp/VocabStoreCheckpoint-test", isDirectory: true),
@@ -451,6 +457,52 @@ final class VocabSyncSnapshotTests: XCTestCase {
             to newState: VocabBootstrapClaimState
         ) async -> VocabBootstrapClaimResult {
             .denied(reason)
+        }
+    }
+
+    private struct ImmediateExportObserver: VocabCloudExportObserving {
+        func beginWaiting(
+            storeURL: URL,
+            requestID: UUID,
+            fingerprint: String,
+            receiptMatches: @escaping @MainActor (VocabBootstrapExportBoundary) -> Bool
+        ) throws -> any VocabCloudExportExpectation {
+            ImmediateExportExpectation(
+                requestID: requestID,
+                fingerprint: fingerprint,
+                receiptMatches: receiptMatches
+            )
+        }
+    }
+
+    @MainActor
+    private final class ImmediateExportExpectation: VocabCloudExportExpectation {
+        let storeIdentifier = "immediate-store-uuid"
+        let requestID: UUID
+        let fingerprint: String
+        let receiptMatches: @MainActor (VocabBootstrapExportBoundary) -> Bool
+        var boundary: VocabBootstrapExportBoundary?
+
+        init(
+            requestID: UUID,
+            fingerprint: String,
+            receiptMatches: @escaping @MainActor (VocabBootstrapExportBoundary) -> Bool
+        ) {
+            self.requestID = requestID
+            self.fingerprint = fingerprint
+            self.receiptMatches = receiptMatches
+        }
+
+        func setCommittedBoundary(_ boundary: VocabBootstrapExportBoundary) {
+            guard boundary.requestID == requestID,
+                  boundary.fingerprint == fingerprint,
+                  boundary.storeUUID == storeIdentifier else { return }
+            self.boundary = boundary
+        }
+
+        func waitForResult(timeout: TimeInterval) async throws {
+            let boundary = try XCTUnwrap(boundary)
+            XCTAssertTrue(receiptMatches(boundary))
         }
     }
 }

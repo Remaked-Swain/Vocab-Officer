@@ -181,6 +181,41 @@ The first high-level plan was blocked because:
   below; actual CloudKit opt-in execution and real-device bidirectional
   propagation remain pending acceptance evidence.
 
+## Awaiting-Bootstrap-Metadata Improvement (2026-07-15)
+
+### Review Sequence
+
+- The loop ran sequentially as Director diagnosis -> Executor change -> Monitor
+  review. The Monitor issued `REJECT` because claim completion crossed neither
+  a proven CloudKit export boundary nor a durable transaction boundary, and a
+  same-request resume could rely on a no-op save that produced no export.
+- The Director issued revised constraints, the same Executor implemented the
+  correction, and the Monitor issued a code-level `APPROVE` after re-review.
+  This approval covers the implementation and deterministic tests only, not
+  real-device CloudKit export/import behavior.
+
+### Accepted Decision
+
+- Mac may transition the fixed server claim from `seeding` to `completed` only
+  after a successful CloudKit export is observed for the receipt/probe
+  transaction belonging to the same store, request and source fingerprint.
+- The export observer is registered before the seed or probe save so a fast
+  export cannot occur outside the observation window. Export errors, timeout,
+  mismatched identity or an unproven transaction boundary fail closed and keep
+  the claim in `seeding`.
+- Schema V3 adds `BootstrapExportReceipt`. The receipt persists request ID,
+  source fingerprint, persistent-store UUID, transaction commit boundary,
+  probe generation, state and nonce in the mirrored store.
+- Initial seed data and its receipt are committed together. A `seeding` resume
+  must update generation and nonce and save a durable probe transaction; a
+  no-op save is not accepted as export evidence. Only a matching successful
+  export at or after the active receipt boundary permits claim completion.
+- iOS remains non-seeding and mutation-gated while awaiting metadata. Its
+  diagnostics now combine local hydration, CloudKit account and fixed-claim
+  state; they distinguish missing claim, Mac upload in progress and completed
+  claim with delayed metadata. Manual refresh, successful-import refresh and
+  foreground-only polling re-evaluate the state without background polling.
+
 ## Remaining Work
 
 - Run the opt-in CloudKit integration path with
@@ -194,6 +229,8 @@ The first high-level plan was blocked because:
   attempts appear on Mac, and Mac meaning edits appear on iPhone.
 - Verify tombstone propagation and ReviewState replay after offline concurrent
   edits on two signed devices before relying on cleanup of old tombstones.
+- Observe the V3 receipt/probe export boundary and subsequent mirrored import
+  on a real signed Mac and iPhone using the same private CloudKit account.
 - Do not record full feature approval until the opt-in CloudKit run and
   real-device bidirectional propagation checks have passed.
 
@@ -219,6 +256,12 @@ The first high-level plan was blocked because:
   Apple Development identity. `codesign --verify --deep --strict` passed. The
   embedded entitlement dump and generated `.xcent` both contain
   `iCloud.com.swainyun.Vocab` and the `CloudKit` service.
+- Awaiting-bootstrap-metadata final macOS XCTest: 163 passed, 3 skips, 0
+  failures (`/tmp/VocabReceiptFinalFullMac`). The skipped cases include the
+  opt-in CloudKit integration path; deterministic receipt/export-gate coverage
+  passed without replacing real CloudKit observation.
+- Awaiting-bootstrap-metadata iOS Simulator build passed with signing disabled.
+  This proves compilation, not real-device CloudKit export/import propagation.
 
 - `git diff --check`
 - `./script/verify_changed.sh Vocab/App/VocabModelContainerFactory.swift VocabTests/App/VocabModelContainerFactoryTests.swift Docs/PerRecordCloudKitMirroringPlan.md`

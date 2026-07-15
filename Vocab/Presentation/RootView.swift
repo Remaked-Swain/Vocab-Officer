@@ -210,7 +210,7 @@ struct SettingsView: View {
                         .disabled(isMigratingToMirroredStore)
                     }
                     if isMigratingToMirroredStore {
-                        ProgressView("체크포인트 생성, mirrored store 이관, fingerprint 검증을 수행하는 중입니다.")
+                        ProgressView("mirrored store 이관 후 CloudKit export 성공을 확인하는 중입니다. 완료될 때까지 Mac 앱을 종료하지 마세요.")
                     }
                 }
 
@@ -384,11 +384,15 @@ struct SettingsView: View {
 
         do {
             let mirroredContainer = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
+            defer { withExtendedLifetime(mirroredContainer) {} }
+            let mirroredStoreURL = try VocabModelContainerFactory.mirroredStoreURL()
             let report = try await VocabStoreMigrationService.claimAndMigrateLocalSnapshotToMirroredStore(
                 localContext: modelContext,
                 mirroredContext: ModelContext(mirroredContainer),
                 bootstrapToken: bootstrapToken,
                 claimService: VocabCloudKitBootstrapClaimService(),
+                mirroredStoreURL: mirroredStoreURL,
+                exportObserver: VocabPersistentCloudKitExportObserver(),
                 createCheckpoint: {
                     let checkpoint = try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint()
                     _ = try VocabLocalStoreCheckpointStore.rehearseCheckpoint(checkpoint)
@@ -397,7 +401,7 @@ struct SettingsView: View {
             )
             UserDefaults.standard.set(VocabSyncMode.cloudKitPrivate.rawValue, forKey: VocabSyncMode.userDefaultsKey)
             VocabBootstrapTokenStore.clear()
-            syncMessage = "\(report.wordCount)개 단어, \(report.dailySetCount)개 세트, \(report.attemptCount)개 시도 기록을 mirrored store로 검증 이관했습니다. 다음 앱 실행부터 per-record iCloud 저장소를 사용합니다. 체크포인트: \(report.checkpointDirectoryName)"
+            syncMessage = "\(report.wordCount)개 단어, \(report.dailySetCount)개 세트, \(report.attemptCount)개 시도 기록의 CloudKit export 성공을 확인했습니다. 다음 앱 실행부터 per-record iCloud 저장소를 사용합니다. 체크포인트: \(report.checkpointDirectoryName)"
         } catch {
             syncMessage = userFacingSyncError(error)
             syncMessageIsError = true

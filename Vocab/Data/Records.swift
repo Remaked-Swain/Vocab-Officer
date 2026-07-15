@@ -338,6 +338,36 @@ final class CloudBootstrapRecord {
 }
 
 @Model
+final class BootstrapExportReceipt {
+    var id: UUID = UUID()
+    var requestID: UUID = UUID()
+    var fingerprint: String = ""
+    var storeUUID: String = ""
+    var transactionCommittedAt: Date = Date.distantPast
+    var probeGeneration: Int = 0
+    var state: String = "awaitingExport"
+    var nonce: UUID = UUID()
+
+    init(
+        requestID: UUID,
+        fingerprint: String,
+        storeUUID: String,
+        transactionCommittedAt: Date,
+        probeGeneration: Int = 0,
+        state: String = "awaitingExport",
+        nonce: UUID = UUID()
+    ) {
+        self.requestID = requestID
+        self.fingerprint = fingerprint
+        self.storeUUID = storeUUID
+        self.transactionCommittedAt = transactionCommittedAt
+        self.probeGeneration = probeGeneration
+        self.state = state
+        self.nonce = nonce
+    }
+}
+
+@Model
 final class RecordTombstone {
     var id: UUID = UUID()
     var recordID: UUID = UUID()

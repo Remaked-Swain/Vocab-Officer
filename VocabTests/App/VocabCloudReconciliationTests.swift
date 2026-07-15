@@ -4,6 +4,74 @@ import XCTest
 
 @MainActor
 final class VocabCloudReconciliationTests: XCTestCase {
+    func testBootstrapClaimDiagnosticsDistinguishMissingUploadingAndCompletedDelay() {
+        let local = awaitingMetadataStatus()
+        let now = Date(timeIntervalSince1970: 1_000)
+
+        let missing = VocabHydrationDiagnosticPolicy.diagnose(
+            localStatus: local,
+            claimStatus: .missing,
+            completedMetadataMissingSince: nil,
+            now: now
+        )
+        XCTAssertEqual(missing.state, .awaitingBootstrapMetadata)
+        XCTAssertTrue(missing.message?.contains("Mac에서 최초") == true)
+
+        let seeding = VocabHydrationDiagnosticPolicy.diagnose(
+            localStatus: local,
+            claimStatus: .available(.seeding),
+            completedMetadataMissingSince: nil,
+            now: now
+        )
+        XCTAssertEqual(seeding.state, .awaitingBootstrapMetadata)
+        XCTAssertTrue(seeding.message?.contains("업로드하는 중") == true)
+
+        let completed = VocabHydrationDiagnosticPolicy.diagnose(
+            localStatus: local,
+            claimStatus: .available(.completed),
+            completedMetadataMissingSince: nil,
+            now: now,
+            gracePeriod: 30
+        )
+        XCTAssertEqual(completed.state, .awaitingBootstrapMetadata)
+        XCTAssertEqual(completed.completedMetadataMissingSince, now)
+
+        let timedOut = VocabHydrationDiagnosticPolicy.diagnose(
+            localStatus: local,
+            claimStatus: .available(.completed),
+            completedMetadataMissingSince: now,
+            now: now.addingTimeInterval(31),
+            gracePeriod: 30
+        )
+        XCTAssertEqual(timedOut.state, .failed)
+        XCTAssertTrue(timedOut.message?.contains("동기화 상태 다시 확인") == true)
+    }
+
+    func testIOSManualRefreshImportEventAndPollingLifecyclePolicy() {
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .manual, state: .failed))
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .successfulImport, state: .awaitingBootstrapMetadata))
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldRefresh(
+            reason: .pollingTick(sceneIsActive: true),
+            state: .awaitingBootstrapMetadata
+        ))
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldRefresh(
+            reason: .pollingTick(sceneIsActive: true),
+            state: .hydrating
+        ))
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.shouldRefresh(
+            reason: .pollingTick(sceneIsActive: false),
+            state: .hydrating
+        ))
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.shouldRefresh(
+            reason: .pollingTick(sceneIsActive: true),
+            state: .ready
+        ))
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.shouldRefresh(
+            reason: .pollingTick(sceneIsActive: true),
+            state: .failed
+        ))
+    }
+
     func testHydrationGateBlocksMissingMetadataAndIncompleteCounts() throws {
         let context = try makeContext()
 
@@ -229,6 +297,25 @@ final class VocabCloudReconciliationTests: XCTestCase {
         let metadata = CloudBootstrapRecord(contentFingerprint: "fingerprint")
         metadata.schemaVersion = VocabCloudReconciler.metadataSchemaVersion
         return metadata
+    }
+
+    private func awaitingMetadataStatus() -> VocabHydrationStatus {
+        VocabHydrationStatus(
+            state: .awaitingBootstrapMetadata,
+            counts: VocabEntityCounts(
+                words: 0,
+                meanings: 0,
+                dailySets: 0,
+                dailySetItems: 0,
+                testSessions: 0,
+                attempts: 0,
+                anonymousAggregates: 0,
+                memoryAidCaches: 0,
+                tombstones: 0
+            ),
+            expectedBootstrapUUID: nil,
+            message: "bootstrap metadata가 아직 관찰되지 않았습니다."
+        )
     }
 
     private func makeAttempt(
