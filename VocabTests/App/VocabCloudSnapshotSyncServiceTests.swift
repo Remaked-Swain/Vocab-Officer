@@ -27,6 +27,65 @@ final class VocabCloudSnapshotSyncServiceTests: XCTestCase {
 
         XCTAssertEqual(result.wordCount, 1)
         XCTAssertEqual(store.snapshot?.words.first?.term, "train")
+        XCTAssertEqual(result.disposition, .uploaded)
+        XCTAssertEqual(store.conditionalSaveCallCount, 1)
+    }
+
+    func testManualUploadSkipsAssetWhenServerCanonicalFingerprintIsUnchanged() async throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "same-domain")
+        let meaning = MeaningRecord(text: "같은 원본")
+        meaning.word = word
+        word.appendMeaning(meaning)
+        context.insert(word)
+        context.insert(meaning)
+        try context.save()
+        var server = try VocabSyncSnapshotService.exportSnapshot(
+            context: context,
+            exportedAt: Date(timeIntervalSince1970: 100)
+        )
+        server.exportedAt = Date(timeIntervalSince1970: 200)
+        server.syncMetadata?.updatedAt = Date(timeIntervalSince1970: 300)
+        server.words[0].statusRaw = "mastered"
+        server.words[0].meanings[0].successDays = ["2026-07-13", "2026-07-14", "2026-07-15"]
+        server.words[0].reviewState = VocabSyncSnapshot.ReviewStatePayload(
+            failureCheck: 1, activePriority: 20, enToKoStreak: 3, koToEnStreak: 3,
+            koToEnSuccessDays: ["2026-07-15"], latestWrongDirection: nil,
+            latestWrongAt: nil, lastTestedAt: Date(timeIntervalSince1970: 250),
+            presentationCount: 2, lastPresentedAt: Date(timeIntervalSince1970: 260)
+        )
+        let store = MemorySnapshotStore(snapshot: server)
+        let stateStore = MemoryBatchSyncStateStore()
+        let service = VocabCloudSnapshotSyncService(store: store, stateStore: stateStore)
+
+        let result = try await service.uploadLocalSnapshot(
+            context: context,
+            now: Date(timeIntervalSince1970: 400)
+        )
+
+        XCTAssertEqual(result.disposition, .unchanged)
+        XCTAssertEqual(store.saveCallCount, 0)
+        XCTAssertEqual(store.conditionalSaveCallCount, 0)
+        XCTAssertEqual(stateStore.cursor?.snapshotFingerprint, try server.contentFingerprint())
+    }
+
+    func testManualUploadConditionallyUploadsWhenDomainChanges() async throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "before")
+        context.insert(word)
+        try context.save()
+        let server = try VocabSyncSnapshotService.exportSnapshot(context: context)
+        let store = MemorySnapshotStore(snapshot: server)
+        let service = VocabCloudSnapshotSyncService(store: store, stateStore: MemoryBatchSyncStateStore())
+        word.term = "after"
+        try context.save()
+
+        let result = try await service.uploadLocalSnapshot(context: context)
+
+        XCTAssertEqual(result.disposition, .uploaded)
+        XCTAssertEqual(store.conditionalSaveCallCount, 1)
+        XCTAssertEqual(store.saveCallCount, 1)
+        XCTAssertEqual(store.snapshot?.words.first?.term, "after")
     }
 
     func testDownloadSnapshotReplacesPhoneLocalStore() async throws {

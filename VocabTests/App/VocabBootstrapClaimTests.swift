@@ -361,6 +361,177 @@ final class VocabBootstrapClaimTests: XCTestCase {
         try assertSingleGraph(mirrored)
     }
 
+    func testResumePolicyUsesCompletedClaimForHydrationWithoutReseed() {
+        let claim = makeServerClaim(state: .completed, fingerprint: "server")
+
+        let decision = VocabBootstrapResumePolicy.decide(
+            serverStatus: .available(claim),
+            storedRequest: nil,
+            currentCanonicalFingerprint: "different-local",
+            checkpointManifest: nil,
+            expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            receiptIsValid: false
+        )
+
+        XCTAssertEqual(decision, .hydrateCompleted(claim))
+    }
+
+    func testSettingsPresentationUsesNaturalStateAndExposesFullClaimTuple() throws {
+        let claim = makeServerClaim(state: .seeding, fingerprint: "domain")
+        let presentation = VocabBootstrapClaimSettingsPresentation(status: .available(claim))
+        let details = try XCTUnwrap(presentation.details)
+
+        XCTAssertTrue(presentation.summary.contains("업로드하는 중"))
+        XCTAssertTrue(details.contains(claim.request.claimID.uuidString))
+        XCTAssertTrue(details.contains(claim.request.requestID.uuidString))
+        XCTAssertTrue(details.contains(claim.request.ownerDeviceID))
+        XCTAssertTrue(details.contains(claim.request.sourceFingerprint))
+        XCTAssertTrue(details.contains("schema: \(claim.request.schemaVersion)"))
+    }
+
+    func testResumePolicyResumesOnlyMatchingStoredTupleAndBlocksForeignTuple() {
+        let claim = makeServerClaim(state: .seeding, fingerprint: "domain")
+        let matching = VocabBootstrapResumePolicy.decide(
+            serverStatus: .available(claim),
+            storedRequest: claim.request,
+            currentCanonicalFingerprint: "other",
+            checkpointManifest: nil,
+            expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            receiptIsValid: true
+        )
+        var foreign = claim.request
+        foreign = VocabBootstrapClaimRequest(
+            claimID: foreign.claimID,
+            requestID: UUID(),
+            ownerDeviceID: foreign.ownerDeviceID,
+            sourceFingerprint: foreign.sourceFingerprint,
+            schemaVersion: foreign.schemaVersion,
+            createdAt: foreign.createdAt
+        )
+        let blocked = VocabBootstrapResumePolicy.decide(
+            serverStatus: .available(claim),
+            storedRequest: foreign,
+            currentCanonicalFingerprint: "domain",
+            checkpointManifest: nil,
+            expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            receiptIsValid: true
+        )
+
+        XCTAssertEqual(matching, .resume(claim.request))
+        guard case .blocked = blocked else { return XCTFail("Foreign tuple must fail closed") }
+    }
+
+    func testLostTupleRecoveryRequiresCanonicalOrCheckpointFingerprintAndReceipt() {
+        let claim = makeServerClaim(state: .claimed, fingerprint: "domain")
+        let manifest = VocabBootstrapRecoveryManifest(
+            checkpointPath: "/tmp/checkpoint",
+            canonicalFingerprint: "domain",
+            claimRequest: claim.request,
+            createdAt: Date(timeIntervalSince1970: 20)
+        )
+
+        XCTAssertEqual(
+            VocabBootstrapResumePolicy.decide(
+                serverStatus: .available(claim), storedRequest: nil,
+                currentCanonicalFingerprint: "domain", checkpointManifest: nil,
+                expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion, receiptIsValid: true
+            ),
+            .recoverExisting(claim.request)
+        )
+        XCTAssertEqual(
+            VocabBootstrapResumePolicy.decide(
+                serverStatus: .available(claim), storedRequest: nil,
+                currentCanonicalFingerprint: "other", checkpointManifest: manifest,
+                expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion, receiptIsValid: true
+            ),
+            .recoverExisting(claim.request)
+        )
+        guard case .blocked = VocabBootstrapResumePolicy.decide(
+            serverStatus: .available(claim), storedRequest: nil,
+            currentCanonicalFingerprint: "domain", checkpointManifest: manifest,
+            expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion, receiptIsValid: false
+        ) else { return XCTFail("Receipt mismatch must fail closed") }
+    }
+
+    func testLostTupleRecoveryRemainsValidAfterReplayDerivedStateChanges() throws {
+        let context = try makeContext()
+        seedLocalGraph(context)
+        let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: context)
+        let serverFingerprint = try snapshot.contentFingerprint()
+        var replayed = snapshot
+        replayed.words[0].statusRaw = "mastered"
+        replayed.words[0].meanings[0].successDays = ["2026-07-13", "2026-07-14", "2026-07-15"]
+        replayed.words[0].reviewState = VocabSyncSnapshot.ReviewStatePayload(
+            failureCheck: 0, activePriority: 0, enToKoStreak: 3, koToEnStreak: 3,
+            koToEnSuccessDays: ["2026-07-13", "2026-07-14", "2026-07-15"],
+            latestWrongDirection: nil, latestWrongAt: nil,
+            lastTestedAt: Date(timeIntervalSince1970: 500),
+            presentationCount: 4, lastPresentedAt: Date(timeIntervalSince1970: 501)
+        )
+        let claim = makeServerClaim(state: .seeding, fingerprint: serverFingerprint)
+
+        let decision = VocabBootstrapResumePolicy.decide(
+            serverStatus: .available(claim),
+            storedRequest: nil,
+            currentCanonicalFingerprint: try replayed.contentFingerprint(),
+            checkpointManifest: nil,
+            expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            receiptIsValid: true
+        )
+
+        XCTAssertEqual(decision, .recoverExisting(claim.request))
+    }
+
+    func testLegacyDefaultsMigrateOnceToCredentialDataWithOriginDeviceID() throws {
+        let suite = "VocabBootstrapClaimTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        let token = VocabBootstrapToken()
+        defaults.set(token.claimID.uuidString, forKey: "vocabPendingBootstrapClaimID")
+        defaults.set(token.requestID.uuidString, forKey: "vocabPendingBootstrapRequestID")
+        let dataStore = MemoryCredentialDataStore()
+
+        let migrated = try VocabBootstrapTokenStore.load(defaults: defaults, dataStore: dataStore)
+        let reloaded = try VocabBootstrapTokenStore.load(defaults: defaults, dataStore: dataStore)
+
+        XCTAssertEqual(migrated?.token, token)
+        XCTAssertEqual(migrated?.originDeviceID, VocabDeviceIdentity.current)
+        XCTAssertEqual(reloaded, migrated)
+        XCTAssertNil(defaults.string(forKey: "vocabPendingBootstrapClaimID"))
+        XCTAssertNil(defaults.string(forKey: "vocabPendingBootstrapRequestID"))
+        XCTAssertEqual(dataStore.saveCount, 1)
+    }
+
+    func testFailedKeychainMigrationLeavesLegacyTupleRetryable() throws {
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: "VocabBootstrapClaimTests.\(UUID().uuidString)"))
+        let token = VocabBootstrapToken()
+        defaults.set(token.claimID.uuidString, forKey: "vocabPendingBootstrapClaimID")
+        defaults.set(token.requestID.uuidString, forKey: "vocabPendingBootstrapRequestID")
+
+        XCTAssertThrowsError(try VocabBootstrapTokenStore.load(
+            defaults: defaults,
+            dataStore: FailingCredentialDataStore()
+        ))
+        let retryStore = MemoryCredentialDataStore()
+        let retried = try VocabBootstrapTokenStore.load(defaults: defaults, dataStore: retryStore)
+
+        XCTAssertEqual(retried?.token, token)
+        XCTAssertEqual(retryStore.saveCount, 1)
+    }
+
+    private func makeServerClaim(
+        state: VocabBootstrapClaimState,
+        fingerprint: String
+    ) -> VocabBootstrapServerClaim {
+        let date = Date(timeIntervalSince1970: 10)
+        let request = VocabBootstrapClaimRequest(
+            claimID: UUID(), requestID: UUID(), ownerDeviceID: "mac",
+            sourceFingerprint: fingerprint,
+            schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            createdAt: date
+        )
+        return VocabBootstrapServerClaim(request: request, state: state, createdAt: date, updatedAt: date)
+    }
+
     private struct SourceGraph {
         let word: WordRecord
         let meaning: MeaningRecord
@@ -461,6 +632,22 @@ final class VocabBootstrapClaimTests: XCTestCase {
         case importFailed
         case partialSave
     }
+}
+
+private final class MemoryCredentialDataStore: VocabBootstrapCredentialDataStoring {
+    var data: Data?
+    private(set) var saveCount = 0
+
+    func load() throws -> Data? { data }
+    func save(_ data: Data) throws {
+        saveCount += 1
+        self.data = data
+    }
+}
+
+private struct FailingCredentialDataStore: VocabBootstrapCredentialDataStoring {
+    func load() throws -> Data? { nil }
+    func save(_ data: Data) throws { throw CocoaError(.fileWriteUnknown) }
 }
 
 private struct FakeExportObserver: VocabCloudExportObserving {

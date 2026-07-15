@@ -8,7 +8,7 @@ enum VocabBootstrapClaimState: String, Equatable {
     case completed
 }
 
-struct VocabBootstrapClaimRequest: Equatable {
+struct VocabBootstrapClaimRequest: Codable, Equatable {
     let claimID: UUID
     let requestID: UUID
     let ownerDeviceID: String
@@ -47,12 +47,68 @@ enum VocabBootstrapClaimResult: Equatable {
 
 enum VocabBootstrapServerClaimStatus: Equatable {
     case missing
-    case available(VocabBootstrapClaimState)
+    case available(VocabBootstrapServerClaim)
     case unavailable(String)
+}
+
+struct VocabBootstrapServerClaim: Equatable {
+    let request: VocabBootstrapClaimRequest
+    let state: VocabBootstrapClaimState
+    let createdAt: Date
+    let updatedAt: Date
 }
 
 protocol VocabBootstrapClaimStatusReading {
     func fixedClaimStatus() async -> VocabBootstrapServerClaimStatus
+}
+
+enum VocabBootstrapResumeDecision: Equatable {
+    case createNew
+    case hydrateCompleted(VocabBootstrapServerClaim)
+    case resume(VocabBootstrapClaimRequest)
+    case recoverExisting(VocabBootstrapClaimRequest)
+    case blocked(String)
+}
+
+enum VocabBootstrapResumePolicy {
+    static func decide(
+        serverStatus: VocabBootstrapServerClaimStatus,
+        storedRequest: VocabBootstrapClaimRequest?,
+        currentCanonicalFingerprint: String,
+        checkpointManifest: VocabBootstrapRecoveryManifest?,
+        expectedSchemaVersion: Int,
+        receiptIsValid: Bool
+    ) -> VocabBootstrapResumeDecision {
+        switch serverStatus {
+        case .missing:
+            return storedRequest == nil
+                ? .createNew
+                : .blocked("서버 claim은 없지만 로컬에 이전 claim tuple이 남아 있어 새 claim 생성을 중단했습니다.")
+        case .unavailable(let message):
+            return .blocked(message)
+        case .available(let serverClaim):
+            if serverClaim.state == .completed {
+                return .hydrateCompleted(serverClaim)
+            }
+            if let storedRequest {
+                return storedRequest == serverClaim.request
+                    ? .resume(storedRequest)
+                    : .blocked("서버 claim과 Keychain tuple이 달라 takeover를 중단했습니다.")
+            }
+            guard serverClaim.request.schemaVersion == expectedSchemaVersion else {
+                return .blocked("서버 claim schema가 현재 앱과 달라 기존 claim 복구를 중단했습니다.")
+            }
+            let currentMatches = serverClaim.request.sourceFingerprint == currentCanonicalFingerprint
+            let checkpointMatches = checkpointManifest.map {
+                $0.canonicalFingerprint == serverClaim.request.sourceFingerprint
+                    && $0.claimRequest == serverClaim.request
+            } ?? false
+            guard (currentMatches || checkpointMatches), receiptIsValid else {
+                return .blocked("기존 claim의 fingerprint/checkpoint/receipt를 모두 검증하지 못해 takeover 없이 중단했습니다.")
+            }
+            return .recoverExisting(serverClaim.request)
+        }
+    }
 }
 
 protocol VocabBootstrapClaiming {
@@ -133,10 +189,10 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
         case .unknown:
             return .unavailable("bootstrap claim을 조회하지 못했습니다. 네트워크와 iCloud 상태를 확인하세요.")
         case .found(let record):
-            guard let state = claimState(record) else {
+            guard let claim = serverClaim(record) else {
                 return .unavailable("bootstrap claim 상태를 해석하지 못했습니다.")
             }
-            return .available(state)
+            return .available(claim)
         }
     }
 
@@ -311,6 +367,34 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
     private func claimState(_ record: CKRecord) -> VocabBootstrapClaimState? {
         guard let rawValue = record[Field.state] as? String else { return nil }
         return VocabBootstrapClaimState(rawValue: rawValue)
+    }
+
+    private func serverClaim(_ record: CKRecord) -> VocabBootstrapServerClaim? {
+        guard let claimIDRaw = record[Field.claimID] as? String,
+              let requestIDRaw = record[Field.requestID] as? String,
+              let claimID = UUID(uuidString: claimIDRaw),
+              let requestID = UUID(uuidString: requestIDRaw),
+              let ownerDeviceID = record[Field.ownerDeviceID] as? String,
+              let sourceFingerprint = record[Field.sourceFingerprint] as? String,
+              let schemaVersion = (record[Field.schemaVersion] as? NSNumber)?.intValue,
+              let state = claimState(record),
+              let createdAt = record[Field.createdAt] as? Date,
+              let updatedAt = record[Field.updatedAt] as? Date else {
+            return nil
+        }
+        return VocabBootstrapServerClaim(
+            request: VocabBootstrapClaimRequest(
+                claimID: claimID,
+                requestID: requestID,
+                ownerDeviceID: ownerDeviceID,
+                sourceFingerprint: sourceFingerprint,
+                schemaVersion: schemaVersion,
+                createdAt: createdAt
+            ),
+            state: state,
+            createdAt: createdAt,
+            updatedAt: updatedAt
+        )
     }
 
     private func isLegalTransition(
@@ -651,13 +735,13 @@ enum VocabHydrationDiagnosticPolicy {
                 message: "Mac에서 최초 iCloud 전환을 완료해야 합니다. iPhone은 데이터를 seed하지 않습니다.",
                 completedMetadataMissingSince: nil
             )
-        case .available(.claimed), .available(.seeding):
+        case .available(let claim) where claim.state == .claimed || claim.state == .seeding:
             return VocabHydrationDiagnosis(
                 state: .awaitingBootstrapMetadata,
                 message: "Mac이 기존 단어장을 iCloud로 업로드하는 중입니다. Mac 앱을 종료하지 말고 잠시 기다리세요.",
                 completedMetadataMissingSince: nil
             )
-        case .available(.completed):
+        case .available(let claim) where claim.state == .completed:
             let startedAt = completedMetadataMissingSince ?? now
             if now.timeIntervalSince(startedAt) >= gracePeriod {
                 return VocabHydrationDiagnosis(
@@ -675,6 +759,12 @@ enum VocabHydrationDiagnosticPolicy {
             return VocabHydrationDiagnosis(
                 state: .failed,
                 message: message,
+                completedMetadataMissingSince: completedMetadataMissingSince
+            )
+        case .available:
+            return VocabHydrationDiagnosis(
+                state: .failed,
+                message: "bootstrap claim 상태를 해석하지 못했습니다.",
                 completedMetadataMissingSince: completedMetadataMissingSince
             )
         }

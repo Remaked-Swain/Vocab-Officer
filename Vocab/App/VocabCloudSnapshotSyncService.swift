@@ -20,16 +20,29 @@ extension VocabCloudSnapshotStoring {
 }
 
 struct VocabCloudSnapshotSyncResult: Equatable {
+    enum Disposition: Equatable {
+        case uploaded
+        case unchanged
+        case downloaded
+        case inspected
+    }
+
     let wordCount: Int
     let dailySetCount: Int
     let exportedAt: Date
     let checkpointDirectoryName: String?
+    let disposition: Disposition
 
-    init(snapshot: VocabSyncSnapshot, checkpoint: VocabLocalStoreCheckpoint? = nil) {
+    init(
+        snapshot: VocabSyncSnapshot,
+        checkpoint: VocabLocalStoreCheckpoint? = nil,
+        disposition: Disposition = .uploaded
+    ) {
         self.wordCount = snapshot.words.count
         self.dailySetCount = snapshot.dailySets.count
         self.exportedAt = snapshot.exportedAt
         self.checkpointDirectoryName = checkpoint?.directory.lastPathComponent
+        self.disposition = disposition
     }
 
     init(metadata: VocabCloudSnapshotMetadata) {
@@ -37,6 +50,7 @@ struct VocabCloudSnapshotSyncResult: Equatable {
         self.dailySetCount = metadata.dailySetCount
         self.exportedAt = metadata.exportedAt
         self.checkpointDirectoryName = nil
+        self.disposition = .inspected
     }
 }
 
@@ -112,6 +126,7 @@ struct VocabCloudBatchSyncResult: Equatable {
 enum VocabCloudBatchSyncError: LocalizedError {
     case localCheckpointFailed
     case localCheckpointRestoreFailed
+    case conditionalRecoveryUploadConflict
 
     var errorDescription: String? {
         switch self {
@@ -119,6 +134,8 @@ enum VocabCloudBatchSyncError: LocalizedError {
             return "로컬 단어장 보호 사본을 만들지 못해 iCloud 가져오기/자동 다운로드를 중단했습니다."
         case .localCheckpointRestoreFailed:
             return "iCloud 자동 다운로드가 실패했고 로컬 보호 사본 복원도 완료하지 못했습니다. 자동 동기화를 중단했습니다."
+        case .conditionalRecoveryUploadConflict:
+            return "확인 이후 iCloud 복구 snapshot이 변경되어 업로드를 중단했습니다. 상태를 다시 확인하세요."
         }
     }
 }
@@ -143,9 +160,17 @@ struct VocabCloudSnapshotSyncService {
 
     func uploadLocalSnapshot(context: ModelContext, now: Date = .now) async throws -> VocabCloudSnapshotSyncResult {
         let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: context, exportedAt: now)
-        try await store.save(snapshot)
+        let localMetadata = try VocabCloudSnapshotMetadata(snapshot: snapshot)
+        let serverMetadata = try await store.metadata()
+        if serverMetadata?.fingerprint == localMetadata.fingerprint {
+            try recordSyncedSnapshot(snapshot, syncedAt: now)
+            return VocabCloudSnapshotSyncResult(snapshot: snapshot, disposition: .unchanged)
+        }
+        guard try await store.save(snapshot, ifCloudMetadataMatches: serverMetadata) else {
+            throw VocabCloudBatchSyncError.conditionalRecoveryUploadConflict
+        }
         try recordSyncedSnapshot(snapshot, syncedAt: now)
-        return VocabCloudSnapshotSyncResult(snapshot: snapshot)
+        return VocabCloudSnapshotSyncResult(snapshot: snapshot, disposition: .uploaded)
     }
 
     func replaceLocalStoreFromCloud(context: ModelContext, syncedAt: Date = .now) async throws -> VocabCloudSnapshotSyncResult? {
@@ -153,13 +178,13 @@ struct VocabCloudSnapshotSyncService {
         let checkpoint = try createLocalStoreCheckpointIfNeeded(now: syncedAt)
         try VocabSyncSnapshotService.replaceLocalStore(with: snapshot, context: context, syncMode: .localOnly)
         try recordSyncedSnapshot(snapshot, syncedAt: syncedAt)
-        return VocabCloudSnapshotSyncResult(snapshot: snapshot, checkpoint: checkpoint)
+        return VocabCloudSnapshotSyncResult(snapshot: snapshot, checkpoint: checkpoint, disposition: .downloaded)
     }
 
     func inspectCloudSnapshot() async throws -> VocabCloudSnapshotSyncResult? {
         guard let snapshot = try await store.load() else { return nil }
         try VocabSyncSnapshotService.validate(snapshot)
-        return VocabCloudSnapshotSyncResult(snapshot: snapshot)
+        return VocabCloudSnapshotSyncResult(snapshot: snapshot, disposition: .inspected)
     }
 
     func planBatchSync(context: ModelContext, now: Date = .now) async throws -> VocabCloudBatchSyncPlan {
@@ -313,7 +338,11 @@ struct VocabCloudSnapshotSyncService {
         }
 
         try recordSyncedSnapshot(cloudSnapshot, syncedAt: syncedAt)
-        return VocabCloudSnapshotSyncResult(snapshot: cloudSnapshot, checkpoint: checkpoint)
+        return VocabCloudSnapshotSyncResult(
+            snapshot: cloudSnapshot,
+            checkpoint: checkpoint,
+            disposition: .downloaded
+        )
     }
 
     private func createLocalStoreCheckpointIfNeeded(now: Date) throws -> VocabLocalStoreCheckpoint? {

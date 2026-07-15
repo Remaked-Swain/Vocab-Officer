@@ -343,7 +343,7 @@
       "retentionClass": "permanent",
       "title": "Per-record CloudKit mirroring migration",
       "date": "2026-07-14",
-      "tags": ["icloud", "cloudkit", "swiftdata", "per-record-mirroring", "bootstrap-claim", "export-receipt", "hydration", "tombstone", "attempt-replay", "schema-migration"],
+      "tags": ["icloud", "cloudkit", "swiftdata", "per-record-mirroring", "bootstrap-claim", "export-receipt", "tuple-recovery", "canonical-fingerprint", "hydration", "tombstone", "attempt-replay", "schema-migration"],
       "affectedPaths": ["Vocab/App/", "Vocab/Application/", "Vocab/Data/", "Vocab/Presentation/", "VocabIOS/", "VocabTests/", "Vocab.xcodeproj/", "Docs/PerRecordCloudKitMirroringPlan.md", "Docs/iCloudIOSSyncPlan.md", "Docs/ClosedLoop/"],
       "path": "Docs/ClosedLoop/records/CL-0016-per-record-cloudkit-mirroring.md",
       "references": ["CL-0001", "CL-0002", "CL-0007", "CL-0012", "CL-0014", "CL-0015"],
@@ -351,7 +351,7 @@
       "supersededBy": null,
       "retentionUntil": null,
       "protected": true,
-      "unresolvedLimitations": ["V3 receipt/probe export and mirrored import have not been observed through real-device private CloudKit", "real iPhone and signed Mac bidirectional propagation has not been verified"]
+      "unresolvedLimitations": ["V3 receipt/probe export, tuple recovery, canonical snapshot skip and mirrored import have not been observed through real-device private CloudKit", "real iPhone and signed Mac bidirectional propagation has not been verified"]
     }
   ]
 }

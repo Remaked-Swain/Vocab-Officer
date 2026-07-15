@@ -200,10 +200,12 @@ private struct VocabIOSConnectionStatusView: View {
         switch claimStatus {
         case .missing:
             "Mac 최초 전환 필요"
-        case .available(.claimed), .available(.seeding):
+        case .available(let claim) where claim.state == .claimed || claim.state == .seeding:
             "Mac 업로드 중"
-        case .available(.completed):
+        case .available(let claim) where claim.state == .completed:
             "Mac 업로드 완료"
+        case .available:
+            "확인 오류"
         case .unavailable:
             "확인 오류"
         }

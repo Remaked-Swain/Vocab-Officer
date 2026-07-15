@@ -126,19 +126,113 @@ final class VocabSyncSnapshotTests: XCTestCase {
         XCTAssertEqual(restoredCaches.first?.originDeviceID, "cache-device")
     }
 
-    func testSnapshotV2FingerprintIncludesRecordMergeMetadata() throws {
+    func testCanonicalFingerprintIsStableAcrossReplayDerivedStateAndBookkeeping() throws {
         let context = try makeContext()
         let word = WordRecord(term: "metadata")
+        let meaning = MeaningRecord(text: "메타데이터")
+        meaning.word = word
+        word.appendMeaning(meaning)
         context.insert(word)
+        context.insert(meaning)
         try context.save()
         let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: context)
-        var changed = snapshot
-        changed.words[0].updatedAt = snapshot.words[0].updatedAt?.addingTimeInterval(1)
-        let changedFingerprint = try changed.contentFingerprint()
-        changed.syncMetadata?.contentFingerprint = changedFingerprint
+        var bookkeepingChanged = snapshot
+        bookkeepingChanged.exportedAt = snapshot.exportedAt.addingTimeInterval(100)
+        bookkeepingChanged.syncMetadata?.createdAt = Date(timeIntervalSince1970: 999)
+        bookkeepingChanged.syncMetadata?.updatedAt = Date(timeIntervalSince1970: 1_000)
+        bookkeepingChanged.syncMetadata?.completedAt = Date(timeIntervalSince1970: 1_001)
+        bookkeepingChanged.syncMetadata?.lastReconciledAt = Date(timeIntervalSince1970: 1_002)
+        bookkeepingChanged.words[0].updatedAt = Date(timeIntervalSince1970: 2_000)
+        bookkeepingChanged.words[0].originDeviceID = "other-device"
+        bookkeepingChanged.words[0].statusRaw = "mastered"
+        bookkeepingChanged.words[0].meanings[0].successDays = ["2026-07-13", "2026-07-14", "2026-07-15"]
+        bookkeepingChanged.words[0].reviewState = VocabSyncSnapshot.ReviewStatePayload(
+            failureCheck: 99, activePriority: 20, enToKoStreak: 3, koToEnStreak: 4,
+            koToEnSuccessDays: ["2026-07-15"], latestWrongDirection: "enToKo",
+            latestWrongAt: Date(timeIntervalSince1970: 3_000),
+            lastTestedAt: Date(timeIntervalSince1970: 3_001),
+            presentationCount: 10, lastPresentedAt: Date(timeIntervalSince1970: 3_002)
+        )
+        var domainChanged = bookkeepingChanged
+        domainChanged.words[0].term = "changed-domain-term"
 
-        XCTAssertNotEqual(try snapshot.contentFingerprint(), try changed.contentFingerprint())
-        XCTAssertNoThrow(try VocabSyncSnapshotService.validate(changed))
+        XCTAssertEqual(try snapshot.contentFingerprint(), try bookkeepingChanged.contentFingerprint())
+        XCTAssertNotEqual(try snapshot.contentFingerprint(), try domainChanged.contentFingerprint())
+    }
+
+    func testCanonicalFingerprintDetectsSOTAttemptSetAndTombstoneChanges() throws {
+        let wordID = UUID()
+        let meaningID = UUID()
+        let setID = UUID()
+        let itemID = UUID()
+        let sessionID = UUID()
+        let attemptID = UUID()
+        let date = Date(timeIntervalSince1970: 100)
+        let baseline = VocabSyncSnapshot(
+            formatVersion: 2,
+            exportedAt: date,
+            words: [VocabSyncSnapshot.WordPayload(
+                id: wordID, term: "source", englishAliases: [], createdAt: date,
+                statusRaw: "active", meanings: [VocabSyncSnapshot.MeaningPayload(
+                    id: meaningID, text: "원본", isCore: true, aliases: [], successDays: []
+                )], reviewState: nil
+            )],
+            dailySets: [VocabSyncSnapshot.DailySetPayload(
+                id: setID, seoulDay: "2026-07-15", createdAt: date, completedAt: nil,
+                items: [VocabSyncSnapshot.DailySetItemPayload(
+                    id: itemID, orderIndex: 0, entryKind: "new", wordID: wordID, deletedAt: nil
+                )]
+            )],
+            attempts: [VocabSyncSnapshot.AttemptPayload(
+                id: attemptID, directionRaw: "enToKo", modeRaw: "review",
+                sessionID: sessionID, questionIndex: 0, seoulDay: "2026-07-15",
+                prompt: "source", submittedAnswer: "원본",
+                automaticJudgementRaw: "correct", finalJudgementRaw: "correct",
+                correctionRaw: nil, matchedMeaningID: meaningID, answeredAt: date,
+                wordID: wordID
+            )]
+        )
+        let fingerprint = try baseline.contentFingerprint()
+
+        var sotChanged = baseline
+        sotChanged.words[0].meanings[0].text = "변경된 원본"
+        var attemptChanged = baseline
+        attemptChanged.attempts[0].finalJudgementRaw = "incorrect"
+        var setChanged = baseline
+        setChanged.dailySets[0].items[0].orderIndex = 1
+        var tombstoneChanged = baseline
+        tombstoneChanged.tombstones = [VocabSyncSnapshot.TombstonePayload(
+            id: wordID, recordID: wordID, recordType: "WordRecord",
+            deletedAt: date, originDeviceID: "mac"
+        )]
+
+        XCTAssertNotEqual(fingerprint, try sotChanged.contentFingerprint())
+        XCTAssertNotEqual(fingerprint, try attemptChanged.contentFingerprint())
+        XCTAssertNotEqual(fingerprint, try setChanged.contentFingerprint())
+        XCTAssertNotEqual(fingerprint, try tombstoneChanged.contentFingerprint())
+    }
+
+    func testCanonicalFingerprintIsStableBeforeAndAfterTombstoneReconciliation() throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "deleted-domain")
+        context.insert(word)
+        try context.save()
+        var beforeReconciliation = try VocabSyncSnapshotService.exportSnapshot(context: context)
+        beforeReconciliation.tombstones = [VocabSyncSnapshot.TombstonePayload(
+            id: word.id,
+            recordID: word.id,
+            recordType: "WordRecord",
+            deletedAt: Date(timeIntervalSince1970: 100),
+            updatedAt: Date(timeIntervalSince1970: 100),
+            originDeviceID: "mac"
+        )]
+        var afterReconciliation = beforeReconciliation
+        afterReconciliation.words[0].deletedAt = Date(timeIntervalSince1970: 200)
+
+        XCTAssertEqual(
+            try beforeReconciliation.contentFingerprint(),
+            try afterReconciliation.contentFingerprint()
+        )
     }
 
     func testSnapshotRestoreReplacesExistingPhoneLocalData() throws {

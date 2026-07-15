@@ -216,6 +216,49 @@ The first high-level plan was blocked because:
   claim with delayed metadata. Manual refresh, successful-import refresh and
   foreground-only polling re-evaluate the state without background polling.
 
+## Claim Recovery And Canonical Fingerprint Follow-Up (2026-07-15)
+
+### Diagnosis And Review
+
+- The Director traced the reported claim rejection, persistent iOS waiting,
+  full snapshot recovery upload and truncated macOS Settings status together.
+  The bootstrap fingerprint mixed canonical domain facts with volatile merge
+  metadata and replay-derived state, so the same logical dataset could fail
+  tuple recovery or trigger an unnecessary full snapshot upload.
+- The Executor implemented recovery persistence, canonical comparison and
+  Settings layout changes. The Monitor issued one `REJECT` because the first
+  canonical fingerprint still included replay-derived `Word.statusRaw` and
+  `Meaning.successDays`. After those fields were excluded with ReviewState and
+  regression coverage was added, the Monitor issued a code-level `APPROVE`.
+
+### Accepted Decision
+
+- The pending bootstrap claim tuple and originating device identity are stored
+  in Keychain. Legacy UserDefaults values are removed only after a successful
+  Keychain migration. An Application Support recovery manifest binds the
+  checkpoint path, canonical fingerprint and complete claim tuple.
+- Settings fetches and displays the fixed server claim before creating a new
+  token. Matching Keychain state resumes normally. If local tuple state was
+  lost, recovery from the server tuple additionally requires matching current
+  or checkpoint canonical fingerprint, schema version and persisted export
+  receipt. Foreign ownership or any mismatch fails closed without claim
+  deletion, takeover or replacement.
+- A server claim already in `completed` is verification-only: matching content
+  returns without importing or reseeding. Completed state never authorizes a
+  fresh seed, and foreign tuples remain denied.
+- The bootstrap/recovery fingerprint is canonical-domain-only. It excludes
+  export time, sync metadata, reconciliation and receipt/probe bookkeeping,
+  per-record merge metadata, and the replay-derived `Word.statusRaw`,
+  `Meaning.successDays` and ReviewState. Stable IDs, source content,
+  relationships, Attempts, tombstones and delete state remain covered.
+- Manual snapshot recovery compares canonical fingerprints first. Equal
+  content reports no change and skips the asset write; differing content uses
+  a conditional full snapshot upload and aborts if server metadata changes
+  between inspection and save.
+- macOS Settings uses a resizable minimum/ideal window. Long claim/status text
+  is unbounded and selectable, and action groups adapt vertically when the
+  available width would otherwise truncate diagnostics.
+
 ## Remaining Work
 
 - Run the opt-in CloudKit integration path with
@@ -231,6 +274,9 @@ The first high-level plan was blocked because:
   edits on two signed devices before relying on cleanup of old tombstones.
 - Observe the V3 receipt/probe export boundary and subsequent mirrored import
   on a real signed Mac and iPhone using the same private CloudKit account.
+- Exercise Keychain/manifest tuple recovery and canonical snapshot skip against
+  that real private CloudKit environment; simulator and fake-service coverage
+  do not establish actual export/import behavior.
 - Do not record full feature approval until the opt-in CloudKit run and
   real-device bidirectional propagation checks have passed.
 
@@ -262,6 +308,12 @@ The first high-level plan was blocked because:
   passed without replacing real CloudKit observation.
 - Awaiting-bootstrap-metadata iOS Simulator build passed with signing disabled.
   This proves compilation, not real-device CloudKit export/import propagation.
+- Claim-recovery/canonical-fingerprint final macOS XCTest: 175 passed, 3 skips,
+  0 failures (`/tmp/VocabMinimalReworkFull-20260715.xcresult`). The skips were
+  two performance gates and the opt-in CloudKit integration test.
+- Claim-recovery/canonical-fingerprint iOS Simulator build passed with signing
+  disabled (`/tmp/VocabMinimalReworkIOS`). Real-device CloudKit behavior was
+  not exercised.
 
 - `git diff --check`
 - `./script/verify_changed.sh Vocab/App/VocabModelContainerFactory.swift VocabTests/App/VocabModelContainerFactoryTests.swift Docs/PerRecordCloudKitMirroringPlan.md`

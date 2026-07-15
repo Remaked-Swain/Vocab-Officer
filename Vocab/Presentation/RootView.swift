@@ -125,6 +125,7 @@ struct SettingsView: View {
     @State private var syncMessageIsError = false
     @State private var hydrationState: VocabHydrationState = .localOnly
     @State private var hydrationMessage: String?
+    @State private var serverClaimStatus: VocabBootstrapServerClaimStatus = .unavailable("아직 확인하지 않았습니다.")
 
     var body: some View {
         Form {
@@ -140,6 +141,7 @@ struct SettingsView: View {
                 LabeledContent("현재 저장 방식", value: VocabSyncMode.current(allowsCloudKit: true).displayName)
                 LabeledContent("CloudKit 컨테이너", value: VocabSyncMode.cloudKitContainerIdentifier)
                 LabeledContent("Hydration", value: hydrationState.rawValue)
+                claimStatusView
                 if let hydrationMessage {
                     Label(hydrationMessage, systemImage: hydrationState == .failed ? "exclamationmark.triangle" : "info.circle")
                         .foregroundStyle(hydrationState == .failed ? .red : .secondary)
@@ -147,21 +149,14 @@ struct SettingsView: View {
                 FeedbackPanel(items: cloudKitFeedbackItems)
                 Label("mirrored 모드에서는 snapshot batch 자동 동기화를 실행하지 않습니다.", systemImage: "checkmark.shield")
                     .foregroundStyle(.secondary)
-                HStack {
-                    Button {
-                        Task { await checkCloudKitStatus() }
-                    } label: {
-                        if isCheckingCloudKit {
-                            Label("확인 중", systemImage: "icloud")
-                        } else {
-                            Label("iCloud 상태 확인", systemImage: "icloud")
-                        }
+                ViewThatFits(in: .horizontal) {
+                    HStack {
+                        cloudStatusButton
+                        if isCheckingCloudKit { ProgressView().controlSize(.small) }
                     }
-                    .disabled(isCheckingCloudKit)
-
-                    if isCheckingCloudKit {
-                        ProgressView()
-                            .controlSize(.small)
+                    VStack(alignment: .leading) {
+                        cloudStatusButton
+                        if isCheckingCloudKit { ProgressView().controlSize(.small) }
                     }
                 }
 
@@ -189,25 +184,9 @@ struct SettingsView: View {
                     Text("현재 로컬 단어장을 별도 mirrored store로 복사 검증한 뒤, 다음 실행부터 SwiftData CloudKit mirroring 저장소를 사용합니다. 기존 `Vocab.store`는 삭제하지 않으며, mirrored store에 기존 데이터가 있으면 삭제 전파를 막기 위해 전환을 중단합니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
-                    HStack {
-                        Button {
-                            showMirroringConfirmation = true
-                        } label: {
-                            if isMigratingToMirroredStore {
-                                Label("전환 준비 중", systemImage: "icloud.and.arrow.up")
-                            } else {
-                                Label("per-record iCloud 저장소로 전환 준비", systemImage: "point.3.connected.trianglepath.dotted")
-                            }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(!canMigrateToMirroredStore)
-
-                        Button("로컬 저장 모드로 되돌리기") {
-                            UserDefaults.standard.set(VocabSyncMode.localOnly.rawValue, forKey: VocabSyncMode.userDefaultsKey)
-                            syncMessage = "다음 실행부터 기존 로컬 저장소를 사용합니다. mirrored store는 삭제하지 않았습니다."
-                            syncMessageIsError = false
-                        }
-                        .disabled(isMigratingToMirroredStore)
+                    ViewThatFits(in: .horizontal) {
+                        HStack { mirroringButton; localModeButton }
+                        VStack(alignment: .leading) { mirroringButton; localModeButton }
                     }
                     if isMigratingToMirroredStore {
                         ProgressView("mirrored store 이관 후 CloudKit export 성공을 확인하는 중입니다. 완료될 때까지 Mac 앱을 종료하지 마세요.")
@@ -266,9 +245,11 @@ struct SettingsView: View {
             }
         }
         .font(.body)
+        .lineLimit(nil)
+        .textSelection(.enabled)
         .controlSize(.large)
         .padding(24)
-        .frame(width: 480)
+        .frame(minWidth: 520, idealWidth: 680, minHeight: 520, idealHeight: 760)
         .task {
             await loadAPIKey()
             refreshHydrationStatus()
@@ -291,13 +272,54 @@ struct SettingsView: View {
             titleVisibility: .visible
         ) {
             Button("체크포인트 생성 후 mirrored store 준비") {
-                let token = VocabBootstrapTokenStore.pendingOrCreate()
-                Task { await migrateToMirroredStore(bootstrapToken: token) }
+                Task { await prepareAndMigrateToMirroredStore() }
             }
             Button("취소", role: .cancel) {}
         } message: {
             Text("기존 로컬 Vocab.store는 삭제하지 않습니다. mirrored store가 비어 있고 이관 검증이 성공한 경우에만 다음 앱 실행부터 적용됩니다.")
         }
+    }
+
+    @ViewBuilder
+    private var claimStatusView: some View {
+        let presentation = VocabBootstrapClaimSettingsPresentation(status: serverClaimStatus)
+        VStack(alignment: .leading, spacing: 4) {
+            LabeledContent("서버 bootstrap claim", value: presentation.summary)
+            if let details = presentation.details {
+                Text(details)
+                    .font(.caption.monospaced())
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    private var cloudStatusButton: some View {
+        Button { Task { await checkCloudKitStatus() } } label: {
+            Label(isCheckingCloudKit ? "확인 중" : "iCloud 상태 확인", systemImage: "icloud")
+        }
+        .disabled(isCheckingCloudKit)
+    }
+
+    private var mirroringButton: some View {
+        Button { showMirroringConfirmation = true } label: {
+            Label(
+                isMigratingToMirroredStore ? "전환 준비 중" : "per-record iCloud 저장소로 전환 준비",
+                systemImage: isMigratingToMirroredStore ? "icloud.and.arrow.up" : "point.3.connected.trianglepath.dotted"
+            )
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(!canMigrateToMirroredStore)
+    }
+
+    private var localModeButton: some View {
+        Button("로컬 저장 모드로 되돌리기") {
+            UserDefaults.standard.set(VocabSyncMode.localOnly.rawValue, forKey: VocabSyncMode.userDefaultsKey)
+            syncMessage = "다음 실행부터 기존 로컬 저장소를 사용합니다. mirrored store는 삭제하지 않았습니다."
+            syncMessageIsError = false
+        }
+        .disabled(isMigratingToMirroredStore)
     }
 
     private var cloudKitFeedbackItems: [FeedbackItem] {
@@ -340,6 +362,7 @@ struct SettingsView: View {
         isCheckingCloudKit = true
         defer { isCheckingCloudKit = false }
         cloudKitState = await VocabCloudKitStatusService().accountStatus()
+        serverClaimStatus = await VocabCloudKitBootstrapClaimService().fixedClaimStatus()
         refreshHydrationStatus()
     }
 
@@ -368,14 +391,16 @@ struct SettingsView: View {
                 destinationRoot: try localCheckpointRoot()
             )
             let result = try await VocabCloudSnapshotSyncService().uploadLocalSnapshot(context: modelContext)
-            syncMessage = "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 iCloud에 업로드했습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
+            syncMessage = result.disposition == .unchanged
+                ? "서버 복구 snapshot과 canonical fingerprint가 같습니다. 변경 없음. asset 업로드를 건너뛰었습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
+                : "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 iCloud에 업로드했습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
         } catch {
             syncMessage = userFacingSyncError(error)
             syncMessageIsError = true
         }
     }
 
-    private func migrateToMirroredStore(bootstrapToken: VocabBootstrapToken) async {
+    private func prepareAndMigrateToMirroredStore() async {
         guard !isMigratingToMirroredStore else { return }
         isMigratingToMirroredStore = true
         syncMessage = nil
@@ -383,24 +408,81 @@ struct SettingsView: View {
         defer { isMigratingToMirroredStore = false }
 
         do {
+            let claimService = VocabCloudKitBootstrapClaimService()
+            let status = await claimService.fixedClaimStatus()
+            serverClaimStatus = status
+            let credential = try VocabBootstrapTokenStore.load()
+            let localSnapshot = try VocabSyncSnapshotService.exportSnapshot(context: modelContext)
+            let fingerprint = try localSnapshot.contentFingerprint()
+            let manifest = try VocabBootstrapRecoveryManifestStore.load()
+            let receiptIsValid: Bool
+            if case .available(let claim) = status, credential?.request == nil {
+                let mirrored = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
+                let receipts = try ModelContext(mirrored).fetch(FetchDescriptor<BootstrapExportReceipt>())
+                receiptIsValid = receipts.contains {
+                    $0.requestID == claim.request.requestID
+                        && $0.fingerprint == claim.request.sourceFingerprint
+                        && !$0.storeUUID.isEmpty
+                        && $0.transactionCommittedAt > .distantPast
+                        && ($0.state == "awaitingExport" || $0.state == "exported")
+                }
+                withExtendedLifetime(mirrored) {}
+            } else {
+                receiptIsValid = credential?.request != nil
+            }
+            let decision = VocabBootstrapResumePolicy.decide(
+                serverStatus: status,
+                storedRequest: credential?.request,
+                currentCanonicalFingerprint: fingerprint,
+                checkpointManifest: manifest,
+                expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+                receiptIsValid: receiptIsValid
+            )
+            let token: VocabBootstrapToken
+            let existingClaimRequest: VocabBootstrapClaimRequest?
+            switch decision {
+            case .hydrateCompleted(let claim):
+                UserDefaults.standard.set(VocabSyncMode.cloudKitPrivate.rawValue, forKey: VocabSyncMode.userDefaultsKey)
+                syncMessage = "서버 bootstrap은 완료 상태입니다. 로컬 데이터를 다시 seed하지 않고 다음 실행부터 iCloud 레코드를 hydration합니다. claim \(claim.request.requestID.uuidString)"
+                return
+            case .createNew:
+                token = try VocabBootstrapTokenStore.createAndPersist().token
+                existingClaimRequest = nil
+            case .resume(let request), .recoverExisting(let request):
+                try VocabBootstrapTokenStore.persist(request)
+                token = VocabBootstrapToken(claimID: request.claimID, requestID: request.requestID)
+                existingClaimRequest = request
+            case .blocked(let message):
+                throw VocabBootstrapPreparationError.blocked(message)
+            }
             let mirroredContainer = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
             defer { withExtendedLifetime(mirroredContainer) {} }
             let mirroredStoreURL = try VocabModelContainerFactory.mirroredStoreURL()
             let report = try await VocabStoreMigrationService.claimAndMigrateLocalSnapshotToMirroredStore(
                 localContext: modelContext,
                 mirroredContext: ModelContext(mirroredContainer),
-                bootstrapToken: bootstrapToken,
-                claimService: VocabCloudKitBootstrapClaimService(),
+                bootstrapToken: token,
+                existingClaimRequest: existingClaimRequest,
+                claimService: claimService,
                 mirroredStoreURL: mirroredStoreURL,
                 exportObserver: VocabPersistentCloudKitExportObserver(),
                 createCheckpoint: {
                     let checkpoint = try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint()
                     _ = try VocabLocalStoreCheckpointStore.rehearseCheckpoint(checkpoint)
                     return checkpoint
+                },
+                persistClaimRequest: { request in
+                    try VocabBootstrapTokenStore.persist(request)
+                },
+                persistRecoveryManifest: { checkpoint, fingerprint, request in
+                    try VocabBootstrapRecoveryManifestStore.save(
+                        checkpoint: checkpoint,
+                        fingerprint: fingerprint,
+                        request: request
+                    )
                 }
             )
             UserDefaults.standard.set(VocabSyncMode.cloudKitPrivate.rawValue, forKey: VocabSyncMode.userDefaultsKey)
-            VocabBootstrapTokenStore.clear()
             syncMessage = "\(report.wordCount)개 단어, \(report.dailySetCount)개 세트, \(report.attemptCount)개 시도 기록의 CloudKit export 성공을 확인했습니다. 다음 앱 실행부터 per-record iCloud 저장소를 사용합니다. 체크포인트: \(report.checkpointDirectoryName)"
         } catch {
             syncMessage = userFacingSyncError(error)
@@ -469,6 +551,39 @@ struct SettingsView: View {
             return "로컬 저장소: \(try VocabModelContainerFactory.storeURL().path)"
         } catch {
             return "로컬 저장소 경로를 확인하지 못했습니다."
+        }
+    }
+}
+
+struct VocabBootstrapClaimSettingsPresentation: Equatable {
+    let summary: String
+    let details: String?
+
+    init(status: VocabBootstrapServerClaimStatus) {
+        switch status {
+        case .missing:
+            summary = "서버 claim 없음: Mac 최초 전환이 필요합니다."
+            details = nil
+        case .unavailable(let message):
+            summary = "서버 claim 확인 실패"
+            details = message
+        case .available(let claim):
+            switch claim.state {
+            case .claimed: summary = "Mac이 최초 업로드를 준비하고 있습니다."
+            case .seeding: summary = "Mac이 기존 단어장을 iCloud에 업로드하는 중입니다."
+            case .completed: summary = "최초 업로드 완료: 재업로드 없이 hydration합니다."
+            }
+            details = "claimID: \(claim.request.claimID.uuidString)\nrequestID: \(claim.request.requestID.uuidString)\nowner: \(claim.request.ownerDeviceID)\nfingerprint: \(claim.request.sourceFingerprint)\nschema: \(claim.request.schemaVersion)\ncreated: \(claim.createdAt.formatted())\nupdated: \(claim.updatedAt.formatted())"
+        }
+    }
+}
+
+private enum VocabBootstrapPreparationError: LocalizedError {
+    case blocked(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .blocked(let message): message
         }
     }
 }

@@ -12,6 +12,56 @@ struct VocabLocalStoreCheckpointRehearsal: Equatable {
     let attemptCount: Int
 }
 
+struct VocabBootstrapRecoveryManifest: Codable, Equatable {
+    let checkpointPath: String
+    let canonicalFingerprint: String
+    let claimRequest: VocabBootstrapClaimRequest
+    let createdAt: Date
+}
+
+enum VocabBootstrapRecoveryManifestStore {
+    static func save(
+        checkpoint: VocabLocalStoreCheckpoint,
+        fingerprint: String,
+        request: VocabBootstrapClaimRequest,
+        fileURL: URL? = nil
+    ) throws {
+        let destination = try fileURL ?? defaultURL()
+        try FileManager.default.createDirectory(
+            at: destination.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let manifest = VocabBootstrapRecoveryManifest(
+            checkpointPath: checkpoint.directory.path,
+            canonicalFingerprint: fingerprint,
+            claimRequest: request,
+            createdAt: .now
+        )
+        try JSONEncoder.vocabSnapshotEncoder.encode(manifest).write(to: destination, options: .atomic)
+    }
+
+    static func load(fileURL: URL? = nil) throws -> VocabBootstrapRecoveryManifest? {
+        let source = try fileURL ?? defaultURL()
+        guard FileManager.default.fileExists(atPath: source.path) else { return nil }
+        return try JSONDecoder.vocabSnapshotDecoder.decode(
+            VocabBootstrapRecoveryManifest.self,
+            from: Data(contentsOf: source)
+        )
+    }
+
+    static func defaultURL() throws -> URL {
+        try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        .appendingPathComponent("Vocab", isDirectory: true)
+        .appendingPathComponent("BootstrapRecovery", isDirectory: true)
+        .appendingPathComponent("manifest.json")
+    }
+}
+
 enum VocabLocalStoreCheckpointError: LocalizedError, Equatable {
     case missingPrimaryStore(URL)
 

@@ -194,8 +194,81 @@ extension VocabSyncSnapshot {
     func contentFingerprint() throws -> String {
         var normalized = self
         normalized.exportedAt = Date(timeIntervalSince1970: 0)
-        normalized.syncMetadata?.contentFingerprint = ""
-        normalized.syncMetadata?.createdAt = Date(timeIntervalSince1970: 0)
+        normalized.syncMetadata = nil
+        let deletionMarker = Date(timeIntervalSince1970: 0)
+        let tombstoned = Set(tombstones.map { "\($0.recordType):\($0.recordID.uuidString)" })
+        func isDeleted(_ recordType: String, _ id: UUID, _ deletedAt: Date?) -> Bool {
+            deletedAt != nil || tombstoned.contains("\(recordType):\(id.uuidString)")
+        }
+
+        normalized.words = normalized.words.map { word in
+            var word = word
+            word.updatedAt = nil
+            word.originDeviceID = nil
+            word.statusRaw = ""
+            word.deletedAt = isDeleted("WordRecord", word.id, word.deletedAt) ? deletionMarker : nil
+            word.meanings = word.meanings.map { meaning in
+                var meaning = meaning
+                meaning.updatedAt = nil
+                meaning.originDeviceID = nil
+                meaning.deletedAt = isDeleted("MeaningRecord", meaning.id, meaning.deletedAt) ? deletionMarker : nil
+                meaning.aliases.sort()
+                meaning.successDays = []
+                return meaning
+            }.sorted { $0.id.uuidString < $1.id.uuidString }
+            word.reviewState = nil
+            word.englishAliases.sort()
+            return word
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
+        normalized.dailySets = normalized.dailySets.map { set in
+            var set = set
+            set.updatedAt = nil
+            set.originDeviceID = nil
+            set.deletedAt = isDeleted("DailySetRecord", set.id, set.deletedAt) ? deletionMarker : nil
+            set.items = set.items.map { item in
+                var item = item
+                item.updatedAt = nil
+                item.originDeviceID = nil
+                item.deletedAt = isDeleted("DailySetItemRecord", item.id, item.deletedAt) ? deletionMarker : nil
+                return item
+            }.sorted { $0.id.uuidString < $1.id.uuidString }
+            return set
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
+        normalized.testSessions = normalized.testSessions.map { record in
+            var record = record
+            record.updatedAt = nil
+            record.originDeviceID = nil
+            record.deletedAt = record.deletedAt == nil ? nil : deletionMarker
+            return record
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
+        normalized.attempts = normalized.attempts.map { record in
+            var record = record
+            record.updatedAt = nil
+            record.originDeviceID = nil
+            record.deletedAt = record.deletedAt == nil ? nil : deletionMarker
+            return record
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
+        normalized.anonymousAggregates = normalized.anonymousAggregates.map { record in
+            var record = record
+            record.updatedAt = nil
+            record.originDeviceID = nil
+            record.deletedAt = record.deletedAt == nil ? nil : deletionMarker
+            return record
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
+        normalized.memoryAidCaches = normalized.memoryAidCaches.map { record in
+            var record = record
+            record.updatedAt = nil
+            record.originDeviceID = nil
+            record.deletedAt = record.deletedAt == nil ? nil : deletionMarker
+            return record
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
+        normalized.tombstones = normalized.tombstones.map { record in
+            var record = record
+            record.deletedAt = deletionMarker
+            record.updatedAt = nil
+            record.originDeviceID = ""
+            return record
+        }.sorted { $0.id.uuidString < $1.id.uuidString }
         let data = try JSONEncoder.vocabSnapshotEncoder.encode(normalized)
         let digest = SHA256.hash(data: data)
         return digest.map { String(format: "%02x", $0) }.joined()
@@ -980,11 +1053,18 @@ enum VocabStoreMigrationService {
         localContext: ModelContext,
         mirroredContext: ModelContext,
         bootstrapToken: VocabBootstrapToken,
+        existingClaimRequest: VocabBootstrapClaimRequest? = nil,
         claimService: any VocabBootstrapClaiming,
         mirroredStoreURL: URL,
         exportObserver: any VocabCloudExportObserving,
         exportTimeout: TimeInterval = 120,
         createCheckpoint: () throws -> VocabLocalStoreCheckpoint,
+        persistClaimRequest: (VocabBootstrapClaimRequest) throws -> Void = { _ in },
+        persistRecoveryManifest: (
+            VocabLocalStoreCheckpoint,
+            String,
+            VocabBootstrapClaimRequest
+        ) throws -> Void = { _, _, _ in },
         beforeImport: () throws -> Void = {}
     ) async throws -> VocabStoreMigrationReport {
 #if os(iOS)
@@ -1000,7 +1080,7 @@ enum VocabStoreMigrationService {
         guard let payload = sourceSnapshot.syncMetadata else {
             throw VocabSyncSnapshotService.SnapshotValidationError.missingSyncMetadata
         }
-        let claimRequest = VocabBootstrapClaimRequest(
+        let generatedRequest = VocabBootstrapClaimRequest(
             claimID: bootstrapToken.claimID,
             requestID: bootstrapToken.requestID,
             ownerDeviceID: VocabDeviceIdentity.current,
@@ -1008,6 +1088,20 @@ enum VocabStoreMigrationService {
             schemaVersion: payload.schemaVersion,
             createdAt: sourceSnapshot.exportedAt
         )
+        let claimRequest: VocabBootstrapClaimRequest
+        if let existingClaimRequest {
+            guard existingClaimRequest.claimID == bootstrapToken.claimID,
+                  existingClaimRequest.requestID == bootstrapToken.requestID,
+                  existingClaimRequest.sourceFingerprint == sourceFingerprint,
+                  existingClaimRequest.schemaVersion == payload.schemaVersion else {
+                throw VocabStoreMigrationError.bootstrapClaimMismatch
+            }
+            claimRequest = existingClaimRequest
+        } else {
+            claimRequest = generatedRequest
+        }
+        try persistClaimRequest(claimRequest)
+        try persistRecoveryManifest(checkpoint, sourceFingerprint, claimRequest)
         let claimResult = await claimService.claim(claimRequest)
         guard case .resumed(let approval) = claimResult else {
             guard case .denied(let reason) = claimResult else {

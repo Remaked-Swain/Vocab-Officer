@@ -1,6 +1,6 @@
 # Per-Record CloudKit Mirroring Plan
 
-> Implementation status (2026-07-14): mirrored mode no longer runs automatic
+> Implementation status (2026-07-15): mirrored mode no longer runs automatic
 > snapshot batch transport. iOS connects directly without seeding local data;
 > only Mac may perform guarded first bootstrap after both explicit confirmation
 > and an atomic private-CloudKit claim. Store-open failures are explicit and never fall back to a
@@ -39,6 +39,10 @@ not delete or rewrite the existing local store.
   because CloudKit mirroring must not depend on unique constraints.
 - Mirrored startup is gated by bootstrap metadata and expected entity counts.
   Mutation is unavailable until hydration reaches `ready`.
+- The bootstrap tuple and originating device ID are stored in Keychain. A
+  one-time migration moves the old pending UUID pair out of UserDefaults only
+  after the Keychain write succeeds. An Application Support recovery manifest
+  binds the checkpoint path, canonical domain fingerprint and full claim tuple.
 
 ## Non-Negotiable Safety Rules
 
@@ -91,8 +95,9 @@ The mode flag changes only after a migration transaction completes:
    export for the same store/request/fingerprint whose start is on or after the
    active receipt boundary. Export error or timeout leaves the claim at
    `seeding`.
-10. Only after that export succeeds, transition `seeding -> completed`. In
-   `completed`, verify and return success without another import.
+10. Only after that export succeeds, transition `seeding -> completed`. A
+   subsequently observed `completed` server claim switches to mirrored
+   hydration without invoking bootstrap import or reseeding.
 11. Reconcile tombstones and replay canonical Attempts only after completion.
 12. Persist `.cloudKitPrivate` and show completion only after server completion.
 13. Ask the user to relaunch, or rebuild the root container through an app-level
@@ -192,6 +197,17 @@ Implemented conflict shape:
 - Snapshot v2 carries and validates `updatedAt`, `originDeviceID` and
   `deletedAt` for every mirrored payload, includes all Attempts and tombstones
   in its fingerprint, and intentionally excludes the server bootstrap claim.
+- The canonical fingerprint is domain-only: export time, sync metadata,
+  reconciliation timestamps, receipt/probe state and per-record merge
+  bookkeeping do not change it. Record identity, content, relationships,
+  append-only facts and whether a record is deleted remain fingerprinted.
+  `Word.statusRaw`, `Meaning.successDays` and `ReviewState` are excluded because
+  they are replay-derived from canonical Attempts; replaying the same facts on
+  another device therefore cannot invalidate bootstrap recovery ownership.
+- Manual recovery upload compares the server snapshot's canonical fingerprint.
+  Equal content reports "변경 없음" and skips the asset write. Different
+  content uses a conditional full upload and aborts if the server metadata
+  changes between inspection and save.
 
 ### Phase 6: Resumable Atomic Bootstrap Claim (implemented, server integration pending)
 
@@ -207,6 +223,12 @@ Implemented conflict shape:
   verifies and returns without reseeding. Foreign ownership fails closed.
 - A local UI UUID token is only confirmation input. It cannot authorize import
   without matching server ownership and state.
+- Settings fetches the fixed server claim before creating any token and exposes
+  its full tuple, state and server times. `claimed`/`seeding` resumes only with
+  the matching Keychain tuple. If that tuple was lost, recovery additionally
+  requires matching current/checkpoint canonical fingerprint, schema and a
+  valid persisted export receipt. Foreign mismatch remains fail-closed; there
+  is no claim deletion or takeover path.
 - Local SwiftData save is not proof of CloudKit upload. The claim remains
   `seeding` until a successful, matching-store export event is observed. The
   Settings task strongly retains the bootstrap `ModelContainer` until export
@@ -226,6 +248,14 @@ Implemented conflict shape:
   refresh immediately. Polling runs only while the app is foreground-active and
   hydration is `awaitingBootstrapMetadata` or `hydrating`.
 
+### Phase 8: Mac Recovery Status UI (implemented)
+
+- Settings uses a resizable minimum/ideal window instead of a fixed width.
+  Long status and claim tuple text has no line limit and is selectable.
+- Button groups use `ViewThatFits` to fall back from horizontal to vertical
+  layout. Status text describes upload, completion and hydration without
+  claiming that eventual CloudKit propagation is already current.
+
 ## Verification Gates
 
 - Unit tests for URL separation and mode selection: passed.
@@ -236,11 +266,11 @@ Implemented conflict shape:
   tests: 42 passed, 0 failures (`/tmp/VocabReceiptFocused`); the final
   deterministic export-gate suite passed 12 of 12 tests.
 - macOS changed-file test suite: passed.
-- Final macOS XCTest: 163 passed, 3 skips, 0 failures
-  (`/tmp/VocabReceiptFinalFullMac`). The skips are two
+- Final macOS XCTest: 175 passed, 3 skips, 0 failures
+  (`/tmp/VocabMinimalReworkFull-20260715.xcresult`). The skips are two
   performance gates and the opt-in CloudKit integration test.
 - Final iOS simulator build: passed with signing disabled
-  (`/tmp/VocabReceiptFinalIOS`).
+  (`/tmp/VocabMinimalReworkIOS`).
 - Signed Mac Debug build: passed with an Apple Development identity
   (`/tmp/VocabFourthFinalSignedMac`). Strict deep verification passed, and the
   embedded entitlement dump and generated `.xcent` carry

@@ -19,7 +19,7 @@ final class VocabCloudReconciliationTests: XCTestCase {
 
         let seeding = VocabHydrationDiagnosticPolicy.diagnose(
             localStatus: local,
-            claimStatus: .available(.seeding),
+            claimStatus: .available(serverClaim(state: .seeding)),
             completedMetadataMissingSince: nil,
             now: now
         )
@@ -28,7 +28,7 @@ final class VocabCloudReconciliationTests: XCTestCase {
 
         let completed = VocabHydrationDiagnosticPolicy.diagnose(
             localStatus: local,
-            claimStatus: .available(.completed),
+            claimStatus: .available(serverClaim(state: .completed)),
             completedMetadataMissingSince: nil,
             now: now,
             gracePeriod: 30
@@ -38,13 +38,30 @@ final class VocabCloudReconciliationTests: XCTestCase {
 
         let timedOut = VocabHydrationDiagnosticPolicy.diagnose(
             localStatus: local,
-            claimStatus: .available(.completed),
+            claimStatus: .available(serverClaim(state: .completed)),
             completedMetadataMissingSince: now,
             now: now.addingTimeInterval(31),
             gracePeriod: 30
         )
         XCTAssertEqual(timedOut.state, .failed)
         XCTAssertTrue(timedOut.message?.contains("동기화 상태 다시 확인") == true)
+    }
+
+    private func serverClaim(state: VocabBootstrapClaimState) -> VocabBootstrapServerClaim {
+        let date = Date(timeIntervalSince1970: 900)
+        return VocabBootstrapServerClaim(
+            request: VocabBootstrapClaimRequest(
+                claimID: UUID(),
+                requestID: UUID(),
+                ownerDeviceID: "mac",
+                sourceFingerprint: "fingerprint",
+                schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+                createdAt: date
+            ),
+            state: state,
+            createdAt: date,
+            updatedAt: date
+        )
     }
 
     func testIOSManualRefreshImportEventAndPollingLifecyclePolicy() {

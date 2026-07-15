@@ -86,6 +86,32 @@ final class VocabLocalStoreCheckpointTests: XCTestCase {
         XCTAssertEqual(rehearsal.attemptCount, 0)
     }
 
+    func testBootstrapRecoveryManifestPersistsCheckpointFingerprintAndFullTuple() throws {
+        let root = try makeTemporaryRoot()
+        let manifestURL = root.appendingPathComponent("BootstrapRecovery/manifest.json")
+        let checkpoint = VocabLocalStoreCheckpoint(
+            directory: root.appendingPathComponent("checkpoint"),
+            copiedFiles: ["Vocab.store"]
+        )
+        let request = VocabBootstrapClaimRequest(
+            claimID: UUID(), requestID: UUID(), ownerDeviceID: "mac-origin",
+            sourceFingerprint: "canonical-domain", schemaVersion: 2,
+            createdAt: Date(timeIntervalSince1970: 123)
+        )
+
+        try VocabBootstrapRecoveryManifestStore.save(
+            checkpoint: checkpoint,
+            fingerprint: "canonical-domain",
+            request: request,
+            fileURL: manifestURL
+        )
+        let restored = try XCTUnwrap(VocabBootstrapRecoveryManifestStore.load(fileURL: manifestURL))
+
+        XCTAssertEqual(restored.checkpointPath, checkpoint.directory.path)
+        XCTAssertEqual(restored.canonicalFingerprint, "canonical-domain")
+        XCTAssertEqual(restored.claimRequest, request)
+    }
+
     private func makeTemporaryRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("VocabTests-\(UUID().uuidString)", isDirectory: true)
