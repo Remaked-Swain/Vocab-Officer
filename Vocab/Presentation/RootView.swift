@@ -1,3 +1,4 @@
+import AppKit
 import CloudKit
 import CoreData
 import SwiftData
@@ -35,6 +36,13 @@ struct RootView: View {
     @State private var studyCardFaceStates: [UUID: Bool] = [:]
     @State private var hydrationState: VocabHydrationState = .localOnly
     @State private var hydrationMessage: String?
+    @State private var isRecoveringBootstrap = false
+    @State private var bootstrapRecoveryMessage = ""
+    @State private var showBootstrapRestart = false
+    @State private var hydrationRefreshTask: Task<Void, Never>?
+    @State private var hasPendingHydrationRefresh = false
+    @State private var pendingRefreshRequiresReconciliation = false
+    @State private var reconciliationWorker: VocabCloudReconciliationWorker?
 
     var body: some View {
         NavigationSplitView {
@@ -52,6 +60,12 @@ struct RootView: View {
                     "저장소 연결 오류",
                     systemImage: "externaldrive.badge.exclamationmark",
                     description: Text(connectionError + " 설정에서 저장 모드와 복구 정보를 확인하세요.")
+                )
+            } else if isRecoveringBootstrap {
+                ContentUnavailableView(
+                    "iCloud 전환 복구 중",
+                    systemImage: "icloud.and.arrow.up",
+                    description: Text("검증된 기존 bootstrap 작업을 중단 지점부터 재개하고 있습니다. 단어장을 안전하게 유지하기 위해 완료 전에는 편집할 수 없습니다.")
                 )
             } else if hydrationState != .localOnly && hydrationState != .ready {
                 ContentUnavailableView(
@@ -72,21 +86,63 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 600)
-        .task { refreshHydration() }
+        .task {
+            scheduleHydrationRefresh(reason: .manual)
+            await resumeBootstrapIfNeeded()
+        }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            refreshHydration()
+            scheduleHydrationRefresh(reason: .manual)
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
-            refreshHydration()
+            scheduleHydrationRefresh(reason: .remoteStoreChange)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { notification in
+            guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
+            scheduleHydrationRefresh(reason: .successfulImport)
+        }
+        .alert("iCloud 전환 완료", isPresented: $showBootstrapRestart) {
+            Button("지금 다시 시작") { relaunchApplication() }
+            Button("나중에", role: .cancel) {}
+        } message: {
+            Text(bootstrapRecoveryMessage)
         }
     }
 
-    private func refreshHydration() {
+    @MainActor
+    private func scheduleHydrationRefresh(reason: VocabHydrationRefreshReason) {
+        hasPendingHydrationRefresh = true
+        if reason == .successfulImport {
+            pendingRefreshRequiresReconciliation = true
+        }
+        guard hydrationRefreshTask == nil else { return }
+        hydrationRefreshTask = Task { @MainActor in
+            // SwiftData can coalesce several remote notifications for one CloudKit transaction.
+            try? await Task.sleep(for: .milliseconds(300))
+            while hasPendingHydrationRefresh, !Task.isCancelled {
+                hasPendingHydrationRefresh = false
+                let reconcileAfterImport = pendingRefreshRequiresReconciliation
+                pendingRefreshRequiresReconciliation = false
+                await refreshHydration(reconcileAfterSuccessfulImport: reconcileAfterImport)
+            }
+            hydrationRefreshTask = nil
+        }
+    }
+
+    @MainActor
+    private func refreshHydration(reconcileAfterSuccessfulImport: Bool) async {
         do {
-            let status = try VocabCloudReconciler.hydrationStatus(context: modelContext, syncMode: syncMode)
-            if status.state == .reconciling || status.state == .ready || status.state == .localOnly {
-                let result = try VocabCloudReconciler.reconcile(context: modelContext, syncMode: syncMode)
+            let worker = await ensureReconciliationWorker()
+            let status = try await worker.hydrationStatus(syncMode: syncMode)
+            let reason: VocabHydrationRefreshReason = reconcileAfterSuccessfulImport
+                ? .successfulImport
+                : .manual
+            let needsReconciliation = VocabHydrationDiagnosticPolicy.shouldReconcile(
+                reason: reason,
+                state: status.state
+            )
+            if needsReconciliation {
+                let result = try await worker.reconcile(syncMode: syncMode)
                 hydrationState = result.state
                 hydrationMessage = result.message
             } else {
@@ -99,10 +155,59 @@ struct RootView: View {
         }
     }
 
+    @MainActor
+    private func ensureReconciliationWorker() async -> VocabCloudReconciliationWorker {
+        if let reconciliationWorker { return reconciliationWorker }
+        let worker = await VocabCloudReconciliationWorkerFactory.make(
+            modelContainer: modelContext.container
+        )
+        reconciliationWorker = worker
+        return worker
+    }
+
     private var hydrationDescription: String {
         let base = "현재 상태: \(hydrationState.rawValue). metadata와 예상 레코드가 모두 도착하기 전에는 학습 데이터를 변경하지 않습니다."
         guard let hydrationMessage, !hydrationMessage.isEmpty else { return base }
         return base + "\n\n" + hydrationMessage
+    }
+
+    @MainActor
+    private func resumeBootstrapIfNeeded() async {
+        guard syncMode == .localOnly,
+              ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        isRecoveringBootstrap = true
+        defer { isRecoveringBootstrap = false }
+        do {
+            let outcome = try await VocabBootstrapActivationService.activate(
+                localContext: modelContext,
+                allowsNewClaim: false
+            )
+            guard outcome.disposition == .restartRequired else { return }
+            UserDefaults.standard.removeObject(forKey: "vocabBootstrapAutoRecoveryLastError")
+            bootstrapRecoveryMessage = outcome.message
+            showBootstrapRestart = true
+        } catch {
+            UserDefaults.standard.set(
+                userFacingBootstrapRecoveryError(error),
+                forKey: "vocabBootstrapAutoRecoveryLastError"
+            )
+        }
+    }
+
+    private func userFacingBootstrapRecoveryError(_ error: Error) -> String {
+        if let localized = error as? LocalizedError, let description = localized.errorDescription {
+            return description
+        }
+        return "자동 복구를 완료하지 못했습니다. 설정에서 iCloud 상태를 다시 확인하세요."
+    }
+
+    private func relaunchApplication() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
+            guard error == nil else { return }
+            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+        }
     }
 }
 
@@ -126,9 +231,11 @@ struct SettingsView: View {
     @State private var hydrationState: VocabHydrationState = .localOnly
     @State private var hydrationMessage: String?
     @State private var serverClaimStatus: VocabBootstrapServerClaimStatus = .unavailable("아직 확인하지 않았습니다.")
+    @AppStorage("vocabBootstrapAutoRecoveryLastError") private var bootstrapAutoRecoveryLastError = ""
 
     var body: some View {
-        Form {
+        ScrollView {
+            Form {
             Picker("기본 테스트 모드", selection: $reviewDefaultMode) {
                 Text("오늘 신규").tag("today")
                 Text("복습").tag("review")
@@ -142,6 +249,13 @@ struct SettingsView: View {
                 LabeledContent("CloudKit 컨테이너", value: VocabSyncMode.cloudKitContainerIdentifier)
                 LabeledContent("Hydration", value: hydrationState.rawValue)
                 claimStatusView
+                if !bootstrapAutoRecoveryLastError.isEmpty {
+                    LabeledContent("마지막 자동 복구 진단") {
+                        Text(bootstrapAutoRecoveryLastError)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
                 if let hydrationMessage {
                     Label(hydrationMessage, systemImage: hydrationState == .failed ? "exclamationmark.triangle" : "info.circle")
                         .foregroundStyle(hydrationState == .failed ? .red : .secondary)
@@ -243,13 +357,17 @@ struct SettingsView: View {
                         .foregroundStyle(apiKeyError ? .red : .green)
                 }
             }
+            }
+            .formStyle(.grouped)
+            .frame(maxWidth: .infinity)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .font(.body)
         .lineLimit(nil)
         .textSelection(.enabled)
         .controlSize(.large)
-        .padding(24)
-        .frame(minWidth: 520, idealWidth: 680, minHeight: 520, idealHeight: 760)
+        .contentMargins(24, for: .scrollContent)
+        .frame(minWidth: 600, idealWidth: 820, minHeight: 480, idealHeight: 760)
         .task {
             await loadAPIKey()
             refreshHydrationStatus()
@@ -408,82 +526,12 @@ struct SettingsView: View {
         defer { isMigratingToMirroredStore = false }
 
         do {
-            let claimService = VocabCloudKitBootstrapClaimService()
-            let status = await claimService.fixedClaimStatus()
-            serverClaimStatus = status
-            let credential = try VocabBootstrapTokenStore.load()
-            let localSnapshot = try VocabSyncSnapshotService.exportSnapshot(context: modelContext)
-            let fingerprint = try localSnapshot.contentFingerprint()
-            let manifest = try VocabBootstrapRecoveryManifestStore.load()
-            let receiptIsValid: Bool
-            if case .available(let claim) = status, credential?.request == nil {
-                let mirrored = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
-                let receipts = try ModelContext(mirrored).fetch(FetchDescriptor<BootstrapExportReceipt>())
-                receiptIsValid = receipts.contains {
-                    $0.requestID == claim.request.requestID
-                        && $0.fingerprint == claim.request.sourceFingerprint
-                        && !$0.storeUUID.isEmpty
-                        && $0.transactionCommittedAt > .distantPast
-                        && ($0.state == "awaitingExport" || $0.state == "exported")
-                }
-                withExtendedLifetime(mirrored) {}
-            } else {
-                receiptIsValid = credential?.request != nil
-            }
-            let decision = VocabBootstrapResumePolicy.decide(
-                serverStatus: status,
-                storedRequest: credential?.request,
-                currentCanonicalFingerprint: fingerprint,
-                checkpointManifest: manifest,
-                expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion,
-                receiptIsValid: receiptIsValid
-            )
-            let token: VocabBootstrapToken
-            let existingClaimRequest: VocabBootstrapClaimRequest?
-            switch decision {
-            case .hydrateCompleted(let claim):
-                UserDefaults.standard.set(VocabSyncMode.cloudKitPrivate.rawValue, forKey: VocabSyncMode.userDefaultsKey)
-                syncMessage = "서버 bootstrap은 완료 상태입니다. 로컬 데이터를 다시 seed하지 않고 다음 실행부터 iCloud 레코드를 hydration합니다. claim \(claim.request.requestID.uuidString)"
-                return
-            case .createNew:
-                token = try VocabBootstrapTokenStore.createAndPersist().token
-                existingClaimRequest = nil
-            case .resume(let request), .recoverExisting(let request):
-                try VocabBootstrapTokenStore.persist(request)
-                token = VocabBootstrapToken(claimID: request.claimID, requestID: request.requestID)
-                existingClaimRequest = request
-            case .blocked(let message):
-                throw VocabBootstrapPreparationError.blocked(message)
-            }
-            let mirroredContainer = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
-            defer { withExtendedLifetime(mirroredContainer) {} }
-            let mirroredStoreURL = try VocabModelContainerFactory.mirroredStoreURL()
-            let report = try await VocabStoreMigrationService.claimAndMigrateLocalSnapshotToMirroredStore(
+            let outcome = try await VocabBootstrapActivationService.activate(
                 localContext: modelContext,
-                mirroredContext: ModelContext(mirroredContainer),
-                bootstrapToken: token,
-                existingClaimRequest: existingClaimRequest,
-                claimService: claimService,
-                mirroredStoreURL: mirroredStoreURL,
-                exportObserver: VocabPersistentCloudKitExportObserver(),
-                createCheckpoint: {
-                    let checkpoint = try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint()
-                    _ = try VocabLocalStoreCheckpointStore.rehearseCheckpoint(checkpoint)
-                    return checkpoint
-                },
-                persistClaimRequest: { request in
-                    try VocabBootstrapTokenStore.persist(request)
-                },
-                persistRecoveryManifest: { checkpoint, fingerprint, request in
-                    try VocabBootstrapRecoveryManifestStore.save(
-                        checkpoint: checkpoint,
-                        fingerprint: fingerprint,
-                        request: request
-                    )
-                }
+                allowsNewClaim: true
             )
-            UserDefaults.standard.set(VocabSyncMode.cloudKitPrivate.rawValue, forKey: VocabSyncMode.userDefaultsKey)
-            syncMessage = "\(report.wordCount)개 단어, \(report.dailySetCount)개 세트, \(report.attemptCount)개 시도 기록의 CloudKit export 성공을 확인했습니다. 다음 앱 실행부터 per-record iCloud 저장소를 사용합니다. 체크포인트: \(report.checkpointDirectoryName)"
+            syncMessage = outcome.message
+            serverClaimStatus = await VocabCloudKitBootstrapClaimService().fixedClaimStatus()
         } catch {
             syncMessage = userFacingSyncError(error)
             syncMessageIsError = true
@@ -574,16 +622,6 @@ struct VocabBootstrapClaimSettingsPresentation: Equatable {
             case .completed: summary = "최초 업로드 완료: 재업로드 없이 hydration합니다."
             }
             details = "claimID: \(claim.request.claimID.uuidString)\nrequestID: \(claim.request.requestID.uuidString)\nowner: \(claim.request.ownerDeviceID)\nfingerprint: \(claim.request.sourceFingerprint)\nschema: \(claim.request.schemaVersion)\ncreated: \(claim.createdAt.formatted())\nupdated: \(claim.updatedAt.formatted())"
-        }
-    }
-}
-
-private enum VocabBootstrapPreparationError: LocalizedError {
-    case blocked(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .blocked(let message): message
         }
     }
 }

@@ -87,6 +87,154 @@ final class VocabCloudReconciliationTests: XCTestCase {
             reason: .pollingTick(sceneIsActive: true),
             state: .failed
         ))
+        XCTAssertEqual(
+            (0..<VocabHydrationDiagnosticPolicy.bootstrapPollingDelays.count)
+                .compactMap(VocabHydrationDiagnosticPolicy.pollingDelay(attempt:)),
+            [5, 10, 20, 40, 60]
+        )
+        XCTAssertNil(VocabHydrationDiagnosticPolicy.pollingDelay(attempt: 5))
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.shouldReconcile(reason: .manual, state: .ready))
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.shouldReconcile(reason: .remoteStoreChange, state: .ready))
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldReconcile(reason: .successfulImport, state: .ready))
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldReconcile(reason: .manual, state: .reconciling))
+    }
+
+    func testRefreshQueueCoalescesConcurrentImportArrivalsWithoutDroppingReconciliation() async {
+        let queue = VocabHydrationRefreshQueue()
+        let started = await queue.enqueue(.manual)
+        let activeReason = await queue.dequeue()
+        XCTAssertTrue(started)
+        XCTAssertEqual(activeReason, .manual)
+
+        let starts = await withTaskGroup(of: Bool.self, returning: [Bool].self) { group in
+            for index in 0..<20 {
+                group.addTask {
+                    await queue.enqueue(index.isMultiple(of: 2) ? .successfulImport : .remoteStoreChange)
+                }
+            }
+            var values: [Bool] = []
+            for await value in group { values.append(value) }
+            return values
+        }
+
+        XCTAssertTrue(starts.allSatisfy { !$0 }, "The active drain must own all competing requests")
+        let pending = await queue.dequeue()
+        XCTAssertEqual(pending, .successfulImport)
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldReconcile(reason: pending!, state: .ready))
+        let remaining = await queue.dequeue()
+        XCTAssertNil(remaining, "Concurrent import events must collapse into one follow-up pass")
+    }
+
+    func testWorkerIsCreatedOffMainAndRoutineHydrationPollingKeepsMainActorHeartbeatBelow100Milliseconds() async throws {
+        let fixtureCount = 1_000
+        let container = try makeHeartbeatFixtureContainer(count: fixtureCount)
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(
+            modelContainer: container
+        )
+        let wasCreatedOnMainThread = await worker.wasCreatedOnMainThread()
+        XCTAssertFalse(wasCreatedOnMainThread)
+
+        let heartbeat = Task { @MainActor in
+            var previous = Date.now
+            var maximumGap: TimeInterval = 0
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .milliseconds(10))
+                } catch {
+                    break
+                }
+                let now = Date.now
+                maximumGap = max(maximumGap, now.timeIntervalSince(previous))
+                previous = now
+            }
+            return maximumGap
+        }
+        try await Task.sleep(for: .milliseconds(25))
+        for _ in 0..<20 {
+            _ = try await worker.hydrationStatus(syncMode: .cloudKitPrivate)
+        }
+        heartbeat.cancel()
+        let maximumGap = await heartbeat.value
+
+        XCTAssertGreaterThan(maximumGap, 0, "Fixture must run long enough to sample the main actor")
+        XCTAssertLessThan(maximumGap, 0.100, "Hydration polling blocked the main actor for \(maximumGap)s")
+    }
+
+    func testSingleImportedAttemptChangesOnlyItsWordAndLeavesReadyMetadataStable() throws {
+        let context = try makeContext()
+        let affected = WordRecord(term: "affected")
+        let unaffected = WordRecord(term: "unaffected")
+        let affectedMeaning = MeaningRecord(text: "영향")
+        let unaffectedMeaning = MeaningRecord(text: "무관")
+        affectedMeaning.word = affected
+        unaffectedMeaning.word = unaffected
+        affected.appendMeaning(affectedMeaning)
+        unaffected.appendMeaning(unaffectedMeaning)
+        let affectedState = ReviewStateRecord()
+        let unaffectedState = ReviewStateRecord()
+        affectedState.updatedAt = affected.updatedAt
+        unaffectedState.updatedAt = unaffected.updatedAt
+        affected.reviewState = affectedState
+        unaffected.reviewState = unaffectedState
+        [affected, unaffected].forEach(context.insert)
+        [affectedMeaning, unaffectedMeaning].forEach(context.insert)
+        [affectedState, unaffectedState].forEach(context.insert)
+        let reconciledAt = Date(timeIntervalSince1970: 500)
+        let metadata = readyMetadata()
+        metadata.expectedWordCount = 2
+        metadata.expectedMeaningCount = 2
+        metadata.lastReconciledAt = reconciledAt
+        metadata.updatedAt = reconciledAt
+        context.insert(metadata)
+        try context.save()
+
+        let unaffectedBefore = (
+            unaffectedState.failureCheck,
+            unaffectedState.activePriority,
+            unaffectedState.lastTestedAt,
+            unaffectedState.updatedAt,
+            unaffectedMeaning.successDays
+        )
+        let answeredAt = Date(timeIntervalSince1970: 700)
+        let attempt = makeAttempt(word: affected, result: .incorrect, answeredAt: answeredAt)
+        affected.appendAttempt(attempt)
+        context.insert(attempt)
+        try context.save()
+
+        _ = try VocabCloudReconciler.reconcile(context: context, syncMode: .cloudKitPrivate)
+
+        XCTAssertEqual(affectedState.failureCheck, 1)
+        XCTAssertEqual(affectedState.lastTestedAt, answeredAt)
+        XCTAssertEqual(unaffectedState.failureCheck, unaffectedBefore.0)
+        XCTAssertEqual(unaffectedState.activePriority, unaffectedBefore.1)
+        XCTAssertEqual(unaffectedState.lastTestedAt, unaffectedBefore.2)
+        XCTAssertEqual(unaffectedState.updatedAt, unaffectedBefore.3)
+        XCTAssertEqual(unaffectedMeaning.successDays, unaffectedBefore.4)
+        XCTAssertEqual(metadata.lastReconciledAt, reconciledAt)
+        XCTAssertEqual(metadata.updatedAt, reconciledAt)
+        XCTAssertFalse(context.hasChanges)
+    }
+
+    func testReadyReconciliationDoesNotAdvanceMetadataOrLeaveUnsavedChanges() throws {
+        let context = try makeContext()
+        let reconciledAt = Date(timeIntervalSince1970: 1_000)
+        let metadata = readyMetadata()
+        metadata.lastReconciledAt = reconciledAt
+        metadata.updatedAt = reconciledAt
+        context.insert(metadata)
+        try context.save()
+
+        let result = try VocabCloudReconciler.reconcile(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            now: Date(timeIntervalSince1970: 2_000)
+        )
+
+        XCTAssertEqual(result.state, .ready)
+        XCTAssertEqual(metadata.lastReconciledAt, reconciledAt)
+        XCTAssertEqual(metadata.updatedAt, reconciledAt)
+        XCTAssertFalse(context.hasChanges)
     }
 
     func testHydrationGateBlocksMissingMetadataAndIncompleteCounts() throws {
@@ -364,6 +512,44 @@ final class VocabCloudReconciliationTests: XCTestCase {
             for: schema,
             configurations: ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         ))
+    }
+
+    private func makeHeartbeatFixtureContainer(count: Int) throws -> ModelContainer {
+        let persistent = try makePersistentContainer()
+        let context = ModelContext(persistent.container)
+        for index in 0..<count {
+            let word = WordRecord(term: "heartbeat-\(index)")
+            let meaning = MeaningRecord(text: "뜻-\(index)")
+            meaning.word = word
+            word.appendMeaning(meaning)
+            let state = ReviewStateRecord()
+            let answeredAt = Date(timeIntervalSince1970: Double(10_000 + index))
+            let successDay = SeoulCalendar.day(for: answeredAt)
+            state.enToKoStreak = 1
+            state.lastTestedAt = answeredAt
+            state.updatedAt = answeredAt
+            meaning.successDays = [successDay]
+            word.reviewState = state
+            context.insert(word)
+            context.insert(meaning)
+            context.insert(state)
+            let attempt = makeAttempt(
+                word: word,
+                result: .correct,
+                answeredAt: answeredAt,
+                sessionID: UUID()
+            )
+            word.appendAttempt(attempt)
+            context.insert(attempt)
+        }
+        let metadata = readyMetadata()
+        metadata.expectedWordCount = count
+        metadata.expectedMeaningCount = count
+        metadata.expectedAttemptCount = count
+        metadata.lastReconciledAt = Date(timeIntervalSince1970: 1)
+        context.insert(metadata)
+        try context.save()
+        return persistent.container
     }
 
     private func makePersistentContainer() throws -> (container: ModelContainer, directory: URL) {

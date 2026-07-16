@@ -1,6 +1,7 @@
 import CloudKit
 import CoreData
 import Foundation
+import SwiftData
 
 enum VocabBootstrapClaimState: String, Equatable {
     case claimed
@@ -703,15 +704,380 @@ struct VocabHydrationDiagnosis: Equatable {
     let completedMetadataMissingSince: Date?
 }
 
-enum VocabHydrationRefreshReason: Equatable {
+enum VocabHydrationRefreshReason: Equatable, Sendable {
     case manual
     case remoteStoreChange
     case successfulImport
     case pollingTick(sceneIsActive: Bool)
 }
 
+actor VocabHydrationRefreshQueue {
+    private var pendingReason: VocabHydrationRefreshReason?
+    private var isDraining = false
+
+    func enqueue(_ reason: VocabHydrationRefreshReason) -> Bool {
+        pendingReason = Self.merge(pendingReason, reason)
+        guard !isDraining else { return false }
+        isDraining = true
+        return true
+    }
+
+    func dequeue() -> VocabHydrationRefreshReason? {
+        guard let pendingReason else {
+            isDraining = false
+            return nil
+        }
+        self.pendingReason = nil
+        return pendingReason
+    }
+
+    private static func merge(
+        _ existing: VocabHydrationRefreshReason?,
+        _ incoming: VocabHydrationRefreshReason
+    ) -> VocabHydrationRefreshReason {
+        guard let existing else { return incoming }
+        if existing == .successfulImport || incoming == .successfulImport {
+            return .successfulImport
+        }
+        if existing == .manual || incoming == .manual {
+            return .manual
+        }
+        if existing == .remoteStoreChange || incoming == .remoteStoreChange {
+            return .remoteStoreChange
+        }
+        return incoming
+    }
+}
+
+#if os(macOS)
+struct VocabBootstrapActivationOutcome: Equatable {
+    enum Disposition: Equatable {
+        case noAction
+        case restartRequired
+    }
+
+    let disposition: Disposition
+    let message: String
+}
+
+enum VocabBootstrapActivationError: LocalizedError {
+    case blocked(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .blocked(let message): message
+        }
+    }
+}
+
+@MainActor
+enum VocabBootstrapActivationService {
+    static func activate(
+        localContext: ModelContext,
+        allowsNewClaim: Bool,
+        claimService: VocabCloudKitBootstrapClaimService = VocabCloudKitBootstrapClaimService()
+    ) async throws -> VocabBootstrapActivationOutcome {
+        let status = await claimService.fixedClaimStatus()
+        let credential = try VocabBootstrapTokenStore.load()
+        let localSnapshot = try VocabSyncSnapshotService.exportSnapshot(context: localContext)
+        let fingerprint = try localSnapshot.contentFingerprint()
+        let manifest = try VocabBootstrapRecoveryManifestStore.load()
+        if let outcome = try await recoverLegacySeedingIfVerified(
+            localFingerprint: fingerprint,
+            credential: credential,
+            serverStatus: status,
+            claimService: claimService
+        ) {
+            return outcome
+        }
+        let storedRequest = recoveredStoredRequest(
+            credential: credential,
+            serverStatus: status,
+            currentCanonicalFingerprint: fingerprint
+        )
+        let legacyRecoveryDiagnostic = legacyRecoveryDiagnostic(
+            credential: credential,
+            serverStatus: status,
+            currentCanonicalFingerprint: fingerprint
+        )
+        let receiptIsValid: Bool
+        if storedRequest != nil {
+            receiptIsValid = true
+        } else {
+            receiptIsValid = try validReceiptExists(status: status, credential: credential)
+        }
+        let decision = VocabBootstrapResumePolicy.decide(
+            serverStatus: status,
+            storedRequest: storedRequest,
+            currentCanonicalFingerprint: fingerprint,
+            checkpointManifest: manifest,
+            expectedSchemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            receiptIsValid: receiptIsValid
+        )
+
+        let token: VocabBootstrapToken
+        let existingClaimRequest: VocabBootstrapClaimRequest?
+        switch decision {
+        case .hydrateCompleted(let claim):
+            enableMirroredMode()
+            return VocabBootstrapActivationOutcome(
+                disposition: .restartRequired,
+                message: "서버 bootstrap 완료를 확인했습니다. Vocab을 다시 열면 iCloud 단어장을 사용합니다. claim \(claim.request.requestID.uuidString)"
+            )
+        case .createNew where !allowsNewClaim:
+            return VocabBootstrapActivationOutcome(
+                disposition: .noAction,
+                message: "기존 bootstrap 작업이 없어 자동 전환하지 않았습니다. 최초 전환은 설정에서 직접 승인해야 합니다."
+            )
+        case .createNew:
+            token = try VocabBootstrapTokenStore.createAndPersist().token
+            existingClaimRequest = nil
+        case .resume(let request), .recoverExisting(let request):
+            try VocabBootstrapTokenStore.persist(request)
+            token = VocabBootstrapToken(claimID: request.claimID, requestID: request.requestID)
+            existingClaimRequest = request
+        case .blocked(let message):
+            throw VocabBootstrapActivationError.blocked("\(message) 자동 진단: \(legacyRecoveryDiagnostic)")
+        }
+
+        let mirroredContainer = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
+        defer { withExtendedLifetime(mirroredContainer) {} }
+        let report = try await VocabStoreMigrationService.claimAndMigrateLocalSnapshotToMirroredStore(
+            localContext: localContext,
+            mirroredContext: ModelContext(mirroredContainer),
+            bootstrapToken: token,
+            existingClaimRequest: existingClaimRequest,
+            claimService: claimService,
+            mirroredStoreURL: try VocabModelContainerFactory.mirroredStoreURL(),
+            exportObserver: VocabPersistentCloudKitExportObserver(),
+            createCheckpoint: {
+                let checkpoint = try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint()
+                _ = try VocabLocalStoreCheckpointStore.rehearseCheckpoint(checkpoint)
+                return checkpoint
+            },
+            persistClaimRequest: { request in
+                try VocabBootstrapTokenStore.persist(request)
+            },
+            persistRecoveryManifest: { checkpoint, fingerprint, request in
+                try VocabBootstrapRecoveryManifestStore.save(
+                    checkpoint: checkpoint,
+                    fingerprint: fingerprint,
+                    request: request
+                )
+            }
+        )
+        enableMirroredMode()
+        return VocabBootstrapActivationOutcome(
+            disposition: .restartRequired,
+            message: "\(report.wordCount)개 단어와 \(report.dailySetCount)개 세트의 CloudKit export를 확인했습니다. Vocab을 다시 열면 레코드 단위 자동 동기화가 시작됩니다."
+        )
+    }
+
+    private static func recoverLegacySeedingIfVerified(
+        localFingerprint: String,
+        credential: VocabBootstrapTokenStore.Credential?,
+        serverStatus: VocabBootstrapServerClaimStatus,
+        claimService: VocabCloudKitBootstrapClaimService
+    ) async throws -> VocabBootstrapActivationOutcome? {
+        guard let credential, credential.request == nil,
+              case .available(let claim) = serverStatus,
+              claim.state == .claimed || claim.state == .seeding,
+              credential.token.claimID == claim.request.claimID,
+              credential.token.requestID == claim.request.requestID,
+              credential.originDeviceID == claim.request.ownerDeviceID,
+              claim.request.schemaVersion == VocabCloudReconciler.metadataSchemaVersion,
+              claim.request.sourceFingerprint != localFingerprint else {
+            return nil
+        }
+
+        let mirroredContainer = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
+        defer { withExtendedLifetime(mirroredContainer) {} }
+        let mirroredContext = ModelContext(mirroredContainer)
+        let mirroredSnapshot = try VocabSyncSnapshotService.exportSnapshot(context: mirroredContext)
+        let mirroredFingerprint = try mirroredSnapshot.contentFingerprint()
+        let metadata = mirroredSnapshot.syncMetadata
+        let actualCounts = try VocabCloudReconciler.counts(context: mirroredContext)
+        guard let metadata,
+              legacySnapshotsMatch(
+                localFingerprint: localFingerprint,
+                mirroredFingerprint: mirroredFingerprint,
+                metadataFingerprint: metadata.contentFingerprint,
+                expectedCounts: metadata.expectedCounts,
+                actualCounts: actualCounts
+              ),
+              metadata.bootstrapUUID == claim.request.requestID,
+              metadata.schemaVersion == claim.request.schemaVersion,
+              metadata.originDeviceID == claim.request.ownerDeviceID else {
+            return nil
+        }
+        let hydration = try VocabCloudReconciler.hydrationStatus(
+            context: mirroredContext,
+            syncMode: .cloudKitPrivate
+        )
+        guard hydration.state == .ready || hydration.state == .reconciling else { return nil }
+
+        let checkpoint = try VocabLocalStoreCheckpointStore.createDefaultStoreCheckpoint()
+        _ = try VocabLocalStoreCheckpointStore.rehearseCheckpoint(checkpoint)
+        try VocabBootstrapTokenStore.persist(claim.request)
+        try VocabBootstrapRecoveryManifestStore.save(
+            checkpoint: checkpoint,
+            fingerprint: localFingerprint,
+            request: claim.request
+        )
+
+        if claim.state == .claimed {
+            let seedingTransition = await claimService.transition(
+                claim.request,
+                from: .claimed,
+                to: .seeding
+            )
+            guard case .resumed(let approval) = seedingTransition,
+                  approval.request == claim.request,
+                  approval.state == .seeding else {
+                throw VocabBootstrapActivationError.blocked("legacy bootstrap의 seeding 전환을 확인하지 못했습니다.")
+            }
+        }
+
+        let expectation = try VocabPersistentCloudKitExportObserver().beginWaiting(
+            storeURL: try VocabModelContainerFactory.mirroredStoreURL(),
+            requestID: claim.request.requestID,
+            fingerprint: claim.request.sourceFingerprint,
+            receiptMatches: { boundary in
+                let receipts = try? mirroredContext.fetch(FetchDescriptor<BootstrapExportReceipt>())
+                return receipts?.contains {
+                    $0.requestID == boundary.requestID
+                        && $0.fingerprint == boundary.fingerprint
+                        && $0.storeUUID == boundary.storeUUID
+                        && $0.transactionCommittedAt == boundary.transactionCommittedAt
+                        && $0.probeGeneration == boundary.probeGeneration
+                        && $0.nonce == boundary.nonce
+                        && $0.state == "awaitingExport"
+                } == true
+            }
+        )
+        let exportNotBefore = Date.now
+        let receipt = BootstrapExportReceipt(
+            requestID: claim.request.requestID,
+            fingerprint: claim.request.sourceFingerprint,
+            storeUUID: expectation.storeIdentifier,
+            transactionCommittedAt: exportNotBefore
+        )
+        mirroredContext.insert(receipt)
+        try mirroredContext.save()
+        let boundary = VocabBootstrapExportBoundary(
+            requestID: receipt.requestID,
+            fingerprint: receipt.fingerprint,
+            storeUUID: receipt.storeUUID,
+            transactionCommittedAt: receipt.transactionCommittedAt,
+            exportNotBefore: exportNotBefore,
+            probeGeneration: receipt.probeGeneration,
+            nonce: receipt.nonce
+        )
+        expectation.setCommittedBoundary(boundary)
+        try await expectation.waitForResult(timeout: 120)
+        receipt.state = "exported"
+        try mirroredContext.save()
+
+        let transition = await claimService.transition(
+            claim.request,
+            from: .seeding,
+            to: .completed
+        )
+        guard case .resumed(let approval) = transition,
+              approval.request == claim.request,
+              approval.state == .completed else {
+            throw VocabBootstrapActivationError.blocked("legacy bootstrap export 후 서버 완료 전환을 확인하지 못했습니다.")
+        }
+        _ = try VocabCloudReconciler.reconcile(context: mirroredContext, syncMode: .cloudKitPrivate)
+        enableMirroredMode()
+        return VocabBootstrapActivationOutcome(
+            disposition: .restartRequired,
+            message: "기존 fingerprint 규칙으로 중단된 bootstrap을 실제 local/mirrored 데이터 일치 검증 후 완료했습니다. Vocab을 다시 열면 레코드 단위 자동 동기화가 시작됩니다."
+        )
+    }
+
+    static func legacySnapshotsMatch(
+        localFingerprint: String,
+        mirroredFingerprint: String,
+        metadataFingerprint: String,
+        expectedCounts: VocabEntityCounts,
+        actualCounts: VocabEntityCounts
+    ) -> Bool {
+        localFingerprint == mirroredFingerprint
+            && metadataFingerprint == mirroredFingerprint
+            && expectedCounts == actualCounts
+    }
+
+    static func recoveredStoredRequest(
+        credential: VocabBootstrapTokenStore.Credential?,
+        serverStatus: VocabBootstrapServerClaimStatus,
+        currentCanonicalFingerprint: String
+    ) -> VocabBootstrapClaimRequest? {
+        guard let credential else { return nil }
+        if let request = credential.request { return request }
+        guard case .available(let serverClaim) = serverStatus,
+              credential.token.claimID == serverClaim.request.claimID,
+              credential.token.requestID == serverClaim.request.requestID,
+              credential.originDeviceID == serverClaim.request.ownerDeviceID,
+              currentCanonicalFingerprint == serverClaim.request.sourceFingerprint,
+              serverClaim.request.schemaVersion == VocabCloudReconciler.metadataSchemaVersion else {
+            return nil
+        }
+        return serverClaim.request
+    }
+
+    static func legacyRecoveryDiagnostic(
+        credential: VocabBootstrapTokenStore.Credential?,
+        serverStatus: VocabBootstrapServerClaimStatus,
+        currentCanonicalFingerprint: String
+    ) -> String {
+        guard let credential else { return "Keychain claim 자격 증명이 없습니다." }
+        if credential.request != nil { return "Keychain에 완전한 claim tuple이 있습니다." }
+        guard case .available(let serverClaim) = serverStatus else { return "서버 claim을 읽지 못했습니다." }
+        guard credential.token.claimID == serverClaim.request.claimID,
+              credential.token.requestID == serverClaim.request.requestID else {
+            return "Keychain token과 서버 claim 식별자가 다릅니다."
+        }
+        guard credential.originDeviceID == serverClaim.request.ownerDeviceID else {
+            return "claim 원본 기기가 현재 Keychain 자격 증명과 다릅니다."
+        }
+        guard serverClaim.request.schemaVersion == VocabCloudReconciler.metadataSchemaVersion else {
+            return "claim schema version이 현재 앱과 다릅니다."
+        }
+        guard currentCanonicalFingerprint == serverClaim.request.sourceFingerprint else {
+            return "현재 로컬 단어장의 canonical fingerprint가 서버 claim과 다릅니다."
+        }
+        return "legacy claim의 안전 조건이 모두 일치합니다."
+    }
+
+    private static func validReceiptExists(
+        status: VocabBootstrapServerClaimStatus,
+        credential: VocabBootstrapTokenStore.Credential?
+    ) throws -> Bool {
+        guard case .available(let claim) = status, credential?.request == nil else {
+            return credential?.request != nil
+        }
+        let mirrored = try VocabModelContainerFactory.makeContainer(syncMode: .cloudKitPrivate)
+        defer { withExtendedLifetime(mirrored) {} }
+        let receipts = try ModelContext(mirrored).fetch(FetchDescriptor<BootstrapExportReceipt>())
+        return receipts.contains {
+            $0.requestID == claim.request.requestID
+                && $0.fingerprint == claim.request.sourceFingerprint
+                && !$0.storeUUID.isEmpty
+                && $0.transactionCommittedAt > .distantPast
+                && ($0.state == "awaitingExport" || $0.state == "exported")
+        }
+    }
+
+    private static func enableMirroredMode() {
+        UserDefaults.standard.set(VocabSyncMode.cloudKitPrivate.rawValue, forKey: VocabSyncMode.userDefaultsKey)
+    }
+}
+#endif
+
 enum VocabHydrationDiagnosticPolicy {
     static let completedMetadataGracePeriod: TimeInterval = 60
+    static let bootstrapPollingDelays: [TimeInterval] = [5, 10, 20, 40, 60]
 
     static func diagnose(
         localStatus: VocabHydrationStatus,
@@ -774,6 +1140,11 @@ enum VocabHydrationDiagnosticPolicy {
         sceneIsActive && (state == .awaitingBootstrapMetadata || state == .hydrating)
     }
 
+    static func pollingDelay(attempt: Int) -> TimeInterval? {
+        guard bootstrapPollingDelays.indices.contains(attempt) else { return nil }
+        return bootstrapPollingDelays[attempt]
+    }
+
     static func shouldRefresh(reason: VocabHydrationRefreshReason, state: VocabHydrationState) -> Bool {
         switch reason {
         case .manual, .remoteStoreChange, .successfulImport:
@@ -781,6 +1152,10 @@ enum VocabHydrationDiagnosticPolicy {
         case .pollingTick(let sceneIsActive):
             shouldPoll(sceneIsActive: sceneIsActive, state: state)
         }
+    }
+
+    static func shouldReconcile(reason: VocabHydrationRefreshReason, state: VocabHydrationState) -> Bool {
+        state == .reconciling || (reason == .successfulImport && state == .ready)
     }
 
     static func isSuccessfulImportEvent(_ notification: Notification) -> Bool {

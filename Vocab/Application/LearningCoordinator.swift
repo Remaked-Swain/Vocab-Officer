@@ -272,7 +272,6 @@ extension WordRecord {
     }
 }
 
-@MainActor
 final class LearningCoordinator {
     private let context: ModelContext
     private let syncMode: VocabSyncMode
@@ -391,7 +390,10 @@ final class LearningCoordinator {
     }
 
     func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now) throws -> (TestSessionRecord, [SessionQuestion]) {
-        _ = try VocabCloudReconciler.reconcile(context: context, syncMode: syncMode, now: date)
+        let hydration = try VocabCloudReconciler.hydrationStatus(context: context, syncMode: syncMode)
+        if hydration.state == .localOnly || hydration.state == .reconciling {
+            _ = try VocabCloudReconciler.reconcile(context: context, syncMode: syncMode, now: date)
+        }
         let day = SeoulCalendar.day(for: date)
         let words = try activeWords()
         let wordsByID = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
@@ -663,46 +665,150 @@ final class LearningCoordinator {
         for word: WordRecord,
         attempts sourceAttempts: [AttemptRecord]
     ) -> [VocabAttemptReplayConflict] {
-        let replayPlan = Self.attemptReplayPlan(sourceAttempts)
-        guard replayPlan.conflicts.isEmpty else { return replayPlan.conflicts }
-        let state = word.reviewState ?? ReviewStateRecord()
-        let presentationCount = state.presentationCount
-        let lastPresentedAt = state.lastPresentedAt
-        state.failureCheck = 0
-        state.activePriority = 0
-        state.enToKoStreak = 0
-        state.koToEnStreak = 0
-        state.koToEnSuccessDays = []
-        state.latestWrongDirection = nil
-        state.latestWrongAt = nil
-        state.lastTestedAt = nil
-        state.presentationCount = presentationCount
-        state.lastPresentedAt = lastPresentedAt
-        word.reviewState = state
-        if word.deletedAt == nil {
-            word.statusRaw = "active"
+        let calculation = expectedReviewState(for: word, attempts: sourceAttempts)
+        guard calculation.conflicts.isEmpty, let expected = calculation.expected else {
+            return calculation.conflicts
         }
-        for meaning in word.activeMeanings {
-            meaning.successDays = []
-        }
+        _ = applyExpectedReviewState(expected, to: word)
+        return []
+    }
 
-        let attempts = replayPlan.canonicalAttempts
-            .sorted { lhs, rhs in
-                lhs.answeredAt == rhs.answeredAt ? lhs.id.uuidString < rhs.id.uuidString : lhs.answeredAt < rhs.answeredAt
-            }
+    struct RecomputedWordReviewState: Equatable {
+        var statusRaw: String
+        var failureCheck = 0
+        var activePriority = 0
+        var enToKoStreak = 0
+        var koToEnStreak = 0
+        var koToEnSuccessDays: [String] = []
+        var latestWrongDirection: String?
+        var latestWrongAt: Date?
+        var lastTestedAt: Date?
+        var presentationCount: Int?
+        var lastPresentedAt: Date?
+        var updatedAt: Date
+        var meaningSuccessDays: [UUID: [String]]
+    }
+
+    func expectedReviewState(
+        for word: WordRecord,
+        attempts sourceAttempts: [AttemptRecord]
+    ) -> (expected: RecomputedWordReviewState?, conflicts: [VocabAttemptReplayConflict]) {
+        let replayPlan = Self.attemptReplayPlan(sourceAttempts)
+        guard replayPlan.conflicts.isEmpty else { return (nil, replayPlan.conflicts) }
+
+        let activeMeanings = word.activeMeanings
+        let trackableCoreMeaningIDs = Set(activeMeanings.filter(\.isTrackableCoreMeaning).map(\.id))
+        let coreMeaningIDs = activeMeanings.filter(\.isCore).map(\.id)
+        var expected = RecomputedWordReviewState(
+            statusRaw: word.deletedAt == nil ? "active" : word.statusRaw,
+            presentationCount: word.reviewState?.presentationCount,
+            lastPresentedAt: word.reviewState?.lastPresentedAt,
+            updatedAt: word.updatedAt,
+            meaningSuccessDays: Dictionary(uniqueKeysWithValues: activeMeanings.map { ($0.id, []) })
+        )
+
+        let attempts = replayPlan.canonicalAttempts.sorted { lhs, rhs in
+            lhs.answeredAt == rhs.answeredAt
+                ? lhs.id.uuidString < rhs.id.uuidString
+                : lhs.answeredAt < rhs.answeredAt
+        }
         for attempt in attempts {
             guard let result = FinalResult(rawValue: attempt.finalJudgementRaw),
                   let direction = PracticeDirection(rawValue: attempt.directionRaw) else { continue }
-            apply(
-                result: result,
-                matchedMeaningID: attempt.matchedMeaningID,
-                direction: direction,
-                to: word,
-                date: attempt.answeredAt
-            )
+            expected.lastTestedAt = attempt.answeredAt
+            let day = SeoulCalendar.day(for: attempt.answeredAt)
+            switch result {
+            case .incorrect, .unknown:
+                expected.failureCheck = min(expected.failureCheck + 1, 3)
+                expected.activePriority = max(expected.activePriority, expected.failureCheck)
+                expected.latestWrongDirection = direction.rawValue
+                expected.latestWrongAt = attempt.answeredAt
+                if direction == .enToKo {
+                    expected.enToKoStreak = 0
+                } else {
+                    expected.koToEnStreak = 0
+                }
+            case .correct:
+                if direction == .enToKo {
+                    expected.enToKoStreak += 1
+                    if let meaningID = attempt.matchedMeaningID,
+                       trackableCoreMeaningIDs.contains(meaningID),
+                       expected.meaningSuccessDays[meaningID]?.contains(day) == false {
+                        expected.meaningSuccessDays[meaningID, default: []].append(day)
+                    }
+                } else {
+                    expected.koToEnStreak += 1
+                    if !expected.koToEnSuccessDays.contains(day) {
+                        expected.koToEnSuccessDays.append(day)
+                    }
+                }
+                if expected.enToKoStreak >= 2 && expected.koToEnStreak >= 2 {
+                    expected.activePriority = max(expected.activePriority - 1, 0)
+                    expected.enToKoStreak = 0
+                    expected.koToEnStreak = 0
+                } else if expected.enToKoStreak >= 2 {
+                    expected.activePriority = max(expected.activePriority - 1, 0)
+                    expected.enToKoStreak = 0
+                }
+            }
+
+            let coreIsTrackable = !coreMeaningIDs.isEmpty
+                && coreMeaningIDs.allSatisfy(trackableCoreMeaningIDs.contains)
+            let coreSatisfied = coreIsTrackable && coreMeaningIDs.allSatisfy {
+                Set(expected.meaningSuccessDays[$0] ?? []).count >= 3
+            }
+            let koToEnSatisfied = Set(expected.koToEnSuccessDays).count >= 3
+            let noRecentFailure = expected.latestWrongAt.map {
+                $0 < SeoulCalendar.daysAgo(14, from: attempt.answeredAt)
+            } ?? true
+            if coreSatisfied && koToEnSatisfied && noRecentFailure {
+                expected.statusRaw = "mastered"
+            }
         }
-        state.updatedAt = attempts.last?.answeredAt ?? word.updatedAt
-        return []
+        expected.updatedAt = attempts.last?.answeredAt ?? word.updatedAt
+        return (expected, [])
+    }
+
+    @discardableResult
+    func applyExpectedReviewState(_ expected: RecomputedWordReviewState, to word: WordRecord) -> Bool {
+        var changed = false
+        func assign<T: Equatable>(_ keyPath: ReferenceWritableKeyPath<ReviewStateRecord, T>, _ value: T, to state: ReviewStateRecord) {
+            guard state[keyPath: keyPath] != value else { return }
+            state[keyPath: keyPath] = value
+            changed = true
+        }
+
+        if word.statusRaw != expected.statusRaw {
+            word.statusRaw = expected.statusRaw
+            changed = true
+        }
+        let state: ReviewStateRecord
+        if let existing = word.reviewState {
+            state = existing
+        } else {
+            state = ReviewStateRecord()
+            word.reviewState = state
+            changed = true
+        }
+        assign(\.failureCheck, expected.failureCheck, to: state)
+        assign(\.activePriority, expected.activePriority, to: state)
+        assign(\.enToKoStreak, expected.enToKoStreak, to: state)
+        assign(\.koToEnStreak, expected.koToEnStreak, to: state)
+        assign(\.koToEnSuccessDays, expected.koToEnSuccessDays, to: state)
+        assign(\.latestWrongDirection, expected.latestWrongDirection, to: state)
+        assign(\.latestWrongAt, expected.latestWrongAt, to: state)
+        assign(\.lastTestedAt, expected.lastTestedAt, to: state)
+        assign(\.presentationCount, expected.presentationCount, to: state)
+        assign(\.lastPresentedAt, expected.lastPresentedAt, to: state)
+        assign(\.updatedAt, expected.updatedAt, to: state)
+
+        for meaning in word.activeMeanings {
+            let successDays = expected.meaningSuccessDays[meaning.id] ?? []
+            guard meaning.successDays != successDays else { continue }
+            meaning.successDays = successDays
+            changed = true
+        }
+        return changed
     }
 
     static func attemptReplayPlan(_ sourceAttempts: [AttemptRecord]) -> VocabAttemptReplayPlan {
@@ -991,7 +1097,7 @@ final class LearningCoordinator {
     }
 }
 
-enum VocabHydrationState: String, Equatable {
+enum VocabHydrationState: String, Equatable, Sendable {
     case localOnly
     case awaitingBootstrapMetadata
     case hydrating
@@ -1000,7 +1106,7 @@ enum VocabHydrationState: String, Equatable {
     case failed
 }
 
-struct VocabEntityCounts: Codable, Equatable {
+struct VocabEntityCounts: Codable, Equatable, Sendable {
     var words: Int
     var meanings: Int
     var dailySets: Int
@@ -1024,7 +1130,7 @@ struct VocabEntityCounts: Codable, Equatable {
     }
 }
 
-struct VocabHydrationStatus: Equatable {
+struct VocabHydrationStatus: Equatable, Sendable {
     let state: VocabHydrationState
     let counts: VocabEntityCounts
     let expectedBootstrapUUID: UUID?
@@ -1202,7 +1308,6 @@ enum VocabCloudReconciliationError: LocalizedError, Equatable {
     }
 }
 
-@MainActor
 enum VocabCloudReconciler {
     static let metadataSchemaVersion = 2
 
@@ -1269,6 +1374,12 @@ enum VocabCloudReconciler {
         }
 
         let allAttempts = try context.fetch(FetchDescriptor<AttemptRecord>())
+        var attemptsByWordID: [UUID: [AttemptRecord]] = [:]
+        attemptsByWordID.reserveCapacity(allAttempts.count)
+        for attempt in allAttempts {
+            guard let wordID = attempt.word?.id else { continue }
+            attemptsByWordID[wordID, default: []].append(attempt)
+        }
         if syncMode == .cloudKitPrivate {
             let replayPlan = LearningCoordinator.attemptReplayPlan(allAttempts)
             guard replayPlan.conflicts.isEmpty else {
@@ -1285,48 +1396,94 @@ enum VocabCloudReconciler {
         func deletion(_ type: String, _ id: UUID) -> Date? {
             winningDeletion["\(type):\(id.uuidString)"]
         }
+        var didChange = false
         for record in try context.fetch(FetchDescriptor<WordRecord>()) {
             if let date = deletion("WordRecord", record.id), record.deletedAt == nil || record.deletedAt! < date {
                 record.deletedAt = date
                 record.updatedAt = max(record.updatedAt, date)
+                didChange = true
             }
         }
         for record in try context.fetch(FetchDescriptor<MeaningRecord>()) {
             if let date = deletion("MeaningRecord", record.id), record.deletedAt == nil || record.deletedAt! < date {
                 record.deletedAt = date
                 record.updatedAt = max(record.updatedAt, date)
+                didChange = true
             }
         }
         for record in try context.fetch(FetchDescriptor<DailySetRecord>()) {
             if let date = deletion("DailySetRecord", record.id), record.deletedAt == nil || record.deletedAt! < date {
                 record.deletedAt = date
                 record.updatedAt = max(record.updatedAt, date)
+                didChange = true
             }
         }
         for record in try context.fetch(FetchDescriptor<DailySetItemRecord>()) {
             if let date = deletion("DailySetItemRecord", record.id), record.deletedAt == nil || record.deletedAt! < date {
                 record.deletedAt = date
                 record.updatedAt = max(record.updatedAt, date)
+                didChange = true
             }
         }
 
         if syncMode == .cloudKitPrivate {
             let coordinator = LearningCoordinator(context: context, syncMode: syncMode)
             for word in try context.fetch(FetchDescriptor<WordRecord>()) where word.deletedAt == nil {
-                coordinator.recomputeReviewState(
+                let calculation = coordinator.expectedReviewState(
                     for: word,
-                    attempts: allAttempts.filter { $0.word?.id == word.id }
+                    attempts: attemptsByWordID[word.id] ?? []
                 )
+                guard let expected = calculation.expected else { continue }
+                if coordinator.applyExpectedReviewState(expected, to: word) {
+                    didChange = true
+                }
             }
         }
         if syncMode == .cloudKitPrivate {
             let metadata = try context.fetch(FetchDescriptor<CloudBootstrapRecord>())
                 .first { $0.deletedAt == nil && $0.key == "primary" }
-            metadata?.lastReconciledAt = now
-            metadata?.updatedAt = now
+            if metadata?.lastReconciledAt == nil {
+                metadata?.lastReconciledAt = now
+                metadata?.updatedAt = now
+                didChange = true
+            }
         }
-        try context.save()
+        if didChange || syncMode == .localOnly {
+            try context.save()
+        } else if context.hasChanges {
+            context.rollback()
+        }
         return try hydrationStatus(context: context, syncMode: syncMode)
+    }
+
+}
+
+@ModelActor
+actor VocabCloudReconciliationWorker {
+    private let createdOnMainThread = Thread.isMainThread
+
+    func hydrationStatus(syncMode: VocabSyncMode) throws -> VocabHydrationStatus {
+        try VocabCloudReconciler.hydrationStatus(context: modelContext, syncMode: syncMode)
+    }
+
+    func reconcile(syncMode: VocabSyncMode, now: Date = .now) throws -> VocabHydrationStatus {
+        try VocabCloudReconciler.reconcile(context: modelContext, syncMode: syncMode, now: now)
+    }
+
+    func wasCreatedOnMainThread() -> Bool {
+        createdOnMainThread
+    }
+}
+
+enum VocabCloudReconciliationWorkerFactory {
+    static func make(modelContainer: ModelContainer) async -> VocabCloudReconciliationWorker {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(
+                    returning: VocabCloudReconciliationWorker(modelContainer: modelContainer)
+                )
+            }
+        }
     }
 }
 

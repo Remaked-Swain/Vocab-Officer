@@ -196,6 +196,18 @@ extension VocabSyncSnapshot {
         normalized.exportedAt = Date(timeIntervalSince1970: 0)
         normalized.syncMetadata = nil
         let deletionMarker = Date(timeIntervalSince1970: 0)
+        func stableDate(_ date: Date) -> Date {
+            Date(timeIntervalSince1970: date.timeIntervalSince1970.rounded(.down))
+        }
+        func stableDate(_ date: Date?) -> Date? {
+            date.map(stableDate)
+        }
+        func stableSetCreationDate(_ date: Date) -> Date {
+            // Legacy sets stored a missing required date as NULL. CloudKit materializes
+            // the same sentinel as its reference date, so both represent no user data.
+            guard date > Date(timeIntervalSinceReferenceDate: 0) else { return deletionMarker }
+            return stableDate(date)
+        }
         let tombstoned = Set(tombstones.map { "\($0.recordType):\($0.recordID.uuidString)" })
         func isDeleted(_ recordType: String, _ id: UUID, _ deletedAt: Date?) -> Bool {
             deletedAt != nil || tombstoned.contains("\(recordType):\(id.uuidString)")
@@ -206,6 +218,7 @@ extension VocabSyncSnapshot {
             word.updatedAt = nil
             word.originDeviceID = nil
             word.statusRaw = ""
+            word.createdAt = stableDate(word.createdAt)
             word.deletedAt = isDeleted("WordRecord", word.id, word.deletedAt) ? deletionMarker : nil
             word.meanings = word.meanings.map { meaning in
                 var meaning = meaning
@@ -222,6 +235,8 @@ extension VocabSyncSnapshot {
         }.sorted { $0.id.uuidString < $1.id.uuidString }
         normalized.dailySets = normalized.dailySets.map { set in
             var set = set
+            set.createdAt = stableSetCreationDate(set.createdAt)
+            set.completedAt = stableDate(set.completedAt)
             set.updatedAt = nil
             set.originDeviceID = nil
             set.deletedAt = isDeleted("DailySetRecord", set.id, set.deletedAt) ? deletionMarker : nil
@@ -236,6 +251,8 @@ extension VocabSyncSnapshot {
         }.sorted { $0.id.uuidString < $1.id.uuidString }
         normalized.testSessions = normalized.testSessions.map { record in
             var record = record
+            record.startedAt = stableDate(record.startedAt)
+            record.completedAt = stableDate(record.completedAt)
             record.updatedAt = nil
             record.originDeviceID = nil
             record.deletedAt = record.deletedAt == nil ? nil : deletionMarker
@@ -243,6 +260,7 @@ extension VocabSyncSnapshot {
         }.sorted { $0.id.uuidString < $1.id.uuidString }
         normalized.attempts = normalized.attempts.map { record in
             var record = record
+            record.answeredAt = stableDate(record.answeredAt)
             record.updatedAt = nil
             record.originDeviceID = nil
             record.deletedAt = record.deletedAt == nil ? nil : deletionMarker
@@ -257,6 +275,7 @@ extension VocabSyncSnapshot {
         }.sorted { $0.id.uuidString < $1.id.uuidString }
         normalized.memoryAidCaches = normalized.memoryAidCaches.map { record in
             var record = record
+            record.generatedAt = stableDate(record.generatedAt)
             record.updatedAt = nil
             record.originDeviceID = nil
             record.deletedAt = record.deletedAt == nil ? nil : deletionMarker

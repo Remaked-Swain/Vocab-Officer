@@ -421,6 +421,57 @@ final class VocabBootstrapClaimTests: XCTestCase {
         guard case .blocked = blocked else { return XCTFail("Foreign tuple must fail closed") }
     }
 
+    func testLegacyTokenRecoversServerRequestOnlyWhenEveryIdentityFieldMatches() {
+        let claim = makeServerClaim(state: .seeding, fingerprint: "domain")
+        let credential = VocabBootstrapTokenStore.Credential(
+            token: VocabBootstrapToken(
+                claimID: claim.request.claimID,
+                requestID: claim.request.requestID
+            ),
+            originDeviceID: claim.request.ownerDeviceID,
+            request: nil
+        )
+
+        XCTAssertEqual(
+            VocabBootstrapActivationService.recoveredStoredRequest(
+                credential: credential,
+                serverStatus: .available(claim),
+                currentCanonicalFingerprint: "domain"
+            ),
+            claim.request
+        )
+        XCTAssertNil(
+            VocabBootstrapActivationService.recoveredStoredRequest(
+                credential: credential,
+                serverStatus: .available(claim),
+                currentCanonicalFingerprint: "different"
+            )
+        )
+    }
+
+    func testLegacySnapshotRecoveryUsesEquivalentCurrentStoresInsteadOfObsoleteClaimHash() {
+        let counts = VocabEntityCounts(
+            words: 10, meanings: 20, dailySets: 1, dailySetItems: 10,
+            testSessions: 2, attempts: 20, anonymousAggregates: 0,
+            memoryAidCaches: 1, tombstones: 0
+        )
+
+        XCTAssertTrue(VocabBootstrapActivationService.legacySnapshotsMatch(
+            localFingerprint: "current",
+            mirroredFingerprint: "current",
+            metadataFingerprint: "current",
+            expectedCounts: counts,
+            actualCounts: counts
+        ))
+        XCTAssertFalse(VocabBootstrapActivationService.legacySnapshotsMatch(
+            localFingerprint: "current",
+            mirroredFingerprint: "different",
+            metadataFingerprint: "current",
+            expectedCounts: counts,
+            actualCounts: counts
+        ))
+    }
+
     func testLostTupleRecoveryRequiresCanonicalOrCheckpointFingerprintAndReceipt() {
         let claim = makeServerClaim(state: .claimed, fingerprint: "domain")
         let manifest = VocabBootstrapRecoveryManifest(

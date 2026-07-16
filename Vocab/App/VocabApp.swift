@@ -24,9 +24,27 @@ struct VocabApp: App {
         .defaultSize(width: 1160, height: 760)
         .windowResizability(.automatic)
 
-        Settings {
+        Window("Vocab 설정", id: "settings") {
             SettingsView()
                 .modelContainer(launch.container)
+        }
+        .defaultSize(width: 820, height: 760)
+        .windowResizability(.automatic)
+        .commands {
+            VocabSettingsCommands()
+        }
+    }
+}
+
+private struct VocabSettingsCommands: Commands {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some Commands {
+        CommandGroup(replacing: .appSettings) {
+            Button("설정…") {
+                openWindow(id: "settings")
+            }
+            .keyboardShortcut(",", modifiers: .command)
         }
     }
 }

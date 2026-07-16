@@ -4,6 +4,8 @@ build/
 test-build/
 release-build/
 performance-build/
+device-build/
+ios-build/
 DerivedData/
 xcuserdata/
 *.xcuserstate
@@ -21,6 +23,7 @@ xcuserdata/
 *.db
 *.db-*
 *.xcresult
+*.profraw
 *.jsonl
 *.tsv
 *.csv

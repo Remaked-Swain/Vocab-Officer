@@ -160,6 +160,35 @@ final class VocabSyncSnapshotTests: XCTestCase {
         XCTAssertNotEqual(try snapshot.contentFingerprint(), try domainChanged.contentFingerprint())
     }
 
+    func testCanonicalFingerprintNormalizesCloudKitSubMillisecondDatePrecision() throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "precision", createdAt: Date(timeIntervalSince1970: 100.1231))
+        let dailySet = DailySetRecord(
+            seoulDay: "2026-07-15",
+            createdAt: Date(timeIntervalSince1970: 1_800_000_000.1231)
+        )
+        context.insert(word)
+        context.insert(dailySet)
+        try context.save()
+        let baseline = try VocabSyncSnapshotService.exportSnapshot(context: context)
+        var cloudRoundTrip = baseline
+        cloudRoundTrip.words[0].createdAt = Date(timeIntervalSince1970: 100.1234)
+        var realDateChange = baseline
+        realDateChange.words[0].createdAt = Date(timeIntervalSince1970: 101.1242)
+
+        XCTAssertEqual(try baseline.contentFingerprint(), try cloudRoundTrip.contentFingerprint())
+        XCTAssertNotEqual(try baseline.contentFingerprint(), try realDateChange.contentFingerprint())
+
+        var legacyLocal = baseline
+        legacyLocal.dailySets[0].createdAt = .distantPast
+        var legacyCloudRoundTrip = baseline
+        legacyCloudRoundTrip.dailySets[0].createdAt = Date(timeIntervalSinceReferenceDate: 0)
+        XCTAssertEqual(
+            try legacyLocal.contentFingerprint(),
+            try legacyCloudRoundTrip.contentFingerprint()
+        )
+    }
+
     func testCanonicalFingerprintDetectsSOTAttemptSetAndTombstoneChanges() throws {
         let wordID = UUID()
         let meaningID = UUID()

@@ -25,6 +25,7 @@ only when its scope applies to the current change.
 | CL-0014 | active | 2026-07-14 | automatic batch iCloud sync, snapshot cursor and conflict stop | [Automatic batch iCloud sync](records/CL-0014-automatic-batch-icloud-sync.md) | retain while iCloud sync or migration behavior exists |
 | CL-0015 | active | 2026-07-14 | Director-gated Closed-Loop use, use/non-use criteria, main-agent orchestration boundary and role lifecycle | [Director-gated Closed-Loop use](records/CL-0015-director-gated-closed-loop.md) | retain while Codex Closed-Loop workflow exists |
 | CL-0016 | active | 2026-07-14 | per-record SwiftData CloudKit mirroring, V3 export receipt, tuple recovery, canonical fingerprint and migration safety | [Per-record CloudKit mirroring migration](records/CL-0016-per-record-cloudkit-mirroring.md) | code-level approved; real-device CloudKit export/import and bidirectional propagation pending |
+| CL-0017 | active | 2026-07-15 | CloudKit reconcile scheduling, bounded hydration polling, actor isolation and changed-only persistence | [CloudKit reconciliation scheduling](records/CL-0017-cloudkit-reconciliation-scheduling.md) | retain while per-record CloudKit reconciliation and hydration scheduling exist |
 
 ## Load Rules
 

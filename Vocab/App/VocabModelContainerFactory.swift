@@ -1,7 +1,7 @@
 import Foundation
 import SwiftData
 
-enum VocabSyncMode: String, CaseIterable, Identifiable {
+enum VocabSyncMode: String, CaseIterable, Identifiable, Sendable {
     case localOnly
     case cloudKitPrivate
 
