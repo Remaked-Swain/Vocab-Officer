@@ -213,13 +213,14 @@ case action
 when "start"
   fail!("run already exists: #{run_id}") if File.exist?(state_path)
   state = {
-    "schemaVersion" => 2,
+    "schemaVersion" => 3,
     "runId" => run_id,
     "currentRole" => "Director",
     "currentStage" => "director-submit",
     "phase" => "awaiting-registration",
     "handoffToken" => "GENESIS",
     "rejectionCount" => 0,
+    "agentLifecyclePolicy" => "run-scoped-reuse",
     "roleIdentities" => {},
     "registrations" => [],
     "artifacts" => [],
@@ -227,7 +228,7 @@ when "start"
     "latestChainSha256" => nil
   }
   save_atomic!(state_dir, state_path, state)
-  puts("started #{run_id}; register Director with handoff token GENESIS")
+  puts("started #{run_id}; activate Director with handoff token GENESIS")
 when "register-role"
   role, actor_id, token = args
   fail!("invalid role: #{role}") unless %w[Director Executor Monitor Recorder].include?(role)
@@ -252,7 +253,8 @@ when "register-role"
   state.fetch("registrations") << registration
   state["phase"] = "active"
   save_atomic!(state_dir, state_path, state)
-  puts("registered #{role} as order #{registration.fetch("order")}")
+  action_label = registration.fetch("kind") == "reactivated" ? "reactivated retained" : "bound"
+  puts("#{action_label} #{role} identity as order #{registration.fetch("order")}")
 when "submit"
   role, actor_id, artifact_path = args
   fail!("submit role must be Director, Executor or Recorder") unless %w[Director Executor Recorder].include?(role)
@@ -276,7 +278,7 @@ when "submit"
   }.fetch(role)
   open_role!(state, next_role, next_stage)
   save_atomic!(state_dir, state_path, state)
-  puts("accepted #{role} artifact; register #{next_role} with handoff token #{state.fetch("handoffToken")}")
+  puts("accepted #{role} artifact; activate #{next_role} with handoff token #{state.fetch("handoffToken")}")
 when "review"
   role, actor_id, decision, artifact_path = args
   fail!("review role must be Monitor") unless role == "Monitor"
@@ -296,7 +298,7 @@ when "review"
     open_role!(state, "Recorder", "recorder-submit")
   end
   save_atomic!(state_dir, state_path, state)
-  puts("#{decision} recorded; register #{state.fetch("currentRole")} with handoff token #{state.fetch("handoffToken")}")
+  puts("#{decision} recorded; activate #{state.fetch("currentRole")} with handoff token #{state.fetch("handoffToken")}")
 when "close"
   role, actor_id, artifact_path = args
   fail!("close role must be Director") unless role == "Director"
@@ -393,6 +395,7 @@ abort unless state.fetch("phase") == ARGV.fetch(1)
 state = JSON.parse(STDIN.read)
 abort unless state.fetch("registrations").map { |item| item.fetch("order") } == [1, 2, 3, 4]
 abort unless state.fetch("registrations").all? { |item| item.fetch("registeredAt").include?("T") }
+abort unless state.fetch("agentLifecyclePolicy") == "run-scoped-reuse"
 artifacts = state.fetch("artifacts")
 abort unless artifacts.each_cons(2).all? { |left, right| right.fetch("previousSha256") == left.fetch("sha256") }
   abort unless artifacts.all? { |item| item.fetch("chainSha256").match?(/\A[0-9a-f]{64}\z/) }
@@ -431,6 +434,15 @@ abort unless artifacts.each_cons(2).all? { |left, right| right.fetch("previousSh
     run register-role reject-cycle Executor executor-B "$(token reject-cycle)" >/dev/null
     run submit reject-cycle Executor executor-B "$artifacts/executor.txt" >/dev/null
   done
+  run status reject-cycle | /usr/bin/ruby -rjson -e '
+state = JSON.parse(STDIN.read)
+executor_registrations = state.fetch("registrations").select { |item| item.fetch("role") == "Executor" }
+monitor_registrations = state.fetch("registrations").select { |item| item.fetch("role") == "Monitor" }
+abort unless executor_registrations.map { |item| item.fetch("actorId") }.uniq == ["executor-B"]
+abort unless monitor_registrations.map { |item| item.fetch("actorId") }.uniq == ["monitor-B"]
+abort unless executor_registrations.drop(1).all? { |item| item.fetch("kind") == "reactivated" }
+abort unless monitor_registrations.drop(1).all? { |item| item.fetch("kind") == "reactivated" }
+'
   run register-role reject-cycle Monitor monitor-B "$(token reject-cycle)" >/dev/null
   expect_failure review reject-cycle Monitor monitor-B reject "$artifacts/monitor.txt"
   run review reject-cycle Monitor monitor-B approve "$artifacts/monitor.txt" >/dev/null

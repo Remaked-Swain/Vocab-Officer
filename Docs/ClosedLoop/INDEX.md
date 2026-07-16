@@ -26,6 +26,7 @@ only when its scope applies to the current change.
 | CL-0015 | active | 2026-07-14 | Director-gated Closed-Loop use, use/non-use criteria, main-agent orchestration boundary and role lifecycle | [Director-gated Closed-Loop use](records/CL-0015-director-gated-closed-loop.md) | retain while Codex Closed-Loop workflow exists |
 | CL-0016 | active | 2026-07-14 | per-record SwiftData CloudKit mirroring, V3 export receipt, tuple recovery, canonical fingerprint and migration safety | [Per-record CloudKit mirroring migration](records/CL-0016-per-record-cloudkit-mirroring.md) | code-level approved; real-device CloudKit export/import and bidirectional propagation pending |
 | CL-0017 | active | 2026-07-15 | CloudKit reconcile scheduling, bounded hydration polling, actor isolation and changed-only persistence | [CloudKit reconciliation scheduling](records/CL-0017-cloudkit-reconciliation-scheduling.md) | retain while per-record CloudKit reconciliation and hydration scheduling exist |
+| CL-0018 | active | 2026-07-15 | run-scoped role-agent reuse, sequential activation and terminal-only session close | [Run-scoped role agent reuse](records/CL-0018-run-scoped-role-agent-reuse.md) | retain while Codex Closed-Loop workflow exists |
 
 ## Load Rules
 
@@ -50,6 +51,9 @@ only when its scope applies to the current change.
   is not the default, and the Director records the use or non-use reason.
 - Any future Closed-Loop task must apply `CL-0012` for JIT role registration,
   hash-token handoffs, rejection routing and validated Recorder close.
+- Any future Closed-Loop task must apply `CL-0018`: bind each role once when it
+  first becomes eligible, reuse that agent for the rest of the run, and close
+  retained agents only after validated terminal closure.
 - Any future Closed-Loop task must also apply `CL-0002`; reading its full record is
   required only when changing workflow, retention or verification rules.
 - Any future task that uses agents or edits the app must apply `CL-0007`.

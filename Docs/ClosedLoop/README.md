@@ -35,9 +35,11 @@ handoffs.
 6. Load individual records or run reports only when their `Scope` intersects
    the requested work or when they are listed as a dependency of a new
    decision.
-7. The orchestrator must wait for the current role artifact to be accepted and
-   close that role execution before spawning the next role. It then registers
-   only that newly active role with the current handoff token.
+7. The orchestrator must wait for the current role artifact to be accepted
+   before activating the next role. Spawn each role at most once per run, when
+   that role first becomes eligible, then retain its agent session idle and
+   reuse it for every later turn in the same run. A handoff changes the active
+   role; it does not close the predecessor session.
 8. Advance only in this order:
    `Director analysis -> Executor change -> Monitor review -> Recorder record
    -> Director close`.
@@ -54,17 +56,28 @@ handoffs.
     after approval.
 11. Have the Recorder add or update a valid indexed decision record before
     Director close.
+12. Keep a run-local `role -> agent ID` map. Use the existing agent ID and send
+    only the new artifact token, review delta and required bootstrap changes on
+    reactivation. `resume_agent` is recovery-only; do not close and resume a
+    healthy role merely to perform a handoff.
+13. Close retained role sessions exactly once, after Monitor approval,
+    Recorder persistence and validated Director close. Earlier replacement is
+    allowed only for an unrecoverable agent failure, explicit cancellation or
+    a hard concurrency-capacity requirement, and its reason must be included
+    in the run evidence.
 
 ## Sequential Handoff Enforcement
 
 `script/closed_loop_pipeline.sh` is the executable state machine for agent
 handoffs. `start` opens only the Director stage and registers no identity.
-Every stage requires a separate just-in-time `register-role` call. That call
+Every stage requires a separate just-in-time `register-role` call. The first
+registration binds the role to one run-scoped agent session; later
+registrations activate that retained identity without respawning it. The call
 accepts only the current role and the exact predecessor artifact SHA-256 as its
-handoff token, so future-role registration, duplicate registration and stale
-or invented tokens fail. Registration also re-hashes the predecessor artifact
-file immediately and requires its current hash, stored hash and token to match;
-post-submission artifact mutation therefore blocks the successor.
+handoff token, so future-role registration, duplicate active registration and
+stale or invented tokens fail. Registration also re-hashes the predecessor
+artifact file immediately and requires its current hash, stored hash and token
+to match; post-submission artifact mutation therefore blocks the successor.
 
 Every transition requires a non-empty artifact file. State stores ordered role
 registrations with timestamps and the artifact chain's previous hash, content
@@ -103,20 +116,25 @@ Typical rejection commands keep the same Executor identity:
 
 ```bash
 ./script/closed_loop_pipeline.sh review RUN-ID Monitor monitor-1 reject monitor.md
+./script/closed_loop_pipeline.sh register-role RUN-ID Executor executor-1 <monitor-sha256>
 ./script/closed_loop_pipeline.sh submit RUN-ID Executor executor-1 executor-rework.md
 ./script/closed_loop_pipeline.sh register-role RUN-ID Monitor monitor-1 <executor-rework-sha256>
 ./script/closed_loop_pipeline.sh review RUN-ID Monitor monitor-1 approve monitor-approval.md
 ```
 
 The shell cannot prevent Codex or another external orchestrator from spawning
-agents outside this API. The orchestrator is therefore responsible for not
-spawning a successor until the pipeline opens that role, and for closing the
-predecessor execution before doing so. Pipeline registration and hash-chain
-state provide enforcement at the repository boundary and audit evidence for
-violations attempted through the API.
+or closing agents outside this API. The orchestrator is therefore responsible
+for spawning a role only when the pipeline first opens it, retaining the
+run-scoped role-to-agent mapping, keeping inactive roles idle, and closing all
+retained sessions only after validated loop closure. Pipeline registration and
+hash-chain state provide enforcement at the repository boundary and audit
+evidence for identity replacement attempted through the API.
 
-This sequential enforcement partially replaces the earlier general
-multi-agent startup guidance in `CL-0002` and `CL-0007`. `CL-0015` further
+`CL-0018` partially replaces `CL-0012` only for agent-session lifecycle:
+sequential activation remains mandatory, but healthy sessions are retained and
+reused until the run closes. This sequential enforcement partially replaces
+the earlier general multi-agent startup guidance in `CL-0002` and `CL-0007`.
+`CL-0015` further
 replaces the previous default-use rule: Closed-Loop is opt-in per Director
 decision, with recorded use or non-use reasoning. Their retention, bootstrap,
 project-root and verification rules remain active.

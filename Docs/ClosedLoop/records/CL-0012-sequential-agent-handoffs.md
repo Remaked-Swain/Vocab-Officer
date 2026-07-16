@@ -61,6 +61,11 @@ corrupt or bypass an informal workflow state.
 
 ## Partial Supersession
 
+This record is partially superseded by `CL-0018` only for closing and
+respawning healthy role sessions at handoff boundaries. Sequential activation,
+just-in-time first spawn, stable role identity and all repository-local
+handoff enforcement remain active.
+
 This record is partially superseded by `CL-0015` only for the previous
 default-use rule. Its sequential handoff and repository-local enforcement
 rules remain active.
