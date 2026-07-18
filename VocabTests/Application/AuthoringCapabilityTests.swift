@@ -242,7 +242,7 @@ final class AuthoringCapabilityTests: XCTestCase {
         assertIntegrityBlocked { _ = try coordinator.generateSession(mode: .loose, direction: .enToKo) }
     }
 
-    func testForegroundEpochRevokesAuthorityUntilCurrentEpochAuditAuthorizes() throws {
+    func testForegroundReentryKeepsAuthorizedLease() throws {
         let context = try makeContext()
         _ = insertWord(context: context, term: "foreground-word")
         let metadata = CloudBootstrapRecord(contentFingerprint: "foreground-fingerprint")
@@ -269,16 +269,10 @@ final class AuthoringCapabilityTests: XCTestCase {
         )
         XCTAssertTrue(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
 
-        VocabMutationAuthorityRuntime.beginValidationEpoch()
-        XCTAssertFalse(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
+        VocabMutationAuthorityRuntime.noteForegroundReentry()
 
-        let foregroundEpoch = VocabMutationAuthorityRuntime.prepareForFullAudit()
-        try VocabMutationAuthorityRuntime.authorize(
-            container: context.container,
-            context: context,
-            receipt: receipt,
-            validationEpoch: foregroundEpoch
-        )
+        XCTAssertEqual(VocabMutationAuthorityRuntime.currentValidationEpoch, initialEpoch)
+        XCTAssertEqual(VocabMutationAuthorityRuntime.current, .allowed)
         XCTAssertTrue(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
 
         VocabMutationAuthorityRuntime.invalidate()

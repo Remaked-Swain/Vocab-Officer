@@ -98,7 +98,7 @@ struct RootView: View {
             switch phase {
             case .active:
                 if syncMode == .cloudKitPrivate {
-                    VocabMutationAuthorityRuntime.beginValidationEpoch()
+                    VocabMutationAuthorityRuntime.noteForegroundReentry()
                 }
                 scheduleHydrationRefresh(reason: .foreground)
             case .inactive:

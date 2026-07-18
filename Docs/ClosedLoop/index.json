@@ -426,6 +426,23 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["200,000-attempt performance measurement remains unobserved", "entitlement-dependent real CloudKit tests remain skipped"]
+    },
+    {
+      "id": "CL-0021",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Foreground authoring and MemoryAid quality",
+      "date": "2026-07-18",
+      "tags": ["macos", "foreground", "authoring", "cloudkit", "mutation-lease", "validation-epoch", "memory-aid", "gemini", "quality-gate"],
+      "affectedPaths": ["Vocab/App/", "Vocab/Application/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0021-foreground-authoring-and-memory-aid-quality.md",
+      "references": ["CL-0016", "CL-0019", "CL-0020"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["no issue number exists yet", "real-device private-CloudKit propagation remains pending under CL-0016", "MemoryAid usefulness still depends on model behavior"]
     }
   ]
 }

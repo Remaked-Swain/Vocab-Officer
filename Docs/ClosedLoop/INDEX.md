@@ -29,6 +29,7 @@ only when its scope applies to the current change.
 | CL-0018 | active | 2026-07-15 | run-scoped role-agent reuse, sequential activation and terminal-only session close | [Run-scoped role agent reuse](records/CL-0018-run-scoped-role-agent-reuse.md) | retain while Codex Closed-Loop workflow exists |
 | CL-0019 | active | 2026-07-18 | explicit `Vocab.store` recovery, fail-closed CloudKit write authorization and automatic replica refresh limitation superseded by CL-0020 | [Explicit recovery and CloudKit write safety](records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md) | retain while mirrored-store recovery or CloudKit authoring exists |
 | CL-0020 | active | 2026-07-18 | foreground-safe automatic `Vocab.store` recovery-replica refresh, background-safe scheduling and publication guards | [Foreground-safe recovery replica refresh](records/CL-0020-foreground-safe-recovery-replica-refresh.md) | retain while automatic recovery-replica refresh or mirrored-store recovery exists |
+| CL-0021 | active | 2026-07-18 | macOS foreground authoring continuity, mutation authority validation and MemoryAid/Gemini response quality | [Foreground authoring and MemoryAid quality](records/CL-0021-foreground-authoring-and-memory-aid-quality.md) | retain while CloudKit authoring authorization or MemoryAid generation exists |
 
 ## Load Rules
 
@@ -70,6 +71,10 @@ only when its scope applies to the current change.
   authorization must also load `CL-0019`.
 - Automatic recovery-replica scheduling or foreground lifecycle performance
   work must also load `CL-0020`.
+- Mutation authority foreground handling, macOS authoring continuity or
+  CloudKit-backed authoring authorization work must also load `CL-0021`.
+- MemoryAid, Gemini prompt, repair prompt, response budget, cache-version or
+  MemoryAid quality-gate work must also load `CL-0021`.
 - Superseded or archived records are read only when investigating regression,
   migration history or a stated dependency.
 - `index.json` is the machine-readable companion for validation tooling only.

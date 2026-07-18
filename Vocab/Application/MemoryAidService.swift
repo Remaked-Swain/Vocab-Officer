@@ -183,7 +183,7 @@ enum MemoryAidRequestPolicy {
     static let defaultRateLimitCooldown: TimeInterval = 90
     static let qualityRetryBudget: Duration = .seconds(10)
     static let maxQualityAttempts = 3
-    static let maxOutputTokens = 650
+    static let maxOutputTokens = 850
     static let transientRetryDelays: [Duration] = [
         .milliseconds(350),
         .seconds(1)
@@ -210,7 +210,7 @@ enum MemoryAidRequestPolicy {
 }
 
 struct MemoryAidPromptBuilder {
-    static let version = 3
+    static let version = 4
 
     static func build(for word: WordRecord) -> String {
         let meanings = word.activeMeanings.map(\.text).joined(separator: ", ")
@@ -221,11 +221,13 @@ struct MemoryAidPromptBuilder {
         Word: \(word.term)
         Meanings: \(meanings)
 
-        Write concise study help in Korean using Markdown.
+        Write high-quality study help in Korean using Markdown.
         Follow these rules:
         - Be accurate. If etymology or a comparison is uncertain, say that it is uncertain instead of fabricating.
-        - Keep the whole answer short and scannable. Prefer short noun phrases over long sentences.
-        - Prefer practical memorization help over encyclopedia-style explanation.
+        - Make every bullet specific to this word and its Korean meaning. Avoid generic placeholders.
+        - Prefer a memorable mental image, sound cue, word-form cue, or exam-use contrast over encyclopedia-style explanation.
+        - Keep the whole answer compact and scannable, but each bullet must be useful on its own.
+        - The English example must use "\(word.term)" naturally and the Korean line must translate that exact example.
         - Output must use exactly these sections in this order:
           ## 한줄 기억
           ## 형태/어원
@@ -241,7 +243,7 @@ struct MemoryAidPromptBuilder {
         - Under ## 비교, write exactly one bullet line: "- ..."
         - Separate each section with one blank line.
         - Do not use bold, numbering, extra headings, code blocks, or paragraphs.
-        - Keep each bullet readable at a glance. Avoid semicolons and chained clauses.
+        - Keep each bullet readable at a glance. Avoid semicolons, chained clauses, and filler.
         - In 비교, prefer similar/confusable words or antonyms only when actually useful. If not useful, write "- 없음".
         """
     }
@@ -283,6 +285,7 @@ struct MemoryAidPromptBuilder {
           ## 비교
           - ...
         - No extra text before, after, or between sections except one blank line.
+        - Replace placeholders or overly short bullets with concrete memorization help tied to the word and meaning.
         """
     }
 }
@@ -339,7 +342,7 @@ enum MemoryAidQualityGate {
 
     private static func parse(_ markdown: String) -> ParsedMemoryAid? {
         let trimmed = markdown.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.count <= 1_400 else { return nil }
+        guard trimmed.count >= 120, trimmed.count <= 1_600 else { return nil }
         guard requiredSections.allSatisfy(trimmed.contains) else { return nil }
         guard requiredSections.allSatisfy({ heading in trimmed.components(separatedBy: heading).count == 2 }) else { return nil }
 
@@ -362,10 +365,10 @@ enum MemoryAidQualityGate {
         }
 
         guard
-            let hook = parseSingleBullet(values["## 한줄 기억"]),
-            let etymology = parseSingleBullet(values["## 형태/어원"]),
-            let association = parseSingleBullet(values["## 연상 포인트"]),
-            let comparison = parseSingleBullet(values["## 비교"]),
+            let hook = parseSingleBullet(values["## 한줄 기억"], minimumLength: 8),
+            let etymology = parseSingleBullet(values["## 형태/어원"], minimumLength: 8),
+            let association = parseSingleBullet(values["## 연상 포인트"], minimumLength: 8),
+            let comparison = parseSingleBullet(values["## 비교"], minimumLength: 6, allowsNone: true),
             let example = parseExample(values["## 예문"])
         else {
             return nil
@@ -381,11 +384,20 @@ enum MemoryAidQualityGate {
         )
     }
 
-    private static func parseSingleBullet(_ lines: [String]?) -> String? {
+    private static func parseSingleBullet(
+        _ lines: [String]?,
+        minimumLength: Int,
+        allowsNone: Bool = false
+    ) -> String? {
         guard let lines, lines.count == 1 else { return nil }
         guard lines[0].hasPrefix("- ") else { return nil }
         let value = String(lines[0].dropFirst(2)).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isReadable(value, maxLength: 80) else { return nil }
+        guard isReadable(
+            value,
+            minimumLength: minimumLength,
+            maxLength: 90,
+            allowsNone: allowsNone
+        ) else { return nil }
         return value
     }
 
@@ -394,13 +406,31 @@ enum MemoryAidQualityGate {
         guard lines[0].hasPrefix("- EN: "), lines[1].hasPrefix("- KO: ") else { return nil }
         let english = String(lines[0].dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
         let korean = String(lines[1].dropFirst(6)).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isReadable(english, maxLength: 100), isReadable(korean, maxLength: 100) else { return nil }
+        guard isReadable(english, minimumLength: 12, maxLength: 120),
+              isReadable(korean, minimumLength: 8, maxLength: 120) else { return nil }
         return (english, korean)
     }
 
-    private static func isReadable(_ value: String, maxLength: Int) -> Bool {
-        guard !value.isEmpty, value.count <= maxLength else { return false }
+    private static func isReadable(
+        _ value: String,
+        minimumLength: Int,
+        maxLength: Int,
+        allowsNone: Bool = false
+    ) -> Bool {
+        if allowsNone, value == "없음" { return true }
+        guard value.count >= minimumLength, value.count <= maxLength else { return false }
         guard !value.contains("\n"), !value.contains("```"), !value.contains("##") else { return false }
+        let lowercased = value.lowercased()
+        let placeholderPatterns = [
+            "...",
+            "todo",
+            "placeholder",
+            "핵심 기억",
+            "소리 연상",
+            "예문 작성",
+            "설명 필요"
+        ]
+        guard !placeholderPatterns.contains(where: lowercased.contains) else { return false }
         return true
     }
 

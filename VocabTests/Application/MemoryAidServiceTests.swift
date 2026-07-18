@@ -57,22 +57,25 @@ final class MemoryAidServiceTests: XCTestCase {
 
         let prompt = MemoryAidPromptBuilder.build(for: word)
 
+        XCTAssertEqual(MemoryAidPromptBuilder.version, 4)
         XCTAssertTrue(prompt.contains("Word: derive"))
         XCTAssertTrue(prompt.contains("Meanings: 끌어내다"))
         XCTAssertTrue(prompt.contains("## 한줄 기억"))
         XCTAssertTrue(prompt.contains("## 비교"))
+        XCTAssertTrue(prompt.contains("specific to this word"))
+        XCTAssertTrue(prompt.contains("English example must use"))
     }
 
     func testQualityGateAcceptsRequiredSectionTemplate() {
         let markdown = """
         ## 한줄 기억
-        - 핵심 기억
+        - derive는 안에서 밖으로 뜻을 끌어내는 느낌
 
         ## 형태/어원
-        - 불확실하면 불확실하다고 표시
+        - de-와 rive 연결은 불확실하므로 의미 중심으로 기억
 
         ## 연상 포인트
-        - 소리 연상
+        - 드라이브에서 방향을 끌어내듯 원천에서 얻는 장면
 
         ## 예문
         - EN: I derive energy from study.
@@ -112,16 +115,60 @@ final class MemoryAidServiceTests: XCTestCase {
         XCTAssertFalse(MemoryAidQualityGate.validate(markdown))
     }
 
+    func testQualityGateRejectsPlaceholderContent() {
+        let markdown = """
+        ## 한줄 기억
+        - 핵심 기억
+
+        ## 형태/어원
+        - 설명 필요
+
+        ## 연상 포인트
+        - 소리 연상
+
+        ## 예문
+        - EN: Example sentence here.
+        - KO: 예문 작성 필요
+
+        ## 비교
+        - ...
+        """
+
+        XCTAssertFalse(MemoryAidQualityGate.validate(markdown))
+    }
+
+    func testQualityGateRejectsOverlyShortContent() {
+        let markdown = """
+        ## 한줄 기억
+        - 짧음
+
+        ## 형태/어원
+        - 짧다
+
+        ## 연상 포인트
+        - 짧다
+
+        ## 예문
+        - EN: Too short.
+        - KO: 짧다
+
+        ## 비교
+        - 없음
+        """
+
+        XCTAssertFalse(MemoryAidQualityGate.validate(markdown))
+    }
+
     func testQualityGateNormalizesValidOutput() {
         let markdown = """
         ## 한줄 기억
-          - 핵심 기억
+          - derive는 근원에서 결과를 끌어내는 동사
 
         ## 형태/어원
-         - derive는 끌어낸다는 느낌
+         - 어원 설명은 불확실하니 from과 함께 의미를 고정
 
         ## 연상 포인트
-        - 드라이브하듯 끌어낸다
+        - 자료에서 결론을 끌어내는 시험 지문 장면
 
         ## 예문
         - EN: I derive energy from study.
@@ -137,13 +184,13 @@ final class MemoryAidServiceTests: XCTestCase {
             normalized,
             """
             ## 한줄 기억
-            - 핵심 기억
+            - derive는 근원에서 결과를 끌어내는 동사
 
             ## 형태/어원
-            - derive는 끌어낸다는 느낌
+            - 어원 설명은 불확실하니 from과 함께 의미를 고정
 
             ## 연상 포인트
-            - 드라이브하듯 끌어낸다
+            - 자료에서 결론을 끌어내는 시험 지문 장면
 
             ## 예문
             - EN: I derive energy from study.
@@ -164,7 +211,8 @@ final class MemoryAidServiceTests: XCTestCase {
 
     func testRequestPolicyCapsQualityRetriesAndOutputSize() {
         XCTAssertEqual(MemoryAidRequestPolicy.maxQualityAttempts, 3)
-        XCTAssertLessThanOrEqual(MemoryAidRequestPolicy.maxOutputTokens, 650)
+        XCTAssertGreaterThanOrEqual(MemoryAidRequestPolicy.maxOutputTokens, 750)
+        XCTAssertLessThanOrEqual(MemoryAidRequestPolicy.maxOutputTokens, 900)
         XCTAssertEqual(MemoryAidRequestPolicy.defaultRateLimitCooldown, 90)
     }
 

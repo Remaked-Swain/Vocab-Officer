@@ -267,6 +267,11 @@ enum VocabMutationAuthorityRuntime {
         return currentValidationEpoch
     }
 
+    static func noteForegroundReentry() {
+        // Foreground reentry is informational; real store-change events still rotate the epoch.
+        _ = currentValidationEpoch
+    }
+
     static var currentValidationEpoch: UUID {
         lock.withLock { validationEpoch }
     }
