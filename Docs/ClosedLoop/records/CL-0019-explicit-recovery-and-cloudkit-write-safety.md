@@ -25,7 +25,9 @@
 - Automatic `Vocab.store` recovery-replica refresh remains disabled. It may
   not be enabled until the 10,000-word / 200,000-attempt measurement proves
   that backup, verification and publication meet the agreed responsiveness
-  and storage limits.
+  and storage limits. This limitation is superseded by `CL-0020`, which allows
+  automatic refresh only through foreground-safe, background-triggered guarded
+  scheduling.
 
 ## Rationale
 
@@ -42,19 +44,22 @@ newly launched process has imported and audited remote changes.
   isolation, mutation epochs and CloudKit reopen.
 - `git diff --check` passed. The Executor also reported successful macOS and
   iOS Simulator builds.
-- The recovery scheduler flag remains
-  `VocabRecoveryReplicaScheduler.automaticRefreshEnabled = false`.
+- At the time of this record, the recovery scheduler flag remained
+  `VocabRecoveryReplicaScheduler.automaticRefreshEnabled = false`; `CL-0020`
+  supersedes that disabled-state limitation.
 
 ## Limitations
 
 - No end-user recovery UI is exposed yet; the application-boundary recovery
   operation is intentionally not reachable as an automatic fallback.
-- The automatic rolling `Vocab.store` recovery replica is not implemented as
-  an active behavior until the required large-dataset evidence is recorded.
+- The automatic rolling `Vocab.store` recovery-replica disabled-state
+  limitation is superseded by `CL-0020`.
 - Real-device private-CloudKit bidirectional propagation remains separately
   pending under `CL-0016`.
 
 ## Relationship
 
 This extends `CL-0016` and `CL-0017` without replacing their per-record
-mirroring, migration, scheduling or reconciliation decisions.
+mirroring, migration, scheduling or reconciliation decisions. `CL-0020`
+supersedes only this record's automatic recovery-replica disabled-state
+limitation.

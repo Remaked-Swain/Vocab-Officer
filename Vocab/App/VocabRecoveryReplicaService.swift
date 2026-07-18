@@ -74,6 +74,21 @@ enum VocabRecoveryReplicaResult: Equatable {
     case skippedIneligible
 }
 
+enum VocabRecoveryReplicaRefreshTrigger {
+    case foregroundActive
+    case inactive
+    case background
+
+    var permitsAutomaticRefresh: Bool {
+        switch self {
+        case .foregroundActive:
+            false
+        case .inactive, .background:
+            true
+        }
+    }
+}
+
 enum VocabRecoveryReplicaError: Error, Equatable {
     case verificationMismatch
     case publishedStoreMissing
@@ -125,19 +140,31 @@ actor VocabRecoveryReplicaService {
         isRunning = true
         defer { isRunning = false }
 
+        let receipt = try VocabFullAuditReceiptStore.load(
+            from: try auditReceiptURL ?? VocabFullAuditReceiptStore.defaultURL()
+        )
         let root = try rootURL ?? VocabRecoveryReplicaManifestStore.rootURL()
         let manifest = try VocabRecoveryReplicaManifestStore.load(root: root)
+        let currentGeneration = manifest?.generations.first { $0.id == manifest?.currentGenerationID }
+        let currentGenerationStoreExists = currentGeneration.map {
+            FileManager.default.fileExists(
+                atPath: VocabRecoveryReplicaManifestStore.storeURL(generationID: $0.id, root: root).path
+            )
+        } ?? false
+        if let fingerprint = receipt?.canonicalFingerprint,
+           currentGenerationStoreExists,
+           currentGeneration?.sourceFingerprint == fingerprint {
+            return .skippedUnchanged
+        }
         try cleanupUnreferencedGenerations(root: root, manifest: manifest)
         let day = SeoulCalendar.day(for: now)
-        if manifest?.generations.first(where: { $0.id == manifest?.currentGenerationID })?.seoulDay == day {
+        if currentGenerationStoreExists,
+           currentGeneration?.seoulDay == day {
             return .skippedAlreadyPublishedToday
         }
 
         try failIfInjected(.export)
         let worker = await VocabRecoveryReplicaWorkerFactory.make(modelContainer: modelContainer)
-        let receipt = try VocabFullAuditReceiptStore.load(
-            from: try auditReceiptURL ?? VocabFullAuditReceiptStore.defaultURL()
-        )
         guard let receipt,
               receipt.storeIdentity == VocabFullAuditReceipt.storeIdentity(for: modelContainer),
               receipt.expectedCounts != nil,
@@ -146,9 +173,6 @@ actor VocabRecoveryReplicaService {
             throw VocabRecoveryReplicaError.staleAuditReceipt
         }
         let fingerprint = receipt.canonicalFingerprint
-        if manifest?.generations.first(where: { $0.id == manifest?.currentGenerationID })?.sourceFingerprint == fingerprint {
-            return .skippedUnchanged
-        }
 
         try cleanupAbandonedStaging(root: root, now: now)
         let generationID = UUID()
@@ -282,8 +306,22 @@ actor VocabRecoveryReplicaService {
 }
 
 enum VocabRecoveryReplicaScheduler {
-    // Re-enable only after the 200,000-Attempt production-path benchmark passes.
-    static let automaticRefreshEnabled = false
+    static let automaticRefreshEnabled = true
+
+    static func automaticRefreshIsEligible(
+        trigger: VocabRecoveryReplicaRefreshTrigger,
+        syncMode: VocabSyncMode,
+        hydrationState: VocabHydrationState,
+        localContentIsUsable: Bool,
+        hasRunningTask: Bool
+    ) -> Bool {
+        automaticRefreshEnabled
+            && trigger.permitsAutomaticRefresh
+            && !hasRunningTask
+            && syncMode == .cloudKitPrivate
+            && localContentIsUsable
+            && hydrationState == .ready
+    }
 
     static func refresh(
         service: VocabRecoveryReplicaService = .shared,

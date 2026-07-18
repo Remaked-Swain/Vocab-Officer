@@ -98,10 +98,127 @@ final class VocabRecoveryReplicaTests: XCTestCase {
             rootURL: root,
             auditReceiptURL: receiptURL
         )
-        XCTAssertEqual(second, .skippedAlreadyPublishedToday)
+        XCTAssertEqual(second, .skippedUnchanged)
+
+        let context = ModelContext(container)
+        let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first)
+        word.term = "changed-same-day"
+        word.normalizedTerm = TextNormalizer.normalizeEnglish(word.term)
+        word.updatedAt = now.addingTimeInterval(120)
+        try context.save()
+        let changedReceiptURL = try writeAuditReceipt(
+            container: container,
+            root: root,
+            now: now.addingTimeInterval(120)
+        )
+        let changedSameDay = try await service.refreshIfEligible(
+            modelContainer: container,
+            syncMode: .cloudKitPrivate,
+            now: now.addingTimeInterval(180),
+            rootURL: root,
+            auditReceiptURL: changedReceiptURL
+        )
+        XCTAssertEqual(changedSameDay, .skippedAlreadyPublishedToday)
+    }
+
+    func testMissingCurrentGenerationStoreRepublishesInsteadOfSkippingUnchanged() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let container = try sourceContainer(term: "missing-store")
+        let service = VocabRecoveryReplicaService()
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let receiptURL = try writeAuditReceipt(container: container, root: root, now: now)
+
+        let first = try await service.refreshIfEligible(
+            modelContainer: container,
+            syncMode: .cloudKitPrivate,
+            now: now,
+            rootURL: root,
+            auditReceiptURL: receiptURL
+        )
+        guard case .published(let originalID, maintenancePending: false) = first else {
+            return XCTFail("Expected initial publication, got \(first)")
+        }
+        let originalStore = VocabRecoveryReplicaManifestStore.storeURL(generationID: originalID, root: root)
+        try FileManager.default.removeItem(at: originalStore.deletingLastPathComponent())
+
+        let republished = try await service.refreshIfEligible(
+            modelContainer: container,
+            syncMode: .cloudKitPrivate,
+            now: now.addingTimeInterval(60),
+            rootURL: root,
+            auditReceiptURL: receiptURL
+        )
+
+        guard case .published(let republishedID, maintenancePending: false) = republished else {
+            return XCTFail("Expected republish when current generation store is missing, got \(republished)")
+        }
+        XCTAssertNotEqual(republishedID, originalID)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: VocabRecoveryReplicaManifestStore.storeURL(generationID: republishedID, root: root).path
+        ))
+        let manifest = try XCTUnwrap(VocabRecoveryReplicaManifestStore.load(root: root))
+        XCTAssertEqual(manifest.currentGenerationID, republishedID)
+    }
+
+    func testAutomaticRefreshEligibilityRequiresBackgroundSafeReadyCloudState() {
+        XCTAssertTrue(VocabRecoveryReplicaScheduler.automaticRefreshEnabled)
+        XCTAssertFalse(VocabRecoveryReplicaScheduler.automaticRefreshIsEligible(
+            trigger: .foregroundActive,
+            syncMode: .cloudKitPrivate,
+            hydrationState: .ready,
+            localContentIsUsable: true,
+            hasRunningTask: false
+        ))
+        XCTAssertTrue(VocabRecoveryReplicaScheduler.automaticRefreshIsEligible(
+            trigger: .inactive,
+            syncMode: .cloudKitPrivate,
+            hydrationState: .ready,
+            localContentIsUsable: true,
+            hasRunningTask: false
+        ))
+        XCTAssertTrue(VocabRecoveryReplicaScheduler.automaticRefreshIsEligible(
+            trigger: .background,
+            syncMode: .cloudKitPrivate,
+            hydrationState: .ready,
+            localContentIsUsable: true,
+            hasRunningTask: false
+        ))
+        XCTAssertFalse(VocabRecoveryReplicaScheduler.automaticRefreshIsEligible(
+            trigger: .inactive,
+            syncMode: .localOnly,
+            hydrationState: .ready,
+            localContentIsUsable: true,
+            hasRunningTask: false
+        ))
+        XCTAssertFalse(VocabRecoveryReplicaScheduler.automaticRefreshIsEligible(
+            trigger: .inactive,
+            syncMode: .cloudKitPrivate,
+            hydrationState: .hydrating,
+            localContentIsUsable: true,
+            hasRunningTask: false
+        ))
+        XCTAssertFalse(VocabRecoveryReplicaScheduler.automaticRefreshIsEligible(
+            trigger: .inactive,
+            syncMode: .cloudKitPrivate,
+            hydrationState: .ready,
+            localContentIsUsable: false,
+            hasRunningTask: false
+        ))
+        XCTAssertFalse(VocabRecoveryReplicaScheduler.automaticRefreshIsEligible(
+            trigger: .inactive,
+            syncMode: .cloudKitPrivate,
+            hydrationState: .ready,
+            localContentIsUsable: true,
+            hasRunningTask: true
+        ))
     }
 
     func testCloudConfiguredStoreBackupReopensAsLocalOnlyWithTechnicalMetadata() async throws {
+        try XCTSkipUnless(
+            VocabCloudEntitlementStatus.hasRequiredCloudKitContainer(),
+            "CloudKit-backed store tests require a signed CloudKit entitlement."
+        )
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
         let sourceURL = root.appendingPathComponent("CloudSource.store")
@@ -186,7 +303,7 @@ final class VocabRecoveryReplicaTests: XCTestCase {
             atPath: result.checkpointStoreURL.deletingLastPathComponent().appendingPathComponent("manifest.json").path
         ))
         XCTAssertEqual(try Data(contentsOf: VocabRecoveryReplicaManifestStore.manifestURL(root: root)), manifestBefore)
-        XCTAssertFalse(VocabRecoveryReplicaScheduler.automaticRefreshEnabled)
+        XCTAssertTrue(VocabRecoveryReplicaScheduler.automaticRefreshEnabled)
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: VocabExplicitRecoverySwapStore.manifestURL(for: localStore).path
         ))
