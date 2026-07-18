@@ -4,6 +4,16 @@ import XCTest
 
 @MainActor
 final class AuthoringCapabilityTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        resetGlobalMutationAuthority()
+    }
+
+    override func tearDown() {
+        resetGlobalMutationAuthority()
+        super.tearDown()
+    }
+
     func testMacCapabilityAllowsVocabularyCreateUpdateAndDelete() throws {
         let context = try makeContext()
         let coordinator = makeCoordinator(context: context, capability: .macAuthor)
@@ -95,10 +105,56 @@ final class AuthoringCapabilityTests: XCTestCase {
                     session: session
                 )
             }
+            assertIntegrityBlocked { try coordinator.completeSession(session) }
             assertIntegrityBlocked { _ = try coordinator.addLooseWord(term: "blocked", meaningsText: "차단") }
             XCTAssertEqual(try context.fetch(FetchDescriptor<TestSessionRecord>()).count, 1)
             XCTAssertEqual(try context.fetch(FetchDescriptor<AttemptRecord>()).count, 0)
         }
+    }
+
+    func testReadOnlyVocabularyCanWriteLearningFactsWhenCloudStoreIsReadyAndAudited() throws {
+        let context = try makeContext()
+        _ = insertWord(context: context, term: "ios-learning")
+        try authorizeReadyCloudStore(context: context, fingerprint: "ios-learning-fingerprint")
+        let coordinator = LearningCoordinator(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            authoringCapability: .readOnlyVocabulary,
+            mutationAuthority: .allowed
+        )
+
+        let (session, questions) = try coordinator.generateSession(mode: .loose, direction: .enToKo)
+        let question = try XCTUnwrap(questions.first)
+        try coordinator.commit(
+            answer: "뜻",
+            result: .correct,
+            automatic: .correct,
+            matchedMeaningID: question.word.activeMeanings.first?.id,
+            question: question,
+            session: session,
+            date: Date(timeIntervalSince1970: 100)
+        )
+        try coordinator.completeSession(session, date: Date(timeIntervalSince1970: 120))
+
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<TestSessionRecord>()), 1)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<AttemptRecord>()), 1)
+        XCTAssertEqual(question.word.reviewState?.lastTestedAt, Date(timeIntervalSince1970: 100))
+        XCTAssertEqual(session.completedAt, Date(timeIntervalSince1970: 120))
+    }
+
+    func testReadOnlyVocabularyStillRejectsAuthoringWhenCloudStoreIsReadyAndAudited() throws {
+        let context = try makeContext()
+        let word = insertWord(context: context, term: "ios-authoring")
+        try authorizeReadyCloudStore(context: context, fingerprint: "ios-authoring-fingerprint")
+        let coordinator = LearningCoordinator(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            authoringCapability: .readOnlyVocabulary,
+            mutationAuthority: .allowed
+        )
+
+        assertMacAuthoringRequired { _ = try coordinator.addLooseWord(term: "blocked", meaningsText: "차단") }
+        assertMacAuthoringRequired { try coordinator.updateWord(word, term: "changed", meaningsText: "변경") }
     }
 
     func testTransientFailureDoesNotRevokePreviouslyAllowedMutationAuthority() {
@@ -340,6 +396,48 @@ final class AuthoringCapabilityTests: XCTestCase {
         context.insert(meaning)
         context.insert(state)
         return word
+    }
+
+    private func authorizeReadyCloudStore(
+        context: ModelContext,
+        fingerprint: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws {
+        VocabMutationAuthorityRuntime.invalidate()
+        let metadata = CloudBootstrapRecord(contentFingerprint: fingerprint)
+        metadata.schemaVersion = VocabCloudReconciler.metadataSchemaVersion
+        metadata.expectedWordCount = try context.fetchCount(FetchDescriptor<WordRecord>())
+        metadata.expectedMeaningCount = try context.fetchCount(FetchDescriptor<MeaningRecord>())
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+        let receipt = VocabFullAuditReceipt(
+            formatVersion: VocabFullAuditReceipt.currentFormatVersion,
+            storeIdentity: VocabFullAuditReceipt.storeIdentity(for: context.container),
+            bootstrapUUID: metadata.bootstrapUUID,
+            schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
+            importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
+            canonicalFingerprint: "canonical-\(fingerprint)",
+            auditedAt: .now
+        )
+        let epoch = VocabMutationAuthorityRuntime.prepareForFullAudit()
+        try VocabMutationAuthorityRuntime.authorize(
+            container: context.container,
+            context: context,
+            receipt: receipt,
+            validationEpoch: epoch
+        )
+        XCTAssertTrue(
+            VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context),
+            file: file,
+            line: line
+        )
+    }
+
+    private func resetGlobalMutationAuthority() {
+        VocabMutationAuthorityRuntime.invalidate()
     }
 
     private func drafts(count: Int) -> [WordDraft] {

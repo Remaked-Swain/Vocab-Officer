@@ -443,6 +443,23 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["no issue number exists yet", "real-device private-CloudKit propagation remains pending under CL-0016", "MemoryAid usefulness still depends on model behavior"]
+    },
+    {
+      "id": "CL-0022",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "iOS learning facts offline authority",
+      "date": "2026-07-18",
+      "tags": ["ios", "learning-facts", "testing", "cloudkit", "mirrored-store", "mutation-lease", "validation-epoch", "authoring", "alias-correction"],
+      "affectedPaths": ["Vocab/Application/", "VocabIOS/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0022-ios-learning-facts-offline-authority.md",
+      "references": ["CL-0016", "CL-0019", "CL-0020", "CL-0021"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["real-device private-CloudKit propagation remains pending under CL-0016", "iOS vocabulary authoring and direct alias creation remain unauthorized"]
     }
   ]
 }

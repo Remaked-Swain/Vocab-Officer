@@ -316,9 +316,7 @@ struct TestRunnerView: View {
                 : judgeResult.matchedMeaningID
             try LearningCoordinator(context: context).commit(answer: answer, result: final, automatic: judgeResult.automaticResult, matchedMeaningID: finalMeaningID, question: question, session: run.session, correction: final == judgeResult.automaticResult ? nil : (addAlias ? "acceptedAlias" : "oneTimeCorrection"))
             if index + 1 == run.questions.count {
-                run.session.completedAt = .now
-                try context.save()
-                NotificationCenter.default.post(name: .vocabLearningStoreDidChange, object: nil)
+                try LearningCoordinator(context: context).completeSession(run.session)
                 dismiss()
             } else {
                 index += 1

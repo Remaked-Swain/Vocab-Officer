@@ -353,8 +353,16 @@ struct VocabMutationLeaseStore {
     private static let key = "vocabSyncRuntime.mutationLease.v1"
     private let defaults: UserDefaults
 
-    init(defaults: UserDefaults = .standard) {
+    init(defaults: UserDefaults = Self.defaultDefaults()) {
         self.defaults = defaults
+    }
+
+    private static func defaultDefaults() -> UserDefaults {
+        guard ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil else {
+            return .standard
+        }
+        let suiteName = "VocabMutationLeaseTests-\(ProcessInfo.processInfo.processIdentifier)"
+        return UserDefaults(suiteName: suiteName) ?? .standard
     }
 
     func load() -> VocabMutationLease? {
@@ -504,7 +512,7 @@ final class LearningCoordinator {
     private let context: ModelContext
     private let syncMode: VocabSyncMode
     private let authoringCapability: VocabAuthoringCapability
-    private let mutationAuthority: VocabMutationAuthority
+    private let learningFactAuthority: VocabMutationAuthority
     private var activeWordCache: [WordRecord]?
     private var dailySetCache: [DailySetRecord]?
 
@@ -517,17 +525,16 @@ final class LearningCoordinator {
         self.context = context
         self.syncMode = syncMode
         self.authoringCapability = authoringCapability
-        self.mutationAuthority = mutationAuthority
+        self.learningFactAuthority = mutationAuthority
     }
 
     private func saveAndNotifyChange() throws {
-        try requireMutationAuthority()
         try context.save()
         NotificationCenter.default.post(name: .vocabLearningStoreDidChange, object: nil)
     }
 
     func saveDailySet(_ drafts: [WordDraft], date: Date = .now) throws {
-        try requireMutationAuthority()
+        try requireLearningFactWriting()
         try requireVocabularyAuthoring()
         let validDrafts = drafts.filter { !$0.term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard validDrafts.count == 100 else {
@@ -593,7 +600,7 @@ final class LearningCoordinator {
 
     @discardableResult
     func addLooseWord(term: String, meaningsText: String, date: Date = .now) throws -> WordRecord {
-        try requireMutationAuthority()
+        try requireLearningFactWriting()
         try requireVocabularyAuthoring()
         let trimmedTerm = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTerm.isEmpty else { throw LearningError.termRequired }
@@ -632,7 +639,7 @@ final class LearningCoordinator {
     }
 
     func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now) throws -> (TestSessionRecord, [SessionQuestion]) {
-        try requireMutationAuthority()
+        try requireLearningFactWriting()
         let day = SeoulCalendar.day(for: date)
         let words = try activeWords()
         let wordsByID = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
@@ -743,7 +750,7 @@ final class LearningCoordinator {
     }
 
     func commit(answer: String, result: FinalResult, automatic: FinalResult, matchedMeaningID: UUID?, question: SessionQuestion, session: TestSessionRecord, correction: String? = nil, date: Date = .now) throws {
-        try requireMutationAuthority()
+        try requireLearningFactWriting()
         let existingAttempt = try context.fetch(FetchDescriptor<AttemptRecord>()).contains {
             $0.deletedAt == nil && $0.sessionID == session.id && $0.questionIndex == question.index
         }
@@ -758,8 +765,15 @@ final class LearningCoordinator {
         try saveAndNotifyChange()
     }
 
+    func completeSession(_ session: TestSessionRecord, date: Date = .now) throws {
+        try requireLearningFactWriting()
+        session.completedAt = date
+        session.updatedAt = date
+        try saveAndNotifyChange()
+    }
+
     func updateWord(_ word: WordRecord, term: String, meaningsText: String) throws {
-        try requireMutationAuthority()
+        try requireLearningFactWriting()
         try requireVocabularyAuthoring()
         let trimmedTerm = term.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTerm.isEmpty else { throw LearningError.termRequired }
@@ -815,7 +829,7 @@ final class LearningCoordinator {
     }
 
     func compactLearningHistory(now: Date = .now) throws {
-        try requireMutationAuthority()
+        try requireLearningFactWriting()
         for word in try context.fetch(FetchDescriptor<WordRecord>()) where word.deletedAt == nil {
             compactAttempts(for: word, now: now)
         }
@@ -824,7 +838,7 @@ final class LearningCoordinator {
     }
 
     func deleteMastered(_ word: WordRecord) throws {
-        try requireMutationAuthority()
+        try requireLearningFactWriting()
         try requireVocabularyAuthoring()
         guard word.statusRaw == "mastered" else { throw LearningError.onlyMasteredCanBeDeleted }
         let day = SeoulCalendar.day(for: .now)
@@ -837,7 +851,7 @@ final class LearningCoordinator {
     }
 
     func deleteWords(_ words: [WordRecord]) throws {
-        try requireMutationAuthority()
+        try requireLearningFactWriting()
         try requireVocabularyAuthoring()
         var deletedIDs = Set<UUID>()
         for word in words where deletedIDs.insert(word.id).inserted {
@@ -848,7 +862,7 @@ final class LearningCoordinator {
     }
 
     func discardDailySet(_ set: DailySetRecord) throws {
-        try requireMutationAuthority()
+        try requireLearningFactWriting()
         try requireVocabularyAuthoring()
         let allItems = try context.fetch(FetchDescriptor<DailySetItemRecord>()).filter { $0.deletedAt == nil }
         let wordsByID = Dictionary(uniqueKeysWithValues: try context.fetch(FetchDescriptor<WordRecord>()).filter { $0.deletedAt == nil }.map { ($0.id, $0) })
@@ -1303,8 +1317,8 @@ final class LearningCoordinator {
         }
     }
 
-    private func requireMutationAuthority() throws {
-        guard mutationAuthority == .allowed else {
+    private func requireLearningFactWriting() throws {
+        guard learningFactAuthority == .allowed else {
             context.rollback()
             throw LearningError.mutationsBlockedForIntegrity
         }

@@ -54,7 +54,7 @@ struct VocabIOSRootView: View {
         .task { await requestConnectionRefresh(reason: .initial) }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            VocabMutationAuthorityRuntime.beginValidationEpoch()
+            VocabMutationAuthorityRuntime.noteForegroundReentry()
             Task { await requestConnectionRefresh(reason: .foreground) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
@@ -601,7 +601,6 @@ private struct VocabIOSTestRunnerView: View {
     @State private var judgeResult: JudgeResult?
     @State private var chosenResult: FinalResult?
     @State private var correctedMeaningID: UUID?
-    @State private var addAlias = false
     @State private var notice: String?
     @FocusState private var answerFocused: Bool
 
@@ -710,7 +709,9 @@ private struct VocabIOSTestRunnerView: View {
                         }
                     }
                 }
-                Toggle("이 답안을 허용 답안으로 추가", isOn: $addAlias)
+                Text("iPhone에서는 단어장 원본을 수정하지 않습니다. 이번 답안만 정답으로 기록합니다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
 
             Button(index + 1 == run.questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
@@ -748,29 +749,21 @@ private struct VocabIOSTestRunnerView: View {
         }
 
         do {
-            if addAlias, final == .correct {
-                if question.direction == .enToKo, let meaning = question.word.activeMeanings.first(where: { $0.id == correctedMeaningID }) {
-                    meaning.aliases.append(answer)
-                } else if question.direction == .koToEn {
-                    question.word.englishAliases.append(answer)
-                }
-            }
             let finalMeaningID = final == .correct && question.direction == .enToKo
                 ? (judgeResult.matchedMeaningID ?? correctedMeaningID)
                 : judgeResult.matchedMeaningID
-            try LearningCoordinator(context: modelContext, syncMode: .cloudKitPrivate).commit(
+            let coordinator = LearningCoordinator(context: modelContext, syncMode: .cloudKitPrivate)
+            try coordinator.commit(
                 answer: answer,
                 result: final,
                 automatic: judgeResult.automaticResult,
                 matchedMeaningID: finalMeaningID,
                 question: question,
                 session: run.session,
-                correction: final == judgeResult.automaticResult ? nil : (addAlias ? "acceptedAlias" : "oneTimeCorrection")
+                correction: final == judgeResult.automaticResult ? nil : "oneTimeCorrection"
             )
             if index + 1 == run.questions.count {
-                run.session.completedAt = .now
-                try modelContext.save()
-                NotificationCenter.default.post(name: .vocabLearningStoreDidChange, object: nil)
+                try coordinator.completeSession(run.session)
                 dismiss()
             } else {
                 index += 1
@@ -778,7 +771,6 @@ private struct VocabIOSTestRunnerView: View {
                 self.judgeResult = nil
                 chosenResult = nil
                 correctedMeaningID = nil
-                addAlias = false
                 notice = nil
                 answerFocused = true
             }
