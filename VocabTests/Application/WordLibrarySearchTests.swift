@@ -61,7 +61,7 @@ final class WordLibrarySearchTests: XCTestCase {
         for value in meanings {
             let meaning = MeaningRecord(text: value)
             meaning.word = word
-            word.meanings.append(meaning)
+            word.appendMeaning(meaning)
             context.insert(meaning)
         }
         context.insert(word)
@@ -79,7 +79,7 @@ final class WordLibrarySearchTests: XCTestCase {
             ReviewStateRecord.self,
             AnonymousAggregateRecord.self
         ])
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         return ModelContext(try ModelContainer(for: schema, configurations: [configuration]))
     }
 }

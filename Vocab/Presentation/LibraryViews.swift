@@ -4,7 +4,7 @@ import SwiftUI
 
 struct StudyCardsView: View {
     @Environment(\.modelContext) private var context
-    @Query private var sets: [DailySetRecord]
+    @Query(filter: #Predicate<DailySetRecord> { $0.deletedAt == nil }) private var sets: [DailySetRecord]
     @Binding var faceStates: [UUID: Bool]
     @State private var selectedSetID: UUID?
     @State private var selectedEntries: [StudyCardEntry] = []
@@ -46,7 +46,7 @@ struct StudyCardsView: View {
                 set: { selectedSetID = $0 }
             )) {
                 ForEach(orderedSets) { set in
-                    Text("\(set.seoulDay) 세트  (\(set.items.count)개)")
+                    Text("\(set.seoulDay) 세트  (\(set.allItems.filter { $0.deletedAt == nil }.count)개)")
                         .tag(Optional(set.id))
                 }
             }
@@ -139,7 +139,7 @@ struct StudyCardsView: View {
         isLoadingCards = true
         defer { isLoadingCards = false }
 
-        let sortedItems = selectedSet.items.sorted { $0.orderIndex < $1.orderIndex }
+        let sortedItems = selectedSet.allItems.filter { $0.deletedAt == nil }.sorted { $0.orderIndex < $1.orderIndex }
         let ids = Array(Set(sortedItems.map(\.wordID)))
         guard !ids.isEmpty else {
             selectedEntries = []
@@ -203,7 +203,7 @@ private struct FlipWordCard: View {
                     cardFace(title: "English", value: word.term, isBack: false)
                         .opacity(showsMeaning ? 0 : 1)
                         .rotation3DEffect(.degrees(showsMeaning ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.65)
-                    cardFace(title: "의미", value: word.meanings.map(\.text).joined(separator: ", "), isBack: true)
+                    cardFace(title: "의미", value: word.activeMeanings.map(\.text).joined(separator: ", "), isBack: true)
                         .opacity(showsMeaning ? 1 : 0)
                         .rotation3DEffect(.degrees(showsMeaning ? 0 : -180), axis: (x: 0, y: 1, z: 0), perspective: 0.65)
                 }
@@ -217,7 +217,7 @@ private struct FlipWordCard: View {
                 WordMemoryAidButton(word: word)
 
                 Button {
-                    WordPronouncer.shared.speak(headword: word.term, meanings: word.meanings.map(\.text))
+                    WordPronouncer.shared.speak(headword: word.term, meanings: word.activeMeanings.map(\.text))
                 } label: {
                     Image(systemName: "speaker.wave.2.fill")
                 }
@@ -235,7 +235,7 @@ private struct FlipWordCard: View {
         }
         .frame(maxWidth: .infinity, minHeight: 146, maxHeight: 146)
         .accessibilityLabel(word.term)
-        .accessibilityValue(showsMeaning ? word.meanings.map(\.text).joined(separator: ", ") : "영단어 앞면")
+        .accessibilityValue(showsMeaning ? word.activeMeanings.map(\.text).joined(separator: ", ") : "영단어 앞면")
         .accessibilityHint("눌러서 카드 앞뒤를 전환합니다")
     }
 
@@ -360,7 +360,7 @@ private struct ReviewWordCard: View {
     let word: WordRecord
 
     private var meaning: String {
-        word.meanings.map(\.text).joined(separator: ", ")
+        word.activeMeanings.map(\.text).joined(separator: ", ")
     }
 
     private var failureCheck: Int {
@@ -443,7 +443,7 @@ struct LibraryView: View {
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
                             Text(word.term).font(.title3.weight(.semibold))
-                            Text(word.meanings.map(\.text).joined(separator: ", "))
+                            Text(word.activeMeanings.map(\.text).joined(separator: ", "))
                                 .font(.body)
                                 .foregroundStyle(.secondary)
                             HStack(spacing: 8) {
@@ -665,7 +665,11 @@ struct LibraryView: View {
 
 struct HistoryView: View {
     @Environment(\.modelContext) private var context
-    @Query(sort: \AttemptRecord.answeredAt, order: .reverse) private var attempts: [AttemptRecord]
+    @Query(
+        filter: #Predicate<AttemptRecord> { $0.deletedAt == nil },
+        sort: \AttemptRecord.answeredAt,
+        order: .reverse
+    ) private var attempts: [AttemptRecord]
     @State private var notice: String?
 
     var body: some View {
@@ -734,7 +738,7 @@ private struct WordEditSheet: View {
         self.word = word
         self.onComplete = onComplete
         _term = State(initialValue: word.term)
-        _meaningsText = State(initialValue: word.meanings.map(\.text).joined(separator: ", "))
+        _meaningsText = State(initialValue: word.activeMeanings.map(\.text).joined(separator: ", "))
     }
 
     var body: some View {

@@ -70,3 +70,14 @@ The app does not expose JSON import, JSON export or managed-backup features.
 at `/Applications/Vocab.app` and launches it for local-use verification.
 Application data stays in the macOS application-support store and is not
 bundled into the installed executable.
+
+## iCloud And iPhone Direction
+
+iCloud/iPhone work must be isolated from the stable macOS app. The codebase now
+uses `VocabModelContainerFactory` as the single SwiftData container boundary.
+Its default mode is `localOnly`, which preserves the current macOS store path.
+`cloudKitPrivate` exists as the explicit CloudKit preparation point for
+`iCloud.com.swainyun.Vocab`, but it must not become the default until signing,
+CloudKit schema compatibility and first-device migration are verified.
+
+See `Docs/iCloudIOSSyncPlan.md` for the staged implementation policy.

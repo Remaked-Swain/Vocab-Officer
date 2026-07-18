@@ -3,7 +3,7 @@ import SwiftUI
 
 struct TestSetupView: View {
     @Environment(\.modelContext) private var context
-    @Query private var sets: [DailySetRecord]
+    @Query(filter: #Predicate<DailySetRecord> { $0.deletedAt == nil }) private var sets: [DailySetRecord]
     @State private var mode: SessionMode = .mixed
     @State private var direction: PracticeDirection = .enToKo
     @State private var selectedSetID: UUID?
@@ -224,7 +224,7 @@ struct TestRunnerView: View {
                         Text(question.word.term).fontWeight(.semibold)
                     }
                     LabeledContent("등록 의미") {
-                        Text(question.word.meanings.map(\.text).joined(separator: ", "))
+                        Text(question.word.activeMeanings.map(\.text).joined(separator: ", "))
                             .multilineTextAlignment(.trailing)
                     }
                     LabeledContent("입력 답안") {
@@ -305,7 +305,7 @@ struct TestRunnerView: View {
         }
         do {
             if addAlias, final == .correct {
-                if question.direction == .enToKo, let meaning = question.word.meanings.first(where: { $0.id == correctedMeaningID }) {
+                if question.direction == .enToKo, let meaning = question.word.activeMeanings.first(where: { $0.id == correctedMeaningID }) {
                     meaning.aliases.append(answer)
                 } else if question.direction == .koToEn {
                     question.word.englishAliases.append(answer)
@@ -318,6 +318,7 @@ struct TestRunnerView: View {
             if index + 1 == run.questions.count {
                 run.session.completedAt = .now
                 try context.save()
+                NotificationCenter.default.post(name: .vocabLearningStoreDidChange, object: nil)
                 dismiss()
             } else {
                 index += 1

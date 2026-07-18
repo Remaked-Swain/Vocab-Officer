@@ -25,9 +25,16 @@
   preservation.
 - Confirm no learning payload, local SwiftData store, secret material or test
   result bundle is tracked in Git before publishing.
-- For each Closed-Loop change, read `Docs/ClosedLoop/INDEX.md` and run
+- For each Closed-Loop change, read `Docs/ClosedLoop/INDEX.md`, apply
+  `CL-0015` to decide whether Closed-Loop is justified, and run
   `script/verify_changed.sh` with only that loop's affected files before
-  broadening verification scope.
+  broadening verification scope. Closed-Loop is not the default; record the
+  Director's use or non-use reason when the workflow is considered.
+- When Closed-Loop is used, apply `CL-0018`: spawn each eligible role once,
+  retain its agent session under a run-local role-to-agent map, reactivate that
+  same ID for later turns, and close retained sessions only after validated
+  terminal closure. Role activation remains sequential; idle retention does
+  not permit parallel work.
 - Run unit tests, build the macOS target and execute the performance harness
   against the documented fixture before final acceptance.
 - Build and install the local executable with

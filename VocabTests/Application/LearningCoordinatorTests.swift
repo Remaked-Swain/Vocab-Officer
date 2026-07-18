@@ -19,34 +19,34 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testDailySetPreservesParenthesizedCommaMeaning() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         var values = drafts(count: 100, prefix: "entry")
         values[0] = WordDraft(term: "board", meanings: "(배, 기차에) 타다, 탑승하다")
 
         try coordinator.saveDailySet(values, date: testDate)
 
         let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "board" })
-        XCTAssertEqual(Set(word.meanings.map(\.text)), ["(배, 기차에) 타다", "탑승하다"])
+        XCTAssertEqual(Set(word.allMeanings.map(\.text)), ["(배, 기차에) 타다", "탑승하다"])
     }
 
     func testSOTEditPreservesParenthesizedCommaMeaning() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100, prefix: "entry"), date: testDate)
         let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "entry-0" })
 
         try coordinator.updateWord(word, term: "entry-0", meaningsText: "기존뜻, (배, 기차에) 타다")
 
-        XCTAssertEqual(Set(word.meanings.map(\.text)), ["기존뜻", "(배, 기차에) 타다"])
+        XCTAssertEqual(Set(word.allMeanings.map(\.text)), ["기존뜻", "(배, 기차에) 타다"])
     }
 
     func testLooseWordPreservesParenthesizedCommaMeaning() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
 
         let word = try coordinator.addLooseWord(term: "board", meaningsText: "(배, 기차에) 타다, 탑승하다", date: testDate)
 
-        XCTAssertEqual(Set(word.meanings.map(\.text)), ["(배, 기차에) 타다", "탑승하다"])
+        XCTAssertEqual(Set(word.allMeanings.map(\.text)), ["(배, 기차에) 타다", "탑승하다"])
     }
 
     func testPasteParserPreservesHyphenatedTermAndMultipleMeanings() throws {
@@ -126,7 +126,7 @@ final class LearningCoordinatorTests: XCTestCase {
     func testGenerateSessionLargeFixtureP95MeetsTarget() throws {
         try requirePerformanceTests()
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try insertSessionPerformanceFixture(context: context, wordCount: 10_000, sessionCount: 10_000, date: testDate)
 
         let p95 = try percentile95(iterations: 40) {
@@ -144,7 +144,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testDailySetRejectsNinetyNineAndAcceptsExactlyOneHundredWords() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
 
         XCTAssertThrowsError(try coordinator.saveDailySet(drafts(count: 99), date: testDate))
 
@@ -152,13 +152,13 @@ final class LearningCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 100)
         let set = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first)
-        XCTAssertEqual(set.items.count, 100)
+        XCTAssertEqual(set.allItems.count, 100)
         XCTAssertTrue(set.isComplete)
     }
 
     func testRepeatedHeadwordsReuseSingleWordAndMergeNewMeanings() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let nextDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
         var firstDay = drafts(count: 100, prefix: "day1")
         firstDay[0] = WordDraft(term: "shared", meanings: "기존뜻")
@@ -172,11 +172,11 @@ final class LearningCoordinatorTests: XCTestCase {
         let words = try context.fetch(FetchDescriptor<WordRecord>())
         let shared = try XCTUnwrap(words.first { $0.normalizedTerm == "shared" })
         XCTAssertEqual(words.count, 198)
-        XCTAssertEqual(Set(shared.meanings.map(\.text)), ["기존뜻", "새뜻", "또다른뜻"])
+        XCTAssertEqual(Set(shared.allMeanings.map(\.text)), ["기존뜻", "새뜻", "또다른뜻"])
 
         let secondSet = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-26" })
-        XCTAssertEqual(secondSet.items.count, 100)
-        XCTAssertEqual(secondSet.items.filter { $0.wordID == shared.id }.count, 2)
+        XCTAssertEqual(secondSet.allItems.count, 100)
+        XCTAssertEqual(secondSet.allItems.filter { $0.wordID == shared.id }.count, 2)
 
         let generated = try coordinator.generateSession(mode: .set, direction: .enToKo, setID: secondSet.id, date: nextDate)
         XCTAssertEqual(generated.1.count, 20)
@@ -185,14 +185,14 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testLooseWordIsSavedOutsideDailySetOnSameDay() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let set = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first)
 
         let loose = try coordinator.addLooseWord(term: "bonus", meaningsText: "보충뜻", date: testDate)
 
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 101)
-        XCTAssertEqual(set.items.count, 100)
+        XCTAssertEqual(set.allItems.count, 100)
         XCTAssertFalse(try context.fetch(FetchDescriptor<DailySetItemRecord>()).contains { $0.wordID == loose.id })
         let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
         XCTAssertFalse(generated.1.contains { $0.word.id == loose.id })
@@ -200,7 +200,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testLooseWordCanBeTestedWithoutDailySet() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let loose = try coordinator.addLooseWord(term: "bonus", meaningsText: "보충뜻", date: testDate)
 
         let generated = try coordinator.generateSession(mode: .loose, direction: .enToKo, date: testDate)
@@ -212,7 +212,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testLooseSessionExcludesSetWordsAndPrioritizesUnseenWords() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let looseWords = try (0..<21).map { index in
             try coordinator.addLooseWord(term: "loose-\(index)", meaningsText: "낱개뜻-\(index)", date: testDate)
@@ -233,7 +233,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testEmptyLoosePoolDoesNotPersistSession() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
 
         XCTAssertThrowsError(
@@ -244,7 +244,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testLooseDuplicateHeadwordMergesMeaningsWithoutAddingSetItem() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let existing = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "term-0" })
         let beforeItemCount = try context.fetch(FetchDescriptor<DailySetItemRecord>()).count
@@ -254,12 +254,12 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(result.id, existing.id)
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 100)
         XCTAssertEqual(try context.fetch(FetchDescriptor<DailySetItemRecord>()).count, beforeItemCount)
-        XCTAssertEqual(Set(existing.meanings.map(\.text)), ["뜻-0", "보충뜻"])
+        XCTAssertEqual(Set(existing.allMeanings.map(\.text)), ["뜻-0", "보충뜻"])
     }
 
     func testTodaySessionPrioritizesWordsNotPreviouslyPresentedThatDay() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
 
         let first = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate).0
@@ -272,7 +272,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testGenerateSessionCompactsExpiredSessionsBeforeExposureStats() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let words = try context.fetch(FetchDescriptor<WordRecord>())
         let targetDate = ISO8601DateFormatter().date(from: "2027-01-25T01:00:00Z")!
@@ -296,7 +296,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testReviewSessionPrefersLessPresentedWordsWithinSamePriority() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let words = try context.fetch(FetchDescriptor<WordRecord>())
         for word in words {
@@ -317,7 +317,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testReviewSessionCapsInitialFailuresThenUsesPreviousSetBeforeRemainingFailures() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let previousDate = ISO8601DateFormatter().date(from: "2026-05-24T01:00:00Z")!
         try coordinator.saveDailySet(drafts(count: 100, prefix: "previous"), date: previousDate)
         try coordinator.saveDailySet(drafts(count: 100, prefix: "today"), date: testDate)
@@ -350,7 +350,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testReviewSessionUsesLatestSetAsPreviousSetWhenTodaySetIsMissing() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let olderDate = ISO8601DateFormatter().date(from: "2026-05-24T01:00:00Z")!
         let latestDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
         let targetDate = ISO8601DateFormatter().date(from: "2026-05-27T01:00:00Z")!
@@ -378,7 +378,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testReviewSessionLimitsPreviousSetToSixWhenFailurePoolIsSmall() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let previousDate = ISO8601DateFormatter().date(from: "2026-05-24T01:00:00Z")!
         try coordinator.saveDailySet(drafts(count: 100, prefix: "previous"), date: previousDate)
         try coordinator.saveDailySet(drafts(count: 100, prefix: "today"), date: testDate)
@@ -405,7 +405,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testReviewSessionIgnoresFutureSetsWhenTodaySetIsMissing() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let pastDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
         let targetDate = ISO8601DateFormatter().date(from: "2026-05-27T01:00:00Z")!
         let futureDate = ISO8601DateFormatter().date(from: "2026-05-28T01:00:00Z")!
@@ -420,7 +420,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testMixedSessionIgnoresFutureSetsInHistoricalBacklog() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let olderDate = ISO8601DateFormatter().date(from: "2026-05-25T01:00:00Z")!
         let latestPastDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
         let targetDate = ISO8601DateFormatter().date(from: "2026-05-27T01:00:00Z")!
@@ -440,12 +440,12 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testMixedSessionKeepsTodayMajorityAndIncludesHistoricalUntestedWords() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let nextDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
         try coordinator.saveDailySet(drafts(count: 100, prefix: "older"), date: testDate)
         try coordinator.saveDailySet(drafts(count: 100, prefix: "today"), date: nextDate)
         let words = try context.fetch(FetchDescriptor<WordRecord>())
-        let todayIDs = Set(try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-26" }).items.map(\.wordID))
+        let todayIDs = Set(try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-26" }).allItems.map(\.wordID))
         for word in words.filter({ todayIDs.contains($0.id) }).prefix(8) {
             let state = word.reviewState ?? ReviewStateRecord()
             state.failureCheck = 1
@@ -464,7 +464,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testOlderUntestedSetCanBeSelectedAfterNewerSetExists() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let nextDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
         let followingDate = ISO8601DateFormatter().date(from: "2026-05-27T01:00:00Z")!
         try coordinator.saveDailySet(drafts(count: 100, prefix: "older"), date: testDate)
@@ -482,7 +482,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testEmptyReviewPoolFallsBackToLatestDailySet() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let olderDate = ISO8601DateFormatter().date(from: "2026-05-24T01:00:00Z")!
         try coordinator.saveDailySet(drafts(count: 100, prefix: "older"), date: olderDate)
         try coordinator.saveDailySet(drafts(count: 100, prefix: "latest"), date: testDate)
@@ -496,7 +496,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testRuntimeJudgeAcceptsAnyStoredKoreanMeaning() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         var values = drafts(count: 100, prefix: "entry")
         values[0] = WordDraft(term: "example", meanings: "첫 의미, 둘째 의미, 셋째 의미")
         try coordinator.saveDailySet(values, date: testDate)
@@ -506,16 +506,16 @@ final class LearningCoordinatorTests: XCTestCase {
         let result = coordinator.judge(answer: "둘째 의미", for: question)
 
         XCTAssertEqual(result.automaticResult, .correct)
-        XCTAssertEqual(result.matchedMeaningID, question.word.meanings.first { $0.text == "둘째 의미" }?.id)
+        XCTAssertEqual(result.matchedMeaningID, question.word.allMeanings.first { $0.text == "둘째 의미" }?.id)
     }
 
     func testEnglishToKoreanCorrectStreakRemovesWordFromReviewPool() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
         let question = try XCTUnwrap(generated.1.first)
-        let meaningID = try XCTUnwrap(question.word.meanings.first?.id)
+        let meaningID = try XCTUnwrap(question.word.allMeanings.first?.id)
 
         try coordinator.commit(answer: "오답", result: .incorrect, automatic: .incorrect, matchedMeaningID: nil, question: question, session: generated.0, date: testDate)
         XCTAssertEqual(question.word.reviewState?.failureCheck, 1)
@@ -523,7 +523,16 @@ final class LearningCoordinatorTests: XCTestCase {
 
         for offset in 1...2 {
             let correctDate = testDate.addingTimeInterval(TimeInterval(offset * 60))
-            try coordinator.commit(answer: "뜻-0", result: .correct, automatic: .correct, matchedMeaningID: meaningID, question: question, session: generated.0, date: correctDate)
+            let followupSession = TestSessionRecord(
+                directionRaw: PracticeDirection.enToKo.rawValue,
+                modeRaw: SessionMode.review.rawValue,
+                seoulDay: SeoulCalendar.day(for: correctDate),
+                wordIDs: [question.word.id],
+                wasReduced: true,
+                startedAt: correctDate
+            )
+            context.insert(followupSession)
+            try coordinator.commit(answer: "뜻-0", result: .correct, automatic: .correct, matchedMeaningID: meaningID, question: question, session: followupSession, date: correctDate)
         }
 
         XCTAssertEqual(question.word.reviewState?.failureCheck, 1)
@@ -534,13 +543,13 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testDelimitedLegacyMeaningCannotEarnAutomaticOrCorrectedMasteryCredit() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
         let question = try XCTUnwrap(generated.1.first)
         let legacyMeaning = MeaningRecord(text: "첫 의미, 둘째 의미", isCore: true)
         legacyMeaning.word = question.word
-        question.word.meanings.append(legacyMeaning)
+        question.word.appendMeaning(legacyMeaning)
 
         XCTAssertFalse(legacyMeaning.isTrackableCoreMeaning)
         let result = coordinator.judge(answer: "첫 의미, 둘째 의미", for: question)
@@ -554,12 +563,12 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testParenthesizedCommaMeaningCanBeConfirmedForCorrectionCredit() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         var values = drafts(count: 100, prefix: "entry")
         values[0] = WordDraft(term: "formula", meanings: "(수학, 화학) 공식")
         try coordinator.saveDailySet(values, date: testDate)
         let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "formula" })
-        let meaning = try XCTUnwrap(word.meanings.first)
+        let meaning = try XCTUnwrap(word.allMeanings.first)
         let question = SessionQuestion(word: word, direction: .enToKo, index: 0)
 
         XCTAssertTrue(meaning.isTrackableCoreMeaning)
@@ -577,7 +586,7 @@ final class LearningCoordinatorTests: XCTestCase {
         let word = WordRecord(term: "legacy")
         let legacyMeaning = MeaningRecord(text: "첫 의미, 둘째 의미", isCore: true)
         legacyMeaning.word = word
-        word.meanings.append(legacyMeaning)
+        word.appendMeaning(legacyMeaning)
 
         XCTAssertFalse(legacyMeaning.isTrackableCoreMeaning)
         XCTAssertEqual(word.correctionCandidateMeanings.map(\.id), [legacyMeaning.id])
@@ -586,7 +595,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testInvalidMeaningInCompleteSetDoesNotPartiallyInsertWords() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         var invalidDrafts = drafts(count: 100)
         invalidDrafts[99].meanings = "  "
 
@@ -598,24 +607,24 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testCorrectedKoreanAnswerAdvancesOnlyConfirmedCoreMeaning() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
         let question = try XCTUnwrap(generated.1.first)
-        let originalMeaningID = try XCTUnwrap(question.word.meanings.first?.id)
+        let originalMeaningID = try XCTUnwrap(question.word.allMeanings.first?.id)
         let secondMeaning = MeaningRecord(text: "추가 뜻", isCore: true)
         secondMeaning.word = question.word
-        question.word.meanings.append(secondMeaning)
+        question.word.appendMeaning(secondMeaning)
 
         try coordinator.commit(answer: "사용자 보정", result: .correct, automatic: .incorrect, matchedMeaningID: secondMeaning.id, question: question, session: generated.0, correction: "oneTimeCorrection", date: testDate)
 
         XCTAssertTrue(secondMeaning.successDays.contains(SeoulCalendar.day(for: testDate)))
-        XCTAssertTrue(try XCTUnwrap(question.word.meanings.first { $0.id == originalMeaningID }).successDays.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(question.word.allMeanings.first { $0.id == originalMeaningID }).successDays.isEmpty)
     }
 
-    func testMasteredDeletionRemovesIdentifiableSessionAndDailySetLinks() throws {
+    func testMasteredDeletionRecordsAggregateAndTombstonesWord() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let session = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate).0
         let deletedID = try XCTUnwrap(session.wordIDs.first)
@@ -624,15 +633,13 @@ final class LearningCoordinatorTests: XCTestCase {
 
         try coordinator.deleteMastered(word)
 
-        XCTAssertFalse(try context.fetch(FetchDescriptor<WordRecord>()).contains { $0.id == deletedID })
-        XCTAssertFalse(try context.fetch(FetchDescriptor<TestSessionRecord>()).flatMap(\.wordIDs).contains(deletedID))
-        XCTAssertFalse(try context.fetch(FetchDescriptor<DailySetRecord>()).flatMap(\.items).contains { $0.wordID == deletedID })
+        XCTAssertNotNil(word.deletedAt)
         XCTAssertEqual(try context.fetch(FetchDescriptor<AnonymousAggregateRecord>()).reduce(0) { $0 + $1.deletedMasteredCount }, 1)
     }
 
-    func testDirectWordDeletionRemovesLinksAndAttempts() throws {
+    func testDirectWordDeletionTombstonesContentAndRetainsAttemptFact() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
         let question = try XCTUnwrap(generated.1.first)
@@ -640,15 +647,15 @@ final class LearningCoordinatorTests: XCTestCase {
         try coordinator.commit(answer: "오답", result: .incorrect, automatic: .incorrect, matchedMeaningID: nil, question: question, session: generated.0, date: testDate)
         try coordinator.deleteWords([question.word])
 
-        XCTAssertFalse(try context.fetch(FetchDescriptor<WordRecord>()).contains { $0.id == question.word.id })
-        XCTAssertFalse(try context.fetch(FetchDescriptor<DailySetRecord>()).flatMap(\.items).contains { $0.wordID == question.word.id })
-        XCTAssertFalse(try context.fetch(FetchDescriptor<TestSessionRecord>()).flatMap(\.wordIDs).contains(question.word.id))
-        XCTAssertTrue(try context.fetch(FetchDescriptor<AttemptRecord>()).isEmpty)
+        XCTAssertNotNil(question.word.deletedAt)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetItemRecord>()).contains { $0.wordID == question.word.id && $0.deletedAt != nil })
+        XCTAssertTrue(try context.fetch(FetchDescriptor<TestSessionRecord>()).flatMap(\.wordIDs).contains(question.word.id))
+        XCTAssertEqual(try context.fetch(FetchDescriptor<AttemptRecord>()).count, 1)
     }
 
     func testDiscardDailySetDeletesOnlyWordsUniqueToThatSet() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let nextDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
         var firstDay = drafts(count: 100, prefix: "day1")
         firstDay[0] = WordDraft(term: "shared", meanings: "공유뜻")
@@ -661,16 +668,16 @@ final class LearningCoordinatorTests: XCTestCase {
 
         try coordinator.discardDailySet(discardedSet)
 
-        XCTAssertNil(try context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-26" })
+        XCTAssertNotNil(try context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.seoulDay == "2026-05-26" }?.deletedAt)
         XCTAssertNotNil(try context.fetch(FetchDescriptor<WordRecord>()).first { $0.id == shared.id })
-        XCTAssertFalse(try context.fetch(FetchDescriptor<WordRecord>()).contains { $0.term.hasPrefix("day2-") })
-        XCTAssertEqual(try context.fetch(FetchDescriptor<DailySetRecord>()).first?.items.count, 100)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<WordRecord>()).filter { $0.term.hasPrefix("day2-") }.allSatisfy { $0.deletedAt != nil })
+        XCTAssertEqual(try context.fetch(FetchDescriptor<DailySetRecord>()).first { $0.deletedAt == nil }?.allItems.filter { $0.deletedAt == nil }.count, 100)
     }
 
 
     func testTodaySessionFallsBackToLatestSetWhenTodaySetIsMissing() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let olderDate = ISO8601DateFormatter().date(from: "2026-05-24T01:00:00Z")!
         let latestDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
         let targetDate = ISO8601DateFormatter().date(from: "2026-05-27T01:00:00Z")!
@@ -685,14 +692,14 @@ final class LearningCoordinatorTests: XCTestCase {
 
     func testSOTWordEditUpdatesCanonicalWordWithoutCreatingDuplicate() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100, prefix: "entry"), date: testDate)
         let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "entry-0" })
         let originalID = word.id
         let linkedItem = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetItemRecord>()).first { $0.wordID == originalID })
         let duplicateMeaning = MeaningRecord(text: "뜻-0")
         duplicateMeaning.word = word
-        word.meanings.append(duplicateMeaning)
+        word.appendMeaning(duplicateMeaning)
         try context.save()
 
         try coordinator.updateWord(word, term: "corrected", meaningsText: "수정뜻, 추가뜻")
@@ -701,13 +708,45 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(word.term, "corrected")
         XCTAssertEqual(word.normalizedTerm, "corrected")
         XCTAssertEqual(linkedItem.wordID, originalID)
-        XCTAssertEqual(Set(word.meanings.map(\.text)), ["수정뜻", "추가뜻"])
+        XCTAssertEqual(Set(word.allMeanings.map(\.text)), ["수정뜻", "추가뜻"])
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).filter { $0.normalizedTerm == "corrected" }.count, 1)
+    }
+
+    func testCommitIsAppendOnlyAndDeduplicatesSessionQuestionLogicalKey() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
+        let question = try XCTUnwrap(generated.1.first)
+
+        try coordinator.commit(answer: "오답", result: .incorrect, automatic: .incorrect, matchedMeaningID: nil, question: question, session: generated.0, date: testDate)
+        try coordinator.commit(answer: "다른 답", result: .correct, automatic: .correct, matchedMeaningID: question.word.allMeanings.first?.id, question: question, session: generated.0, date: testDate.addingTimeInterval(1))
+
+        let attempts = try context.fetch(FetchDescriptor<AttemptRecord>())
+        XCTAssertEqual(attempts.count, 1)
+        XCTAssertEqual(attempts.first?.finalJudgementRaw, FinalResult.incorrect.rawValue)
+    }
+
+    func testReviewStateCanBeRecomputedFromAttemptFacts() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
+        let question = try XCTUnwrap(generated.1.first)
+        try coordinator.commit(answer: "오답", result: .incorrect, automatic: .incorrect, matchedMeaningID: nil, question: question, session: generated.0, date: testDate)
+        question.word.reviewState?.failureCheck = 0
+        question.word.reviewState?.activePriority = 0
+
+        coordinator.recomputeReviewState(for: question.word)
+
+        XCTAssertEqual(question.word.reviewState?.failureCheck, 1)
+        XCTAssertEqual(question.word.reviewState?.activePriority, 1)
+        XCTAssertEqual(question.word.reviewState?.latestWrongDirection, PracticeDirection.enToKo.rawValue)
     }
 
     func testCompactionEventuallyRemovesOldAttemptsAndSessions() throws {
         let context = try makeContext()
-        let coordinator = LearningCoordinator(context: context)
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first)
         let now = ISO8601DateFormatter().date(from: "2027-06-01T01:00:00Z")!
@@ -715,13 +754,13 @@ final class LearningCoordinatorTests: XCTestCase {
             let answeredAt = now.addingTimeInterval(-Double(500 + index) * 86_400)
             let attempt = AttemptRecord(directionRaw: PracticeDirection.enToKo.rawValue, modeRaw: SessionMode.today.rawValue, sessionID: UUID(), questionIndex: index, seoulDay: SeoulCalendar.day(for: answeredAt), prompt: "old-correct-\(index)", submittedAnswer: "답", automaticJudgementRaw: FinalResult.correct.rawValue, finalJudgementRaw: FinalResult.correct.rawValue, matchedMeaningID: nil, answeredAt: answeredAt)
             attempt.word = word
-            word.attempts.append(attempt)
+            word.appendAttempt(attempt)
             context.insert(attempt)
         }
         let failedAt = now.addingTimeInterval(-700 * 86_400)
         let oldFailure = AttemptRecord(directionRaw: PracticeDirection.enToKo.rawValue, modeRaw: SessionMode.today.rawValue, sessionID: UUID(), questionIndex: 99, seoulDay: SeoulCalendar.day(for: failedAt), prompt: "expired-failure", submittedAnswer: "오답", automaticJudgementRaw: FinalResult.incorrect.rawValue, finalJudgementRaw: FinalResult.incorrect.rawValue, matchedMeaningID: nil, answeredAt: failedAt)
         oldFailure.word = word
-        word.attempts.append(oldFailure)
+        word.appendAttempt(oldFailure)
         context.insert(oldFailure)
         context.insert(TestSessionRecord(directionRaw: PracticeDirection.enToKo.rawValue, modeRaw: SessionMode.today.rawValue, seoulDay: "2026-01-01", wordIDs: [word.id], wasReduced: true, startedAt: now.addingTimeInterval(-220 * 86_400)))
         context.insert(TestSessionRecord(directionRaw: PracticeDirection.enToKo.rawValue, modeRaw: SessionMode.today.rawValue, seoulDay: "2027-05-01", wordIDs: [word.id], wasReduced: true, startedAt: now.addingTimeInterval(-30 * 86_400)))
@@ -774,7 +813,7 @@ final class LearningCoordinatorTests: XCTestCase {
             for meaningIndex in 0..<3 {
                 let meaning = MeaningRecord(text: "성능뜻-\(index)-\(meaningIndex)")
                 meaning.word = word
-                word.meanings.append(meaning)
+                word.appendMeaning(meaning)
                 context.insert(meaning)
             }
             words.append(word)
@@ -787,7 +826,7 @@ final class LearningCoordinatorTests: XCTestCase {
                 let word = words[setIndex * 100 + offset]
                 let item = DailySetItemRecord(orderIndex: offset, entryKind: "newHeadword", wordID: word.id)
                 item.set = set
-                set.items.append(item)
+                set.appendItem(item)
                 context.insert(item)
             }
             set.completedAt = setDate
@@ -836,7 +875,7 @@ final class LearningCoordinatorTests: XCTestCase {
             ReviewStateRecord.self,
             AnonymousAggregateRecord.self
         ])
-        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+        let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         return ModelContext(try ModelContainer(for: schema, configurations: [configuration]))
     }
 }

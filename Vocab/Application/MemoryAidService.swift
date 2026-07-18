@@ -213,7 +213,7 @@ struct MemoryAidPromptBuilder {
     static let version = 3
 
     static func build(for word: WordRecord) -> String {
-        let meanings = word.meanings.map(\.text).joined(separator: ", ")
+        let meanings = word.activeMeanings.map(\.text).joined(separator: ", ")
 
         return """
         You are helping a Korean learner memorize one English vocabulary item for a public-service exam.
@@ -251,7 +251,7 @@ struct MemoryAidPromptBuilder {
         The previous answer did not follow the required format or quality rules.
 
         Word: \(word.term)
-        Meanings: \(word.meanings.map(\.text).joined(separator: ", "))
+        Meanings: \(word.activeMeanings.map(\.text).joined(separator: ", "))
 
         Invalid answer:
         \(invalidOutput)
@@ -405,7 +405,7 @@ enum MemoryAidQualityGate {
     }
 
     static func contentSignature(for word: WordRecord) -> String {
-        let meanings = word.meanings
+        let meanings = word.activeMeanings
             .map(\.text)
             .sorted()
             .joined(separator: "|")
