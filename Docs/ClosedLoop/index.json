@@ -404,9 +404,28 @@
       "references": ["CL-0016", "CL-0017"],
       "supersedes": [],
       "supersededBy": null,
+      "partiallySupersededBy": [{"id": "CL-0020", "scope": ["automatic Vocab.store recovery-replica refresh disabled limitation"]}],
       "retentionUntil": null,
       "protected": true,
-      "unresolvedLimitations": ["automatic Vocab.store recovery-replica refresh remains disabled until 10,000-word / 200,000-attempt performance evidence is accepted", "real-device private-CloudKit bidirectional propagation remains pending under CL-0016"]
+      "unresolvedLimitations": ["real-device private-CloudKit bidirectional propagation remains pending under CL-0016"]
+    },
+    {
+      "id": "CL-0020",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Foreground-safe recovery replica refresh",
+      "date": "2026-07-18",
+      "tags": ["icloud", "cloudkit", "swiftdata", "recovery", "vocab-store", "foreground", "background", "single-flight", "performance"],
+      "affectedPaths": ["Vocab/App/VocabRecoveryReplicaService.swift", "Vocab/App/VocabRecoveryReplicaScheduler.swift", "Vocab/App/VocabApp.swift", "VocabIOS/App/VocabIOSApp.swift", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0020-foreground-safe-recovery-replica-refresh.md",
+      "references": ["CL-0016", "CL-0017", "CL-0019"],
+      "supersedes": [],
+      "supersededBy": null,
+      "partiallySupersedes": [{"id": "CL-0019", "scope": ["automatic Vocab.store recovery-replica refresh disabled limitation"]}],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["200,000-attempt performance measurement remains unobserved", "entitlement-dependent real CloudKit tests remain skipped"]
     }
   ]
 }

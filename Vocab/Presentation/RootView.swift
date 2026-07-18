@@ -100,16 +100,13 @@ struct RootView: View {
                 if syncMode == .cloudKitPrivate {
                     VocabMutationAuthorityRuntime.beginValidationEpoch()
                 }
-                recoveryReplicaTask?.cancel()
-                recoveryReplicaTask = nil
                 scheduleHydrationRefresh(reason: .foreground)
             case .inactive:
-                scheduleRecoveryReplicaIfEligible()
+                scheduleRecoveryReplicaIfEligible(trigger: .inactive)
             case .background:
-                break
+                scheduleRecoveryReplicaIfEligible(trigger: .background)
             @unknown default:
-                recoveryReplicaTask?.cancel()
-                recoveryReplicaTask = nil
+                break
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
@@ -164,12 +161,14 @@ struct RootView: View {
     }
 
     @MainActor
-    private func scheduleRecoveryReplicaIfEligible() {
-        guard VocabRecoveryReplicaScheduler.automaticRefreshEnabled,
-              recoveryReplicaTask == nil,
-              syncMode == .cloudKitPrivate,
-              localContentIsUsable,
-              hydrationState == .ready else { return }
+    private func scheduleRecoveryReplicaIfEligible(trigger: VocabRecoveryReplicaRefreshTrigger) {
+        guard VocabRecoveryReplicaScheduler.automaticRefreshIsEligible(
+            trigger: trigger,
+            syncMode: syncMode,
+            hydrationState: hydrationState,
+            localContentIsUsable: localContentIsUsable,
+            hasRunningTask: recoveryReplicaTask != nil
+        ) else { return }
         let container = modelContext.container
         recoveryReplicaTask = Task {
             defer { recoveryReplicaTask = nil }
