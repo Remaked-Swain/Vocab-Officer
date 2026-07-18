@@ -4,6 +4,367 @@ import XCTest
 
 @MainActor
 final class VocabCloudReconciliationTests: XCTestCase {
+    func testForegroundDiagnosticsAreThrottledWhileManualAndImportBypassTTL() {
+        let now = Date(timeIntervalSince1970: 10_000)
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.diagnosticIsDue(
+            reason: .foreground,
+            lastDiagnosticAt: now.addingTimeInterval(-60),
+            now: now
+        ))
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.diagnosticIsDue(
+            reason: .foreground,
+            lastDiagnosticAt: now.addingTimeInterval(-901),
+            now: now
+        ))
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.diagnosticIsDue(
+            reason: .manual,
+            lastDiagnosticAt: now,
+            now: now
+        ))
+        XCTAssertTrue(VocabHydrationDiagnosticPolicy.diagnosticIsDue(
+            reason: .successfulImport,
+            lastDiagnosticAt: now,
+            now: now
+        ))
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.diagnosticIsDue(
+            reason: .remoteStoreChange,
+            lastDiagnosticAt: nil,
+            now: now
+        ))
+    }
+
+    func testImportedChangeDiscoveryFindsLateAttemptWithoutTimestampCursor() throws {
+        let context = try makeContext()
+        let first = WordRecord(term: "first")
+        let second = WordRecord(term: "second")
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+        let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+
+        let late = makeAttempt(
+            word: second,
+            result: .incorrect,
+            answeredAt: Date(timeIntervalSince1970: 1),
+            sessionID: UUID()
+        )
+        second.appendAttempt(late)
+        context.insert(late)
+        try context.save()
+
+        let changes = try VocabImportedChangeDiscovery.discover(
+            context: context,
+            previous: baseline,
+            changedRecords: [try XCTUnwrap(VocabChangedRecordID(late))]
+        )
+        XCTAssertFalse(changes.requiresFullAudit)
+        XCTAssertEqual(changes.affectedWordIDs, Set([second.id]))
+        XCTAssertTrue(changes.changedTombstoneIDs.isEmpty)
+    }
+
+    func testIncrementalAttemptSignatureCoversEveryCanonicalEqualityField() throws {
+        enum Field: CaseIterable {
+            case direction, mode, sessionID, questionIndex, seoulDay, prompt, submittedAnswer
+            case automaticJudgement, finalJudgement, correction, matchedMeaning, answeredAt, word
+        }
+
+        for field in Field.allCases {
+            let context = try makeContext()
+            let first = WordRecord(term: "first")
+            let second = WordRecord(term: "second")
+            let firstMeaning = MeaningRecord(text: "첫째")
+            firstMeaning.word = first
+            first.appendMeaning(firstMeaning)
+            let secondMeaning = MeaningRecord(text: "둘째")
+            secondMeaning.word = second
+            second.appendMeaning(secondMeaning)
+            context.insert(first)
+            context.insert(second)
+            context.insert(firstMeaning)
+            context.insert(secondMeaning)
+            let attempt = makeAttempt(
+                word: first,
+                result: .incorrect,
+                answeredAt: Date(timeIntervalSince1970: 100),
+                sessionID: UUID()
+            )
+            first.appendAttempt(attempt)
+            context.insert(attempt)
+            try context.save()
+            let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+
+            switch field {
+            case .direction: attempt.directionRaw = PracticeDirection.koToEn.rawValue
+            case .mode: attempt.modeRaw = SessionMode.mixed.rawValue
+            case .sessionID: attempt.sessionID = UUID()
+            case .questionIndex: attempt.questionIndex += 1
+            case .seoulDay: attempt.seoulDay = "2026-07-18"
+            case .prompt: attempt.prompt = "changed prompt"
+            case .submittedAnswer: attempt.submittedAnswer = "changed answer"
+            case .automaticJudgement: attempt.automaticJudgementRaw = FinalResult.correct.rawValue
+            case .finalJudgement: attempt.finalJudgementRaw = FinalResult.correct.rawValue
+            case .correction: attempt.correctionRaw = "acceptedAlias"
+            case .matchedMeaning: attempt.matchedMeaningID = firstMeaning.id
+            case .answeredAt: attempt.answeredAt = Date(timeIntervalSince1970: 200)
+            case .word:
+                attempt.word = second
+                first.replaceAttempts(with: [])
+                second.appendAttempt(attempt)
+            }
+            try context.save()
+
+            let changes = try VocabImportedChangeDiscovery.discover(
+                context: context,
+                previous: baseline,
+                changedRecords: [try XCTUnwrap(VocabChangedRecordID(attempt))]
+            )
+            XCTAssertTrue(changes.affectedWordIDs.contains(first.id), "Missing canonical field: \(field)")
+            if field == .word {
+                XCTAssertTrue(changes.affectedWordIDs.contains(second.id))
+            }
+        }
+    }
+
+    func testImportIndexVersionMismatchForcesFullAudit() throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "versioned")
+        context.insert(word)
+        try context.save()
+        var stale = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+        stale.canonicalAttemptSignatureVersion -= 1
+
+        let changes = try VocabImportedChangeDiscovery.discover(
+            context: context,
+            previous: stale,
+            changedRecords: []
+        )
+
+        XCTAssertTrue(changes.requiresFullAudit)
+    }
+
+    func testDurableIdentifierBufferCoalescesRepeatedImportNotifications() async throws {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabIdentifierBuffer-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let context = try makeContext()
+        let first = WordRecord(term: "first")
+        let second = WordRecord(term: "second")
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+        let buffer = VocabImportedIdentifierBuffer(url: url)
+
+        let firstID = try XCTUnwrap(VocabChangedRecordID(first))
+        let secondID = try XCTUnwrap(VocabChangedRecordID(second))
+        await buffer.capture([firstID])
+        await buffer.capture([firstID, secondID])
+        await buffer.capture([secondID])
+
+        let reloadedBuffer = VocabImportedIdentifierBuffer(url: url)
+        let pending = await reloadedBuffer.snapshot()
+        XCTAssertEqual(pending, VocabImportedIdentifierBatch(records: [firstID, secondID], requiresFullAudit: false))
+        await reloadedBuffer.acknowledge(pending)
+        let remaining = await reloadedBuffer.snapshot()
+        XCTAssertEqual(remaining, .empty)
+    }
+
+    func testUnresolvedDeletedIdentifierForcesFullAudit() throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "deleted-before-resolution")
+        context.insert(word)
+        try context.save()
+        let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+        let missingRecord = VocabChangedRecordID(kind: .word, id: UUID())
+
+        let changes = try VocabImportedChangeDiscovery.discover(
+            context: context,
+            previous: baseline,
+            changedRecords: [missingRecord]
+        )
+        XCTAssertTrue(changes.requiresFullAudit)
+    }
+
+    func testCloudImportWithoutIdentifiersRunsFullAuditInsteadOfTreatingItAsNoChange() async throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "cloud-import")
+        let meaning = MeaningRecord(text: "클라우드")
+        meaning.word = word
+        word.appendMeaning(meaning)
+        let state = ReviewStateRecord()
+        state.word = word
+        word.reviewState = state
+        let attempt = makeAttempt(word: word, result: .incorrect, answeredAt: .now)
+        word.appendAttempt(attempt)
+        context.insert(word)
+        context.insert(meaning)
+        context.insert(state)
+        context.insert(attempt)
+        let metadata = readyMetadata()
+        metadata.expectedWordCount = 1
+        metadata.expectedMeaningCount = 1
+        metadata.expectedAttemptCount = 1
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabUnknownImport-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let indexURL = root.appendingPathComponent("index.json")
+        let receiptURL = root.appendingPathComponent("receipt.json")
+        let buffer = VocabImportedIdentifierBuffer(url: root.appendingPathComponent("ids.json"))
+        let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+        try VocabImportedChangeIndexStore.save(baseline, to: indexURL)
+
+        attempt.finalJudgementRaw = FinalResult.correct.rawValue
+        attempt.automaticJudgementRaw = FinalResult.correct.rawValue
+        attempt.updatedAt = .now
+        try context.save()
+        let pendingIdentifiers = await buffer.snapshot()
+        XCTAssertEqual(pendingIdentifiers, .empty)
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        _ = try await worker.reconcileImportedChanges(
+            syncMode: .cloudKitPrivate,
+            indexURL: indexURL,
+            auditReceiptURL: receiptURL,
+            identifierBuffer: buffer
+        )
+
+        let refreshed = ModelContext(context.container)
+        let refreshedState = try XCTUnwrap(refreshed.fetch(FetchDescriptor<ReviewStateRecord>()).first)
+        XCTAssertEqual(refreshedState.enToKoStreak, 1)
+        XCTAssertNotNil(try VocabFullAuditReceiptStore.load(from: receiptURL))
+    }
+
+    func testCooperativeAuditIgnoresSoftDeletedConflictingAttemptAcrossBatches() async throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "active-only-replay")
+        let meaning = MeaningRecord(text: "활성")
+        meaning.word = word
+        word.appendMeaning(meaning)
+        let state = ReviewStateRecord()
+        state.word = word
+        word.reviewState = state
+        context.insert(word)
+        context.insert(meaning)
+        context.insert(state)
+        for index in 0..<501 {
+            let filler = makeAttempt(
+                word: word,
+                result: .correct,
+                answeredAt: Date(timeIntervalSince1970: Double(index)),
+                sessionID: UUID()
+            )
+            word.appendAttempt(filler)
+            context.insert(filler)
+        }
+        let sharedSessionID = UUID()
+        let active = makeAttempt(
+            word: word,
+            result: .incorrect,
+            answeredAt: Date(timeIntervalSince1970: 1_000),
+            sessionID: sharedSessionID
+        )
+        let deletedConflict = makeAttempt(
+            word: word,
+            result: .correct,
+            answeredAt: active.answeredAt,
+            sessionID: sharedSessionID
+        )
+        deletedConflict.deletedAt = Date(timeIntervalSince1970: 1_001)
+        word.appendAttempt(active)
+        word.appendAttempt(deletedConflict)
+        context.insert(active)
+        context.insert(deletedConflict)
+        let metadata = readyMetadata()
+        metadata.expectedWordCount = 1
+        metadata.expectedMeaningCount = 1
+        metadata.expectedAttemptCount = 503
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        let result = try await worker.reconcileFullCooperatively(syncMode: .cloudKitPrivate)
+
+        XCTAssertEqual(result.state, .ready)
+        let refreshed = ModelContext(context.container)
+        let refreshedState = try XCTUnwrap(refreshed.fetch(FetchDescriptor<ReviewStateRecord>()).first)
+        XCTAssertEqual(refreshedState.failureCheck, 1)
+        XCTAssertEqual(refreshedState.lastTestedAt, active.answeredAt)
+    }
+
+    func testDeterministicBatchPaginationProcessesEveryRecordAcrossBoundaries() async throws {
+        let context = try makeContext()
+        let count = 1_201
+        for index in 0..<count {
+            let word = WordRecord(term: "boundary-\(index)")
+            let state = ReviewStateRecord()
+            state.word = word
+            word.reviewState = state
+            context.insert(word)
+            context.insert(state)
+            context.insert(RecordTombstone(
+                recordID: word.id,
+                recordType: "WordRecord",
+                deletedAt: Date(timeIntervalSince1970: Double(index + 1))
+            ))
+        }
+        let metadata = readyMetadata()
+        metadata.expectedWordCount = count
+        metadata.expectedTombstoneCount = count
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        _ = try await worker.reconcileFullCooperatively(syncMode: .cloudKitPrivate)
+
+        let refreshed = ModelContext(context.container)
+        let words = try refreshed.fetch(FetchDescriptor<WordRecord>())
+        XCTAssertEqual(words.count, count)
+        XCTAssertEqual(words.filter { $0.deletedAt != nil }.count, count)
+        XCTAssertEqual(Set(words.map(\.id)).count, count)
+    }
+
+    func testConflictingIncrementalAttemptsDoNotAdvanceSidecarIndex() throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "conflict")
+        context.insert(word)
+        try context.save()
+        let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+        let indexURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabConflictIndex-\(UUID().uuidString).json")
+        defer { try? FileManager.default.removeItem(at: indexURL) }
+        try VocabImportedChangeIndexStore.save(baseline, to: indexURL)
+        let sessionID = UUID()
+        let first = makeAttempt(word: word, result: .correct, answeredAt: .now, sessionID: sessionID)
+        let second = makeAttempt(word: word, result: .incorrect, answeredAt: first.answeredAt, sessionID: sessionID)
+        word.appendAttempt(first)
+        word.appendAttempt(second)
+        context.insert(first)
+        context.insert(second)
+        try context.save()
+
+        let changes = try VocabImportedChangeDiscovery.discover(
+            context: context,
+            previous: baseline,
+            changedRecords: [
+                try XCTUnwrap(VocabChangedRecordID(first)),
+                try XCTUnwrap(VocabChangedRecordID(second))
+            ]
+        )
+        XCTAssertThrowsError(try VocabCloudReconciler.reconcileAffected(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            wordIDs: changes.affectedWordIDs,
+            tombstoneIDs: changes.changedTombstoneIDs
+        ))
+        XCTAssertEqual(try VocabImportedChangeIndexStore.load(from: indexURL), baseline)
+    }
+
     func testBootstrapClaimDiagnosticsDistinguishMissingUploadingAndCompletedDelay() {
         let local = awaitingMetadataStatus()
         let now = Date(timeIntervalSince1970: 1_000)
@@ -449,7 +810,28 @@ final class VocabCloudReconciliationTests: XCTestCase {
             word.appendAttempt(attempt)
             context.insert(attempt)
         }
+        let metadata = readyMetadata()
+        metadata.expectedWordCount = 1
+        metadata.expectedAttemptCount = 45
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
         try context.save()
+        let validationEpoch = VocabMutationAuthorityRuntime.prepareForFullAudit()
+        try VocabMutationAuthorityRuntime.authorize(
+            container: context.container,
+            context: context,
+            receipt: VocabFullAuditReceipt(
+                formatVersion: VocabFullAuditReceipt.currentFormatVersion,
+                storeIdentity: VocabFullAuditReceipt.storeIdentity(for: context.container),
+                bootstrapUUID: metadata.bootstrapUUID,
+                schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+                reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
+                importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
+                canonicalFingerprint: "compaction-audit",
+                auditedAt: .now
+            ),
+            validationEpoch: validationEpoch
+        )
 
         try LearningCoordinator(context: context, syncMode: .cloudKitPrivate).compactLearningHistory(
             now: Date(timeIntervalSince1970: 100_000_000)

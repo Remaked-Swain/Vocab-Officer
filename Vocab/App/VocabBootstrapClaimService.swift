@@ -705,6 +705,8 @@ struct VocabHydrationDiagnosis: Equatable {
 }
 
 enum VocabHydrationRefreshReason: Equatable, Sendable {
+    case initial
+    case foreground
     case manual
     case remoteStoreChange
     case successfulImport
@@ -742,10 +744,66 @@ actor VocabHydrationRefreshQueue {
         if existing == .manual || incoming == .manual {
             return .manual
         }
+        if existing == .initial || incoming == .initial {
+            return .initial
+        }
         if existing == .remoteStoreChange || incoming == .remoteStoreChange {
             return .remoteStoreChange
         }
         return incoming
+    }
+}
+
+actor VocabSyncRuntimeStateStore {
+    static let shared = VocabSyncRuntimeStateStore()
+
+    private enum Key {
+        static let lastDiagnosticAt = "vocabSyncRuntime.lastDiagnosticAt"
+        static let lastFullAuditAt = "vocabSyncRuntime.lastFullAuditAt"
+        static let reachedReady = "vocabSyncRuntime.reachedReady"
+    }
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func shouldRunDiagnostic(
+        reason: VocabHydrationRefreshReason,
+        now: Date = .now
+    ) -> Bool {
+        VocabHydrationDiagnosticPolicy.diagnosticIsDue(
+            reason: reason,
+            lastDiagnosticAt: defaults.object(forKey: Key.lastDiagnosticAt) as? Date,
+            now: now
+        )
+    }
+
+    func markDiagnosticCompleted(at date: Date = .now, state: VocabHydrationState) {
+        defaults.set(date, forKey: Key.lastDiagnosticAt)
+        if state == .ready || state == .localOnly {
+            defaults.set(true, forKey: Key.reachedReady)
+        }
+    }
+
+    func shouldRunFullAudit(now: Date = .now) -> Bool {
+        VocabHydrationDiagnosticPolicy.fullAuditIsDue(
+            lastAuditAt: defaults.object(forKey: Key.lastFullAuditAt) as? Date,
+            now: now
+        )
+    }
+
+    func hasCompletedFullAudit() -> Bool {
+        defaults.object(forKey: Key.lastFullAuditAt) as? Date != nil
+    }
+
+    func markFullAuditCompleted(at date: Date = .now) {
+        defaults.set(date, forKey: Key.lastFullAuditAt)
+    }
+
+    static func persistedLocalContentIsUsable(defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: Key.reachedReady)
     }
 }
 
@@ -1076,6 +1134,8 @@ enum VocabBootstrapActivationService {
 #endif
 
 enum VocabHydrationDiagnosticPolicy {
+    static let foregroundDiagnosticTTL: TimeInterval = 15 * 60
+    static let fullAuditTTL: TimeInterval = 7 * 24 * 60 * 60
     static let completedMetadataGracePeriod: TimeInterval = 60
     static let bootstrapPollingDelays: [TimeInterval] = [5, 10, 20, 40, 60]
 
@@ -1147,7 +1207,7 @@ enum VocabHydrationDiagnosticPolicy {
 
     static func shouldRefresh(reason: VocabHydrationRefreshReason, state: VocabHydrationState) -> Bool {
         switch reason {
-        case .manual, .remoteStoreChange, .successfulImport:
+        case .initial, .foreground, .manual, .remoteStoreChange, .successfulImport:
             true
         case .pollingTick(let sceneIsActive):
             shouldPoll(sceneIsActive: sceneIsActive, state: state)
@@ -1156,6 +1216,34 @@ enum VocabHydrationDiagnosticPolicy {
 
     static func shouldReconcile(reason: VocabHydrationRefreshReason, state: VocabHydrationState) -> Bool {
         state == .reconciling || (reason == .successfulImport && state == .ready)
+    }
+
+    static func diagnosticIsDue(
+        reason: VocabHydrationRefreshReason,
+        lastDiagnosticAt: Date?,
+        now: Date = .now,
+        ttl: TimeInterval = foregroundDiagnosticTTL
+    ) -> Bool {
+        switch reason {
+        case .initial, .manual, .successfulImport:
+            return true
+        case .foreground:
+            guard let lastDiagnosticAt else { return true }
+            return now.timeIntervalSince(lastDiagnosticAt) >= ttl
+        case .remoteStoreChange:
+            return false
+        case .pollingTick:
+            return true
+        }
+    }
+
+    static func fullAuditIsDue(
+        lastAuditAt: Date?,
+        now: Date = .now,
+        ttl: TimeInterval = fullAuditTTL
+    ) -> Bool {
+        guard let lastAuditAt else { return true }
+        return now.timeIntervalSince(lastAuditAt) >= ttl
     }
 
     static func isSuccessfulImportEvent(_ notification: Notification) -> Bool {

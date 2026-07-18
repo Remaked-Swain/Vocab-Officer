@@ -143,7 +143,15 @@ enum VocabModelContainerFactory {
     }
 
     static func localStoreURL() throws -> URL {
-        try storeURL(named: "Vocab.store", migrateLegacyDefaultStore: true)
+        return try storeURL(named: "Vocab.store", migrateLegacyDefaultStore: true)
+    }
+
+    static func localStoreURL(applicationSupportURL: URL) throws -> URL {
+        try storeURL(
+            named: "Vocab.store",
+            migrateLegacyDefaultStore: true,
+            applicationSupportURL: applicationSupportURL
+        )
     }
 
     static func mirroredStoreURL() throws -> URL {
@@ -154,9 +162,13 @@ enum VocabModelContainerFactory {
         try localStoreURL()
     }
 
-    private static func storeURL(named storeName: String, migrateLegacyDefaultStore: Bool) throws -> URL {
+    private static func storeURL(
+        named storeName: String,
+        migrateLegacyDefaultStore: Bool,
+        applicationSupportURL: URL? = nil
+    ) throws -> URL {
         let fileManager = FileManager.default
-        let appSupport = try fileManager.url(
+        let appSupport = try applicationSupportURL ?? fileManager.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,
             appropriateFor: nil,

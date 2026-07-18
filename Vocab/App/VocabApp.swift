@@ -4,29 +4,29 @@ import SwiftUI
 
 @main
 struct VocabApp: App {
-    private let launch: VocabLaunchPlan = {
-        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
-            return VocabLaunchPlan(
-                container: try! VocabModelContainerFactory.makeInMemoryContainer(),
-                mode: .localOnly,
-                connectionError: nil
-            )
-        }
-        let preferredMode = VocabSyncMode.current(allowsCloudKit: true)
-        return VocabModelContainerFactory.makeLaunchPlan(preferredMode: preferredMode)
-    }()
+    @StateObject private var storeBoundary = VocabApplicationStoreBoundary()
 
     var body: some Scene {
         WindowGroup("Vocab", id: "main") {
-            RootView(connectionError: launch.connectionError, syncMode: launch.mode)
-                .modelContainer(launch.container)
+            if let launch = storeBoundary.launch {
+                RootView(connectionError: launch.connectionError, syncMode: launch.mode)
+                    .modelContainer(launch.container)
+            } else {
+                ProgressView("로컬 단어장 복구 준비 중…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .defaultSize(width: 1160, height: 760)
         .windowResizability(.automatic)
 
         Window("Vocab 설정", id: "settings") {
-            SettingsView()
-                .modelContainer(launch.container)
+            if let launch = storeBoundary.launch {
+                SettingsView()
+                    .modelContainer(launch.container)
+            } else {
+                ProgressView("로컬 단어장 복구 준비 중…")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .defaultSize(width: 820, height: 760)
         .windowResizability(.automatic)

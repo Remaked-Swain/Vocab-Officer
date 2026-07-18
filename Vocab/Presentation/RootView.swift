@@ -41,8 +41,10 @@ struct RootView: View {
     @State private var showBootstrapRestart = false
     @State private var hydrationRefreshTask: Task<Void, Never>?
     @State private var hasPendingHydrationRefresh = false
-    @State private var pendingRefreshRequiresReconciliation = false
+    @State private var pendingRefreshReason: VocabHydrationRefreshReason = .initial
     @State private var reconciliationWorker: VocabCloudReconciliationWorker?
+    @State private var localContentIsUsable = false
+    @State private var recoveryReplicaTask: Task<Void, Never>?
 
     var body: some View {
         NavigationSplitView {
@@ -67,7 +69,7 @@ struct RootView: View {
                     systemImage: "icloud.and.arrow.up",
                     description: Text("검증된 기존 bootstrap 작업을 중단 지점부터 재개하고 있습니다. 단어장을 안전하게 유지하기 위해 완료 전에는 편집할 수 없습니다.")
                 )
-            } else if hydrationState != .localOnly && hydrationState != .ready {
+            } else if !localContentIsUsable && hydrationState != .localOnly && hydrationState != .ready {
                 ContentUnavailableView(
                     "iCloud 연결 준비 중",
                     systemImage: "icloud",
@@ -87,18 +89,52 @@ struct RootView: View {
         }
         .frame(minWidth: 900, minHeight: 600)
         .task {
-            scheduleHydrationRefresh(reason: .manual)
+            localContentIsUsable = syncMode == .localOnly
+                || VocabSyncRuntimeStateStore.persistedLocalContentIsUsable()
+            scheduleHydrationRefresh(reason: .initial)
             await resumeBootstrapIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
-            scheduleHydrationRefresh(reason: .manual)
+            switch phase {
+            case .active:
+                if syncMode == .cloudKitPrivate {
+                    VocabMutationAuthorityRuntime.beginValidationEpoch()
+                }
+                recoveryReplicaTask?.cancel()
+                recoveryReplicaTask = nil
+                scheduleHydrationRefresh(reason: .foreground)
+            case .inactive:
+                scheduleRecoveryReplicaIfEligible()
+            case .background:
+                break
+            @unknown default:
+                recoveryReplicaTask?.cancel()
+                recoveryReplicaTask = nil
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
+            VocabMutationAuthorityRuntime.invalidate()
+            VocabFullAuditReceiptStore.invalidateDefault()
+            Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
             scheduleHydrationRefresh(reason: .remoteStoreChange)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { notification in
+            guard let source = notification.object as? ModelContext,
+                  source.container === modelContext.container else { return }
+            let changes = VocabModelContextChangeEvent.changes(from: notification, context: source)
+            Task {
+                await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
+                await VocabImportedIdentifierBuffer.shared.capture(
+                    changes.records,
+                    requiresFullAudit: changes.requiresFullAudit
+                )
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { notification in
             guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
+            VocabMutationAuthorityRuntime.invalidate()
+            VocabFullAuditReceiptStore.invalidateDefault()
+            Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
             scheduleHydrationRefresh(reason: .successfulImport)
         }
         .alert("iCloud 전환 완료", isPresented: $showBootstrapRestart) {
@@ -112,47 +148,94 @@ struct RootView: View {
     @MainActor
     private func scheduleHydrationRefresh(reason: VocabHydrationRefreshReason) {
         hasPendingHydrationRefresh = true
-        if reason == .successfulImport {
-            pendingRefreshRequiresReconciliation = true
-        }
+        pendingRefreshReason = mergedRefreshReason(pendingRefreshReason, reason)
         guard hydrationRefreshTask == nil else { return }
         hydrationRefreshTask = Task { @MainActor in
             // SwiftData can coalesce several remote notifications for one CloudKit transaction.
             try? await Task.sleep(for: .milliseconds(300))
             while hasPendingHydrationRefresh, !Task.isCancelled {
                 hasPendingHydrationRefresh = false
-                let reconcileAfterImport = pendingRefreshRequiresReconciliation
-                pendingRefreshRequiresReconciliation = false
-                await refreshHydration(reconcileAfterSuccessfulImport: reconcileAfterImport)
+                let reason = pendingRefreshReason
+                pendingRefreshReason = .remoteStoreChange
+                await refreshHydration(reason: reason)
             }
             hydrationRefreshTask = nil
         }
     }
 
     @MainActor
-    private func refreshHydration(reconcileAfterSuccessfulImport: Bool) async {
+    private func scheduleRecoveryReplicaIfEligible() {
+        guard VocabRecoveryReplicaScheduler.automaticRefreshEnabled,
+              recoveryReplicaTask == nil,
+              syncMode == .cloudKitPrivate,
+              localContentIsUsable,
+              hydrationState == .ready else { return }
+        let container = modelContext.container
+        recoveryReplicaTask = Task {
+            defer { recoveryReplicaTask = nil }
+            _ = try? await VocabRecoveryReplicaScheduler.refresh(
+                modelContainer: container,
+                syncMode: syncMode
+            )
+        }
+    }
+
+    @MainActor
+    private func refreshHydration(reason: VocabHydrationRefreshReason) async {
+        guard await VocabSyncRuntimeStateStore.shared.shouldRunDiagnostic(reason: reason) else { return }
         do {
             let worker = await ensureReconciliationWorker()
-            let status = try await worker.hydrationStatus(syncMode: syncMode)
-            let reason: VocabHydrationRefreshReason = reconcileAfterSuccessfulImport
-                ? .successfulImport
-                : .manual
-            let needsReconciliation = VocabHydrationDiagnosticPolicy.shouldReconcile(
-                reason: reason,
-                state: status.state
-            )
-            if needsReconciliation {
-                let result = try await worker.reconcile(syncMode: syncMode)
+            if reason == .successfulImport {
+                let result = try await worker.reconcileImportedChanges(syncMode: syncMode)
                 hydrationState = result.state
                 hydrationMessage = result.message
             } else {
-                hydrationState = status.state
-                hydrationMessage = status.message
+                let status = try await worker.hydrationStatus(syncMode: syncMode)
+                let needsReconciliation = VocabHydrationDiagnosticPolicy.shouldReconcile(
+                    reason: reason,
+                    state: status.state
+                )
+                let fullAuditIsDue = await VocabSyncRuntimeStateStore.shared.shouldRunFullAudit()
+                let currentEpochRequiresAudit = syncMode == .cloudKitPrivate
+                    && (reason == .initial || reason == .foreground)
+                    && VocabMutationAuthorityRuntime.current == .integrityBlocked
+                let scheduledAuditIsDue = status.state == .ready
+                    && (fullAuditIsDue || currentEpochRequiresAudit)
+                if needsReconciliation || scheduledAuditIsDue {
+                    let result = try await worker.auditAll(syncMode: syncMode)
+                    hydrationState = result.state
+                    hydrationMessage = result.message
+                    await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted()
+                } else {
+                    hydrationState = status.state
+                    hydrationMessage = status.message
+                }
             }
+            if hydrationState == .ready || hydrationState == .localOnly {
+                localContentIsUsable = true
+            }
+            if let authority = VocabMutationAuthorityPolicy.authority(for: hydrationState) {
+                VocabMutationAuthorityRuntime.set(authority)
+            }
+            await VocabSyncRuntimeStateStore.shared.markDiagnosticCompleted(state: hydrationState)
         } catch {
             hydrationState = .failed
             hydrationMessage = error.localizedDescription
+            if let authority = VocabMutationAuthorityPolicy.authority(for: error) {
+                VocabMutationAuthorityRuntime.set(authority)
+            }
         }
+    }
+
+    private func mergedRefreshReason(
+        _ existing: VocabHydrationRefreshReason,
+        _ incoming: VocabHydrationRefreshReason
+    ) -> VocabHydrationRefreshReason {
+        if existing == .successfulImport || incoming == .successfulImport { return .successfulImport }
+        if existing == .manual || incoming == .manual { return .manual }
+        if existing == .initial || incoming == .initial { return .initial }
+        if existing == .foreground || incoming == .foreground { return .foreground }
+        return incoming
     }
 
     @MainActor
@@ -230,6 +313,7 @@ struct SettingsView: View {
     @State private var syncMessageIsError = false
     @State private var hydrationState: VocabHydrationState = .localOnly
     @State private var hydrationMessage: String?
+    @State private var recoveryReplicaDescription = "검증된 복구 replica가 아직 없습니다."
     @State private var serverClaimStatus: VocabBootstrapServerClaimStatus = .unavailable("아직 확인하지 않았습니다.")
     @AppStorage("vocabBootstrapAutoRecoveryLastError") private var bootstrapAutoRecoveryLastError = ""
 
@@ -248,6 +332,7 @@ struct SettingsView: View {
                 LabeledContent("현재 저장 방식", value: VocabSyncMode.current(allowsCloudKit: true).displayName)
                 LabeledContent("CloudKit 컨테이너", value: VocabSyncMode.cloudKitContainerIdentifier)
                 LabeledContent("Hydration", value: hydrationState.rawValue)
+                LabeledContent("Mac 복구 replica", value: recoveryReplicaDescription)
                 claimStatusView
                 if !bootstrapAutoRecoveryLastError.isEmpty {
                     LabeledContent("마지막 자동 복구 진단") {
@@ -370,7 +455,8 @@ struct SettingsView: View {
         .frame(minWidth: 600, idealWidth: 820, minHeight: 480, idealHeight: 760)
         .task {
             await loadAPIKey()
-            refreshHydrationStatus()
+            await refreshHydrationStatus(runFullAudit: false)
+            refreshRecoveryReplicaDescription()
         }
         .confirmationDialog(
             "현재 Mac 단어장을 iCloud에 업로드할까요?",
@@ -481,18 +567,46 @@ struct SettingsView: View {
         defer { isCheckingCloudKit = false }
         cloudKitState = await VocabCloudKitStatusService().accountStatus()
         serverClaimStatus = await VocabCloudKitBootstrapClaimService().fixedClaimStatus()
-        refreshHydrationStatus()
+        await refreshHydrationStatus(runFullAudit: true)
+        refreshRecoveryReplicaDescription()
     }
 
-    private func refreshHydrationStatus() {
+    private func refreshHydrationStatus(runFullAudit: Bool) async {
         let mode = VocabSyncMode.current(allowsCloudKit: true)
         do {
-            let status = try VocabCloudReconciler.hydrationStatus(context: modelContext, syncMode: mode)
+            let worker = await VocabCloudReconciliationWorkerFactory.make(
+                modelContainer: modelContext.container
+            )
+            let status = if runFullAudit && mode == .cloudKitPrivate {
+                try await worker.auditAll(syncMode: mode)
+            } else {
+                try await worker.hydrationStatus(syncMode: mode)
+            }
             hydrationState = status.state
             hydrationMessage = status.message
+            if let authority = VocabMutationAuthorityPolicy.authority(for: status.state) {
+                VocabMutationAuthorityRuntime.set(authority)
+            }
         } catch {
             hydrationState = .failed
             hydrationMessage = error.localizedDescription
+            if let authority = VocabMutationAuthorityPolicy.authority(for: error) {
+                VocabMutationAuthorityRuntime.set(authority)
+            }
+        }
+    }
+
+    private func refreshRecoveryReplicaDescription() {
+        do {
+            let root = try VocabRecoveryReplicaManifestStore.rootURL()
+            guard let manifest = try VocabRecoveryReplicaManifestStore.load(root: root),
+                  let generation = manifest.generations.first(where: { $0.id == manifest.currentGenerationID }) else {
+                recoveryReplicaDescription = "검증된 복구 replica가 아직 없습니다."
+                return
+            }
+            recoveryReplicaDescription = "\(generation.seoulDay), \(generation.counts.words)단어, 최근 3세대 보존"
+        } catch {
+            recoveryReplicaDescription = "복구 replica 상태를 읽지 못했습니다."
         }
     }
 
@@ -508,7 +622,8 @@ struct SettingsView: View {
                 storeURL: try VocabModelContainerFactory.storeURL(),
                 destinationRoot: try localCheckpointRoot()
             )
-            let result = try await VocabCloudSnapshotSyncService().uploadLocalSnapshot(context: modelContext)
+            let result = try await VocabEmergencyRecoveryService()
+                .uploadExplicitRecoverySnapshot(context: modelContext)
             syncMessage = result.disposition == .unchanged
                 ? "서버 복구 snapshot과 canonical fingerprint가 같습니다. 변경 없음. asset 업로드를 건너뛰었습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
                 : "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 iCloud에 업로드했습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"

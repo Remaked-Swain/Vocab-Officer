@@ -395,6 +395,37 @@ struct VocabCloudSnapshotSyncService {
     }
 }
 
+@MainActor
+struct VocabEmergencyRecoveryService {
+    private let snapshotService: VocabCloudSnapshotSyncService
+
+    init() {
+        snapshotService = VocabCloudSnapshotSyncService()
+    }
+
+    init(snapshotService: VocabCloudSnapshotSyncService) {
+        self.snapshotService = snapshotService
+    }
+
+    func uploadExplicitRecoverySnapshot(
+        context: ModelContext,
+        now: Date = .now
+    ) async throws -> VocabCloudSnapshotSyncResult {
+        try await snapshotService.uploadLocalSnapshot(context: context, now: now)
+    }
+
+    func inspectExplicitRecoverySnapshot() async throws -> VocabCloudSnapshotSyncResult? {
+        try await snapshotService.inspectCloudSnapshot()
+    }
+
+    func replaceLocalOnlyStoreFromExplicitRecoverySnapshot(
+        context: ModelContext,
+        syncedAt: Date = .now
+    ) async throws -> VocabCloudSnapshotSyncResult? {
+        try await snapshotService.replaceLocalStoreFromCloud(context: context, syncedAt: syncedAt)
+    }
+}
+
 enum VocabAutomaticSnapshotSyncPolicy {
     static func allowsAutomaticBatchSync(syncMode: VocabSyncMode) -> Bool {
         // Snapshot transport is retained only for explicit recovery operations.

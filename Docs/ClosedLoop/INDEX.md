@@ -27,6 +27,7 @@ only when its scope applies to the current change.
 | CL-0016 | active | 2026-07-14 | per-record SwiftData CloudKit mirroring, V3 export receipt, tuple recovery, canonical fingerprint and migration safety | [Per-record CloudKit mirroring migration](records/CL-0016-per-record-cloudkit-mirroring.md) | code-level approved; real-device CloudKit export/import and bidirectional propagation pending |
 | CL-0017 | active | 2026-07-15 | CloudKit reconcile scheduling, bounded hydration polling, actor isolation and changed-only persistence | [CloudKit reconciliation scheduling](records/CL-0017-cloudkit-reconciliation-scheduling.md) | retain while per-record CloudKit reconciliation and hydration scheduling exist |
 | CL-0018 | active | 2026-07-15 | run-scoped role-agent reuse, sequential activation and terminal-only session close | [Run-scoped role agent reuse](records/CL-0018-run-scoped-role-agent-reuse.md) | retain while Codex Closed-Loop workflow exists |
+| CL-0019 | active | 2026-07-18 | explicit `Vocab.store` recovery, fail-closed CloudKit write authorization and disabled automatic replica refresh | [Explicit recovery and CloudKit write safety](records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md) | retain while mirrored-store recovery or CloudKit authoring exists |
 
 ## Load Rules
 
@@ -64,6 +65,9 @@ only when its scope applies to the current change.
 - Per-record CloudKit mirroring, mirrored-store migration, CloudKit-backed
   SwiftData schema compatibility or rollback work must also load `CL-0016` and
   `Docs/PerRecordCloudKitMirroringPlan.md`.
+- Recovery generation access, `Vocab.store` replacement, CloudKit mutation
+  authorization or automatic recovery-replica scheduling must also load
+  `CL-0019`.
 - Superseded or archived records are read only when investigating regression,
   migration history or a stated dependency.
 - `index.json` is the machine-readable companion for validation tooling only.

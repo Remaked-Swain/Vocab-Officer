@@ -36,6 +36,7 @@ struct VocabIOSRootView: View {
     @State private var isRefreshingConnection = false
     @State private var reconciliationWorker: VocabCloudReconciliationWorker?
     @State private var refreshQueue = VocabHydrationRefreshQueue()
+    @State private var localContentIsUsable = VocabSyncRuntimeStateStore.persistedLocalContentIsUsable()
 
     var body: some View {
         TabView {
@@ -50,40 +51,39 @@ struct VocabIOSRootView: View {
                 }
             }
         }
-        .task { await requestConnectionRefresh(reason: .manual) }
-        .task(id: pollingTaskID) {
-            var attempt = 0
-            while !Task.isCancelled,
-                  VocabHydrationDiagnosticPolicy.shouldPoll(
-                    sceneIsActive: scenePhase == .active,
-                    state: hydrationState
-                  ),
-                  let delay = VocabHydrationDiagnosticPolicy.pollingDelay(attempt: attempt) {
-                do {
-                    try await Task.sleep(for: .seconds(delay))
-                } catch {
-                    return
-                }
-                guard !Task.isCancelled,
-                      VocabHydrationDiagnosticPolicy.shouldPoll(
-                        sceneIsActive: scenePhase == .active,
-                        state: hydrationState
-                      ) else { return }
-                await requestConnectionRefresh(reason: .pollingTick(sceneIsActive: true))
-                attempt += 1
-            }
-        }
+        .task { await requestConnectionRefresh(reason: .initial) }
         .onChange(of: scenePhase) { _, phase in
             guard phase == .active else { return }
-            Task { await requestConnectionRefresh(reason: .manual) }
+            VocabMutationAuthorityRuntime.beginValidationEpoch()
+            Task { await requestConnectionRefresh(reason: .foreground) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
             guard VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .remoteStoreChange, state: hydrationState) else { return }
-            Task { await requestConnectionRefresh(reason: .remoteStoreChange) }
+            VocabMutationAuthorityRuntime.invalidate()
+            Task {
+                await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
+                await requestConnectionRefresh(reason: .remoteStoreChange)
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { notification in
+            guard let source = notification.object as? ModelContext,
+                  source.container === modelContext.container else { return }
+            let changes = VocabModelContextChangeEvent.changes(from: notification, context: source)
+            Task {
+                await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
+                await VocabImportedIdentifierBuffer.shared.capture(
+                    changes.records,
+                    requiresFullAudit: changes.requiresFullAudit
+                )
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { notification in
             guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
-            Task { await requestConnectionRefresh(reason: .successfulImport) }
+            VocabMutationAuthorityRuntime.invalidate()
+            Task {
+                await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
+                await requestConnectionRefresh(reason: .successfulImport)
+            }
         }
     }
 
@@ -95,7 +95,7 @@ struct VocabIOSRootView: View {
                 systemImage: "icloud.slash",
                 description: Text(connectionError + " 설정 탭에서 연결 상태를 확인하세요.")
             )
-        } else if hydrationState != .ready, tab != .settings {
+        } else if !localContentIsUsable, hydrationState != .ready, tab != .settings {
             ContentUnavailableView(
                 "iCloud 연결 준비 중",
                 systemImage: "icloud",
@@ -125,6 +125,7 @@ struct VocabIOSRootView: View {
 
     @MainActor
     private func requestConnectionRefresh(reason: VocabHydrationRefreshReason) async {
+        guard await VocabSyncRuntimeStateStore.shared.shouldRunDiagnostic(reason: reason) else { return }
         guard await refreshQueue.enqueue(reason) else { return }
         isRefreshingConnection = true
         defer { isRefreshingConnection = false }
@@ -136,24 +137,34 @@ struct VocabIOSRootView: View {
 
     @MainActor
     private func refreshConnectionStatus(reason: VocabHydrationRefreshReason) async {
-
-        async let account = VocabCloudKitStatusService().accountStatus()
-        async let serverClaim = VocabCloudKitBootstrapClaimService().fixedClaimStatus()
-        let fetchedClaim = await serverClaim
-        claimStatus = fetchedClaim
         do {
             let worker = await ensureReconciliationWorker()
-            let status = try await worker.hydrationStatus(syncMode: .cloudKitPrivate)
-            let needsReconciliation = VocabHydrationDiagnosticPolicy.shouldReconcile(
-                reason: reason,
-                state: status.state
-            )
-            if needsReconciliation {
-                let result = try await worker.reconcile(syncMode: .cloudKitPrivate)
+            if reason == .successfulImport {
+                let result = try await worker.reconcileImportedChanges(syncMode: .cloudKitPrivate)
                 hydrationState = result.state
                 hydrationMessage = result.message
                 completedMetadataMissingSince = nil
             } else {
+                async let account = VocabCloudKitStatusService().accountStatus()
+                async let serverClaim = VocabCloudKitBootstrapClaimService().fixedClaimStatus()
+                let fetchedClaim = await serverClaim
+                claimStatus = fetchedClaim
+                let status = try await worker.hydrationStatus(syncMode: .cloudKitPrivate)
+                let needsReconciliation = VocabHydrationDiagnosticPolicy.shouldReconcile(
+                    reason: reason,
+                    state: status.state
+                )
+                let fullAuditIsDue = await VocabSyncRuntimeStateStore.shared.shouldRunFullAudit()
+                let currentEpochRequiresAudit = (reason == .initial || reason == .foreground)
+                    && VocabMutationAuthorityRuntime.current == .integrityBlocked
+                let scheduledAuditIsDue = status.state == .ready
+                    && (fullAuditIsDue || currentEpochRequiresAudit)
+                if needsReconciliation || scheduledAuditIsDue {
+                    let result = try await worker.auditAll(syncMode: .cloudKitPrivate)
+                    hydrationState = result.state
+                    hydrationMessage = result.message
+                    await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted()
+                } else {
                 let diagnosis = VocabHydrationDiagnosticPolicy.diagnose(
                     localStatus: status,
                     claimStatus: fetchedClaim,
@@ -162,12 +173,23 @@ struct VocabIOSRootView: View {
                 completedMetadataMissingSince = diagnosis.completedMetadataMissingSince
                 hydrationState = diagnosis.state
                 hydrationMessage = diagnosis.message
+                }
+                cloudKitState = await account
             }
+            if hydrationState == .ready {
+                localContentIsUsable = true
+            }
+            if let authority = VocabMutationAuthorityPolicy.authority(for: hydrationState) {
+                VocabMutationAuthorityRuntime.set(authority)
+            }
+            await VocabSyncRuntimeStateStore.shared.markDiagnosticCompleted(state: hydrationState)
         } catch {
             hydrationState = .failed
             hydrationMessage = error.localizedDescription
+            if let authority = VocabMutationAuthorityPolicy.authority(for: error) {
+                VocabMutationAuthorityRuntime.set(authority)
+            }
         }
-        cloudKitState = await account
     }
 
     @MainActor
@@ -178,10 +200,6 @@ struct VocabIOSRootView: View {
         )
         reconciliationWorker = worker
         return worker
-    }
-
-    private var pollingTaskID: String {
-        "\(scenePhase)-\(hydrationState.rawValue)"
     }
 
     private var hydrationDescription: String {

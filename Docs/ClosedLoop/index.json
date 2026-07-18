@@ -390,6 +390,23 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["repository scripts cannot directly keep external Codex agent sessions alive; the orchestrator must honor the run-scoped role-to-agent map"]
+    },
+    {
+      "id": "CL-0019",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Explicit recovery and CloudKit write safety",
+      "date": "2026-07-18",
+      "tags": ["icloud", "cloudkit", "swiftdata", "recovery", "vocab-store", "mutation-lease", "validation-epoch", "atomic-swap", "performance-gate"],
+      "affectedPaths": ["Vocab/App/VocabModelContainerFactory.swift", "Vocab/App/VocabRecoveryReplicaService.swift", "Vocab/App/VocabApp.swift", "Vocab/Application/LearningCoordinator.swift", "Vocab/Presentation/RootView.swift", "VocabIOS/App/VocabIOSApp.swift", "VocabIOS/Presentation/VocabIOSRootView.swift", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md",
+      "references": ["CL-0016", "CL-0017"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["automatic Vocab.store recovery-replica refresh remains disabled until 10,000-word / 200,000-attempt performance evidence is accepted", "real-device private-CloudKit bidirectional propagation remains pending under CL-0016"]
     }
   ]
 }

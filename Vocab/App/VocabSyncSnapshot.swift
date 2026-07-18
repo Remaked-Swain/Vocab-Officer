@@ -296,7 +296,7 @@ extension VocabSyncSnapshot {
 
 @MainActor
 enum VocabSyncSnapshotService {
-    static let currentFormatVersion = 2
+    nonisolated static let currentFormatVersion = 2
 
     enum SnapshotValidationError: Error, Equatable {
         case unsupportedFormatVersion(Int)
@@ -321,7 +321,7 @@ enum VocabSyncSnapshotService {
         case contentFingerprintMismatch
     }
 
-    static func exportSnapshot(context: ModelContext, exportedAt: Date = .now) throws -> VocabSyncSnapshot {
+    nonisolated static func exportSnapshot(context: ModelContext, exportedAt: Date = .now) throws -> VocabSyncSnapshot {
         let words = try context.fetch(
             FetchDescriptor<WordRecord>(
                 sortBy: [SortDescriptor(\.createdAt), SortDescriptor(\.normalizedTerm)]
@@ -377,7 +377,7 @@ enum VocabSyncSnapshotService {
         return snapshot
     }
 
-    static func replaceLocalStore(
+    nonisolated static func replaceLocalStore(
         with snapshot: VocabSyncSnapshot,
         context: ModelContext,
         syncMode: VocabSyncMode
@@ -392,7 +392,7 @@ enum VocabSyncSnapshotService {
         try context.save()
     }
 
-    static func importSnapshotRecords(
+    nonisolated static func importSnapshotRecords(
         _ snapshot: VocabSyncSnapshot,
         context: ModelContext,
         includeSyncMetadata: Bool = true,
@@ -671,7 +671,39 @@ enum VocabSyncSnapshotService {
         }
     }
 
-    private static func indexByID<Record>(
+    nonisolated static func importAttemptPayloads(
+        _ payloads: ArraySlice<VocabSyncSnapshot.AttemptPayload>,
+        context: ModelContext,
+        wordsByID: [UUID: WordRecord]
+    ) {
+        for payload in payloads {
+            let attempt = AttemptRecord(
+                directionRaw: payload.directionRaw,
+                modeRaw: payload.modeRaw,
+                sessionID: payload.sessionID,
+                questionIndex: payload.questionIndex,
+                seoulDay: payload.seoulDay,
+                prompt: payload.prompt,
+                submittedAnswer: payload.submittedAnswer,
+                automaticJudgementRaw: payload.automaticJudgementRaw,
+                finalJudgementRaw: payload.finalJudgementRaw,
+                matchedMeaningID: payload.matchedMeaningID,
+                answeredAt: payload.answeredAt
+            )
+            attempt.id = payload.id
+            attempt.correctionRaw = payload.correctionRaw
+            attempt.updatedAt = payload.updatedAt ?? payload.answeredAt
+            attempt.originDeviceID = payload.originDeviceID ?? VocabRecordMetadata.legacyOriginDeviceID
+            attempt.deletedAt = payload.deletedAt
+            if let wordID = payload.wordID, let word = wordsByID[wordID] {
+                attempt.word = word
+                word.appendAttempt(attempt)
+            }
+            context.insert(attempt)
+        }
+    }
+
+    nonisolated private static func indexByID<Record>(
         _ records: [Record],
         id: KeyPath<Record, UUID>
     ) -> [UUID: Record] {
@@ -681,7 +713,7 @@ enum VocabSyncSnapshotService {
         }
     }
 
-    static func validate(_ snapshot: VocabSyncSnapshot) throws {
+    nonisolated static func validate(_ snapshot: VocabSyncSnapshot) throws {
         guard snapshot.formatVersion == 1 || snapshot.formatVersion == currentFormatVersion else {
             throw SnapshotValidationError.unsupportedFormatVersion(snapshot.formatVersion)
         }
@@ -786,7 +818,7 @@ enum VocabSyncSnapshotService {
         }
     }
 
-    private static func requireV2Metadata(
+    nonisolated private static func requireV2Metadata(
         _ snapshot: VocabSyncSnapshot,
         type: String,
         id: UUID,
@@ -799,7 +831,7 @@ enum VocabSyncSnapshotService {
         }
     }
 
-    private static func wordPayload(_ word: WordRecord) -> VocabSyncSnapshot.WordPayload {
+    nonisolated static func wordPayload(_ word: WordRecord) -> VocabSyncSnapshot.WordPayload {
         VocabSyncSnapshot.WordPayload(
             id: word.id,
             term: word.term,
@@ -814,7 +846,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func meaningPayload(_ meaning: MeaningRecord) -> VocabSyncSnapshot.MeaningPayload {
+    nonisolated private static func meaningPayload(_ meaning: MeaningRecord) -> VocabSyncSnapshot.MeaningPayload {
         VocabSyncSnapshot.MeaningPayload(
             id: meaning.id,
             text: meaning.text,
@@ -827,7 +859,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func reviewPayload(_ state: ReviewStateRecord) -> VocabSyncSnapshot.ReviewStatePayload {
+    nonisolated private static func reviewPayload(_ state: ReviewStateRecord) -> VocabSyncSnapshot.ReviewStatePayload {
         VocabSyncSnapshot.ReviewStatePayload(
             failureCheck: state.failureCheck,
             activePriority: state.activePriority,
@@ -845,7 +877,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func dailySetPayload(_ set: DailySetRecord) -> VocabSyncSnapshot.DailySetPayload {
+    nonisolated static func dailySetPayload(_ set: DailySetRecord) -> VocabSyncSnapshot.DailySetPayload {
         VocabSyncSnapshot.DailySetPayload(
             id: set.id,
             seoulDay: set.seoulDay,
@@ -858,7 +890,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func itemPayload(_ item: DailySetItemRecord) -> VocabSyncSnapshot.DailySetItemPayload {
+    nonisolated private static func itemPayload(_ item: DailySetItemRecord) -> VocabSyncSnapshot.DailySetItemPayload {
         VocabSyncSnapshot.DailySetItemPayload(
             id: item.id,
             orderIndex: item.orderIndex,
@@ -870,7 +902,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func testSessionPayload(_ session: TestSessionRecord) -> VocabSyncSnapshot.TestSessionPayload {
+    nonisolated static func testSessionPayload(_ session: TestSessionRecord) -> VocabSyncSnapshot.TestSessionPayload {
         VocabSyncSnapshot.TestSessionPayload(
             id: session.id,
             directionRaw: session.directionRaw,
@@ -886,7 +918,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func attemptPayload(_ attempt: AttemptRecord) -> VocabSyncSnapshot.AttemptPayload {
+    nonisolated static func attemptPayload(_ attempt: AttemptRecord) -> VocabSyncSnapshot.AttemptPayload {
         VocabSyncSnapshot.AttemptPayload(
             id: attempt.id,
             directionRaw: attempt.directionRaw,
@@ -908,7 +940,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func anonymousAggregatePayload(_ aggregate: AnonymousAggregateRecord) -> VocabSyncSnapshot.AnonymousAggregatePayload {
+    nonisolated static func anonymousAggregatePayload(_ aggregate: AnonymousAggregateRecord) -> VocabSyncSnapshot.AnonymousAggregatePayload {
         VocabSyncSnapshot.AnonymousAggregatePayload(
             id: aggregate.id,
             seoulDay: aggregate.seoulDay,
@@ -923,7 +955,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func memoryAidCachePayload(_ cache: MemoryAidCacheRecord) -> VocabSyncSnapshot.MemoryAidCachePayload {
+    nonisolated static func memoryAidCachePayload(_ cache: MemoryAidCacheRecord) -> VocabSyncSnapshot.MemoryAidCachePayload {
         VocabSyncSnapshot.MemoryAidCachePayload(
             id: cache.id,
             wordID: cache.wordID,
@@ -938,7 +970,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func tombstonePayload(_ tombstone: RecordTombstone) -> VocabSyncSnapshot.TombstonePayload {
+    nonisolated static func tombstonePayload(_ tombstone: RecordTombstone) -> VocabSyncSnapshot.TombstonePayload {
         VocabSyncSnapshot.TombstonePayload(
             id: tombstone.id,
             recordID: tombstone.recordID,
@@ -949,7 +981,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func metadataPayload(_ metadata: CloudBootstrapRecord) -> VocabSyncSnapshot.SyncMetadataPayload {
+    nonisolated static func metadataPayload(_ metadata: CloudBootstrapRecord) -> VocabSyncSnapshot.SyncMetadataPayload {
         VocabSyncSnapshot.SyncMetadataPayload(
             schemaVersion: metadata.schemaVersion,
             bootstrapUUID: metadata.bootstrapUUID,
@@ -974,7 +1006,7 @@ enum VocabSyncSnapshotService {
         )
     }
 
-    private static func deleteExistingSyncData(context: ModelContext) throws {
+    nonisolated private static func deleteExistingSyncData(context: ModelContext) throws {
         for record in try context.fetch(FetchDescriptor<AttemptRecord>()) {
             context.delete(record)
         }

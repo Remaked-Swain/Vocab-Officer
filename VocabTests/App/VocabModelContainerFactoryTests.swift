@@ -32,6 +32,85 @@ final class VocabModelContainerFactoryTests: XCTestCase {
         XCTAssertEqual(mirrored.url.lastPathComponent, "VocabMirrored.store")
     }
 
+    func testValidRecoveryManifestNeverShadowsNormalLocalStoreURL() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabLocalPathSafety-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+        let recoveryRoot = appSupport.appendingPathComponent("Vocab/RecoveryReplica", isDirectory: true)
+        let generation = recoveryGeneration()
+        let generationURL = VocabRecoveryReplicaManifestStore.storeURL(generationID: generation.id, root: recoveryRoot)
+        try FileManager.default.createDirectory(at: generationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("verified-generation".utf8).write(to: generationURL)
+        try VocabRecoveryReplicaManifestStore.save(
+            VocabRecoveryReplicaManifest(currentGenerationID: generation.id, generations: [generation]),
+            root: recoveryRoot
+        )
+
+        let localURL = try VocabModelContainerFactory.localStoreURL(applicationSupportURL: appSupport)
+
+        XCTAssertEqual(localURL, appSupport.appendingPathComponent("Vocab/Vocab.store"))
+        XCTAssertNotEqual(localURL, generationURL)
+        XCTAssertEqual(
+            try VocabRecoveryReplicaManifestStore.verifiedRecoveryStoreURL(root: recoveryRoot),
+            generationURL
+        )
+    }
+
+    func testLocalOnlyWritesNeverMutateVerifiedRecoveryGenerationOrManifest() throws {
+        let appSupport = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabLocalWriteSafety-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: appSupport) }
+        let recoveryRoot = appSupport.appendingPathComponent("Vocab/RecoveryReplica", isDirectory: true)
+        let generation = recoveryGeneration()
+        let generationURL = VocabRecoveryReplicaManifestStore.storeURL(generationID: generation.id, root: recoveryRoot)
+        try FileManager.default.createDirectory(at: generationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        do {
+            let generationContainer = try VocabModelContainerFactory.makeContainer(
+                syncMode: .localOnly,
+                storeURL: generationURL
+            )
+            let context = ModelContext(generationContainer)
+            context.insert(WordRecord(term: "recovery-only"))
+            try context.save()
+        }
+        try VocabRecoveryReplicaManifestStore.save(
+            VocabRecoveryReplicaManifest(currentGenerationID: generation.id, generations: [generation]),
+            root: recoveryRoot
+        )
+        let manifestURL = VocabRecoveryReplicaManifestStore.manifestURL(root: recoveryRoot)
+        let manifestBefore = try Data(contentsOf: manifestURL)
+
+        let localURL = try VocabModelContainerFactory.localStoreURL(applicationSupportURL: appSupport)
+        do {
+            let localContainer = try VocabModelContainerFactory.makeContainer(syncMode: .localOnly, storeURL: localURL)
+            let context = ModelContext(localContainer)
+            context.insert(WordRecord(term: "active-local"))
+            try context.save()
+        }
+
+        let localContainer = try VocabModelContainerFactory.makeContainer(syncMode: .localOnly, storeURL: localURL)
+        let recoveryContainer = try VocabModelContainerFactory.makeContainer(syncMode: .localOnly, storeURL: generationURL)
+        XCTAssertEqual(try ModelContext(localContainer).fetch(FetchDescriptor<WordRecord>()).map(\.term), ["active-local"])
+        XCTAssertEqual(
+            try ModelContext(recoveryContainer).fetch(FetchDescriptor<WordRecord>()).map(\.term),
+            ["recovery-only"]
+        )
+        XCTAssertEqual(try Data(contentsOf: manifestURL), manifestBefore)
+        XCTAssertEqual(try VocabRecoveryReplicaManifestStore.load(root: recoveryRoot)?.currentGenerationID, generation.id)
+    }
+
+    private func recoveryGeneration() -> VocabRecoveryReplicaManifest.Generation {
+        VocabRecoveryReplicaManifest.Generation(
+            id: UUID(),
+            seoulDay: "2026-07-18",
+            sourceFingerprint: "verified-fingerprint",
+            schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            counts: .zero,
+            requiredIDDigest: "verified-id-digest",
+            verifiedAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+    }
+
     func testCloudKitCompatibilityProbeUsesTemporaryMirroredStore() throws {
         let temporaryDirectory = FileManager.default.temporaryDirectory
             .appendingPathComponent("VocabCloudProbe-\(UUID().uuidString)", isDirectory: true)
