@@ -110,8 +110,6 @@ struct RootView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
-            VocabMutationAuthorityRuntime.invalidate()
-            VocabFullAuditReceiptStore.invalidateDefault()
             Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
             scheduleHydrationRefresh(reason: .remoteStoreChange)
         }
@@ -129,8 +127,10 @@ struct RootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { notification in
             guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
-            VocabMutationAuthorityRuntime.invalidate()
-            VocabFullAuditReceiptStore.invalidateDefault()
+            if VocabMutationAuthorityPolicy.shouldInvalidateForStoreEvent(reason: .successfulImport) {
+                VocabMutationAuthorityRuntime.invalidate()
+                VocabFullAuditReceiptStore.invalidateDefault()
+            }
             Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
             scheduleHydrationRefresh(reason: .successfulImport)
         }

@@ -58,11 +58,11 @@ struct VocabIOSRootView: View {
             Task { await requestConnectionRefresh(reason: .foreground) }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
-            guard VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .remoteStoreChange, state: hydrationState) else { return }
-            VocabMutationAuthorityRuntime.invalidate()
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
-                await requestConnectionRefresh(reason: .remoteStoreChange)
+                if VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .remoteStoreChange, state: hydrationState) {
+                    await requestConnectionRefresh(reason: .remoteStoreChange)
+                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { notification in
@@ -79,7 +79,9 @@ struct VocabIOSRootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { notification in
             guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
-            VocabMutationAuthorityRuntime.invalidate()
+            if VocabMutationAuthorityPolicy.shouldInvalidateForStoreEvent(reason: .successfulImport) {
+                VocabMutationAuthorityRuntime.invalidate()
+            }
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
                 await requestConnectionRefresh(reason: .successfulImport)
