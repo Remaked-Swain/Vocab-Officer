@@ -460,6 +460,23 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["real-device private-CloudKit propagation remains pending under CL-0016", "iOS vocabulary authoring and direct alias creation remain unauthorized"]
+    },
+    {
+      "id": "CL-0023",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Store notification mutation authority",
+      "date": "2026-07-18",
+      "tags": ["icloud", "cloudkit", "swiftdata", "store-notification", "mutation-lease", "metadata-fingerprint", "validation-epoch"],
+      "affectedPaths": ["Vocab/Application/LearningCoordinator.swift", "Vocab/Presentation/RootView.swift", "VocabIOS/Presentation/VocabIOSRootView.swift", "VocabTests/Application/AuthoringCapabilityTests.swift", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0023-store-notification-mutation-authority.md",
+      "references": ["CL-0016", "CL-0019", "CL-0021", "CL-0022"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["presentation notification handlers are covered by policy/runtime tests rather than a rendered SwiftUI notification integration fixture", "real-device private-CloudKit propagation remains pending under CL-0016"]
     }
   ]
 }

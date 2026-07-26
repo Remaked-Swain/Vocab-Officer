@@ -31,6 +31,7 @@ only when its scope applies to the current change.
 | CL-0020 | active | 2026-07-18 | foreground-safe automatic `Vocab.store` recovery-replica refresh, background-safe scheduling and publication guards | [Foreground-safe recovery replica refresh](records/CL-0020-foreground-safe-recovery-replica-refresh.md) | retain while automatic recovery-replica refresh or mirrored-store recovery exists |
 | CL-0021 | active | 2026-07-18 | macOS foreground authoring continuity, mutation authority validation and MemoryAid/Gemini response quality | [Foreground authoring and MemoryAid quality](records/CL-0021-foreground-authoring-and-memory-aid-quality.md) | retain while CloudKit authoring authorization or MemoryAid generation exists |
 | CL-0022 | active | 2026-07-18 | iOS ready/audited mirrored-store learning facts, Mac-only vocabulary authoring, foreground epoch continuity and mutation-lease test isolation | [iOS learning facts offline authority](records/CL-0022-ios-learning-facts-offline-authority.md) | retain while iOS learning sessions or CloudKit mutation authorization exist |
+| CL-0023 | active | 2026-07-18 | iCloud/SwiftData store notifications, mutation authority continuity and metadata fingerprint handling | [Store notification mutation authority](records/CL-0023-store-notification-mutation-authority.md) | retain while CloudKit mutation authorization or SwiftData mirroring exists |
 
 ## Load Rules
 
@@ -77,6 +78,9 @@ only when its scope applies to the current change.
 - iOS learning sessions, iOS learning-fact writes, iOS correction behavior,
   iOS foreground validation-epoch handling or mutation-lease test isolation
   must also load `CL-0022`.
+- Generic SwiftData/CloudKit store notifications, mutation-authority
+  invalidation, full-audit receipt invalidation or metadata fingerprint gating
+  must also load `CL-0023`.
 - MemoryAid, Gemini prompt, repair prompt, response budget, cache-version or
   MemoryAid quality-gate work must also load `CL-0021`.
 - Superseded or archived records are read only when investigating regression,
