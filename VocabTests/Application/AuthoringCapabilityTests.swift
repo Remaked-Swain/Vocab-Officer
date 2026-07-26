@@ -157,6 +157,53 @@ final class AuthoringCapabilityTests: XCTestCase {
         assertMacAuthoringRequired { try coordinator.updateWord(word, term: "changed", meaningsText: "변경") }
     }
 
+    func testAuditedCloudStoreAllowsSessionGenerationAfterVocabularyUpdateChangesMetadataFingerprint() throws {
+        let context = try makeContext()
+        let word = insertWord(context: context, term: "editable")
+        try authorizeReadyCloudStore(context: context, fingerprint: "before-local-update")
+        let coordinator = LearningCoordinator(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            authoringCapability: .macAuthor,
+            mutationAuthority: .allowed
+        )
+
+        try coordinator.updateWord(word, term: "edited", meaningsText: "수정뜻")
+        try replaceActiveMetadataFingerprint(context: context, fingerprint: "after-local-update")
+
+        XCTAssertTrue(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
+        XCTAssertNoThrow(try coordinator.generateSession(mode: .loose, direction: .enToKo))
+    }
+
+    func testAuditedCloudStoreAllowsLearningFactLoopAfterCommitChangesMetadataFingerprint() throws {
+        let context = try makeContext()
+        _ = insertWord(context: context, term: "practice")
+        try authorizeReadyCloudStore(context: context, fingerprint: "before-local-commit")
+        let coordinator = LearningCoordinator(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            authoringCapability: .readOnlyVocabulary,
+            mutationAuthority: .allowed
+        )
+        let (session, questions) = try coordinator.generateSession(mode: .loose, direction: .enToKo)
+        let question = try XCTUnwrap(questions.first)
+
+        try coordinator.commit(
+            answer: "뜻",
+            result: .correct,
+            automatic: .correct,
+            matchedMeaningID: question.word.activeMeanings.first?.id,
+            question: question,
+            session: session,
+            date: Date(timeIntervalSince1970: 100)
+        )
+        try replaceActiveMetadataFingerprint(context: context, fingerprint: "after-local-commit")
+
+        XCTAssertTrue(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
+        XCTAssertNoThrow(try coordinator.completeSession(session, date: Date(timeIntervalSince1970: 120)))
+        XCTAssertNoThrow(try coordinator.generateSession(mode: .loose, direction: .enToKo))
+    }
+
     func testTransientFailureDoesNotRevokePreviouslyAllowedMutationAuthority() {
         XCTAssertNil(VocabMutationAuthorityPolicy.authority(for: NSError(domain: NSURLErrorDomain, code: -1009)))
         XCTAssertEqual(VocabMutationAuthorityPolicy.authority(for: .ready), .allowed)
@@ -168,6 +215,35 @@ final class AuthoringCapabilityTests: XCTestCase {
             ),
             .integrityBlocked
         )
+    }
+
+    func testRemoteStoreChangeDoesNotRevokeAuthorizedMutationLeaseButSuccessfulImportDoes() throws {
+        let context = try makeContext()
+        _ = insertWord(context: context, term: "remote-change")
+        try authorizeReadyCloudStore(context: context, fingerprint: "remote-change-fingerprint")
+
+        XCTAssertFalse(VocabMutationAuthorityPolicy.shouldInvalidateForStoreEvent(reason: .remoteStoreChange))
+        XCTAssertTrue(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
+
+        XCTAssertTrue(VocabMutationAuthorityPolicy.shouldInvalidateForStoreEvent(reason: .successfulImport))
+        VocabMutationAuthorityRuntime.invalidate()
+        XCTAssertFalse(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
+    }
+
+    func testExplicitInvalidateStillBlocksAuditedCloudStoreWrites() throws {
+        let context = try makeContext()
+        _ = insertWord(context: context, term: "explicit-invalidate")
+        try authorizeReadyCloudStore(context: context, fingerprint: "explicit-invalidate-fingerprint")
+        let coordinator = LearningCoordinator(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            authoringCapability: .readOnlyVocabulary,
+            mutationAuthority: .allowed
+        )
+
+        VocabMutationAuthorityRuntime.invalidate()
+
+        assertIntegrityBlocked { _ = try coordinator.generateSession(mode: .loose, direction: .enToKo) }
     }
 
     func testCurrentInvalidMetadataBlocksPreviouslyAllowedCoordinatorAtWriteTime() throws {
@@ -434,6 +510,12 @@ final class AuthoringCapabilityTests: XCTestCase {
             file: file,
             line: line
         )
+    }
+
+    private func replaceActiveMetadataFingerprint(context: ModelContext, fingerprint: String) throws {
+        let metadata = try XCTUnwrap(VocabMutationLeaseStore.activeMetadata(context: context))
+        metadata.contentFingerprint = fingerprint
+        try context.save()
     }
 
     private func resetGlobalMutationAuthority() {
