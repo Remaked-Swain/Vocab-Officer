@@ -324,7 +324,6 @@ enum VocabMutationAuthorityRuntime {
                   metadata.schemaVersion == lease.schemaVersion,
                   metadata.schemaVersion == VocabCloudReconciler.metadataSchemaVersion,
                   !metadata.contentFingerprint.isEmpty,
-                  metadata.contentFingerprint == lease.metadataFingerprint,
                   metadata.lastReconciledAt != nil else {
                 store.invalidate()
                 return false
@@ -389,6 +388,17 @@ struct VocabMutationLeaseStore {
 }
 
 enum VocabMutationAuthorityPolicy {
+    static func shouldInvalidateForStoreEvent(reason: VocabHydrationRefreshReason) -> Bool {
+        switch reason {
+        case .successfulImport:
+            // CloudKit imports may apply external writes over the local store, so keep this
+            // fail-closed until reconciliation refreshes the authority.
+            return true
+        case .initial, .foreground, .manual, .remoteStoreChange, .pollingTick(_):
+            return false
+        }
+    }
+
     static func authority(for state: VocabHydrationState) -> VocabMutationAuthority? {
         switch state {
         case .localOnly, .ready:
