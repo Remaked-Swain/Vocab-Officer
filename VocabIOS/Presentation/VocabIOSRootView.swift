@@ -436,6 +436,12 @@ private struct VocabIOSTestSetupView: View {
                         Text(format.title).tag(format)
                     }
                 }
+                .pickerStyle(.segmented)
+
+                Text(format == .multipleChoice ? "4개의 선택지 중 정답을 고르는 쉬운 복습 모드입니다." : "정답을 직접 입력하는 기본 테스트 모드입니다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 if mode == .set {
                     Picker("대상 세트", selection: $selectedSetID) {
@@ -458,7 +464,7 @@ private struct VocabIOSTestSetupView: View {
                 Button {
                     start()
                 } label: {
-                    Label("테스트 시작", systemImage: "play.fill")
+                    Label(format == .multipleChoice ? "4지선택형 테스트 시작" : "직접 입력 테스트 시작", systemImage: "play.fill")
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
