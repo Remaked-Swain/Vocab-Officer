@@ -1,5 +1,8 @@
 import SwiftData
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 
 struct TestSetupView: View {
     @Environment(\.modelContext) private var context
@@ -89,10 +92,14 @@ struct TestSetupView: View {
                 selectedSetID = orderedSets.first?.id
             }
         }
+        #if os(macOS)
+        .background(TestRunnerWindowPresenter(run: $activeRun, context: context))
+        #else
         .sheet(item: $activeRun) { run in
-            TestRunnerView(run: run)
+            TestRunnerView(run: run, onClose: { activeRun = nil })
                 .frame(minWidth: 720, minHeight: 560)
         }
+        #endif
     }
 
     private func start() {
@@ -135,6 +142,7 @@ struct TestRunnerView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     let run: TestRun
+    var onClose: (() -> Void)?
     @State private var index = 0
     @State private var answer = ""
     @State private var judgeResult: JudgeResult?
@@ -158,67 +166,70 @@ struct TestRunnerView: View {
     }
 
     private func content(_ question: SessionQuestion) -> some View {
-        VStack(alignment: .leading, spacing: 24) {
-            HStack {
-                Text(run.session.modeRaw)
-                    .font(.headline)
-                if run.session.wasReduced {
-                    Label("축소 세션: \(run.questions.count)문항", systemImage: "info.circle")
-                        .foregroundStyle(.orange)
-                }
-                Spacer()
-                Text("\(index + 1) / \(run.questions.count)")
-                    .monospacedDigit()
-            }
-            ProgressView(value: Double(index), total: Double(run.questions.count))
-            Text(question.direction.rawValue)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(question.format.title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            Text(question.prompt)
-                .font(.system(size: 34, weight: .medium, design: .rounded))
-                .frame(maxWidth: .infinity, minHeight: 100, alignment: .center)
-
-            if question.format == .multipleChoice {
-                multipleChoiceGrid(question)
-            } else {
-                TextField("답안을 입력하세요", text: $answer)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.title2)
-                    .controlSize(.large)
-                    .frame(minHeight: 48)
-                    .focused($focus, equals: .answer)
-                    .onSubmit(submitForJudgement)
-                    .disabled(judgeResult != nil)
-            }
-
-            if let judgeResult {
-                resultPanel(judgeResult, question: question)
-            } else {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
                 HStack {
-                    Button("제출", action: submitForJudgement)
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.large)
-                        .keyboardShortcut(.defaultAction)
-                    Button("모름") {
-                        judgeResult = JudgeResult(automaticResult: .unknown, matchedMeaningID: nil, isTypoSuggestion: false)
-                        chosenResult = .unknown
-                        correctedMeaningID = question.direction == .enToKo
-                            ? question.word.defaultCorrectionMeaningID
-                            : nil
-                        focus = .advance
+                    Text(run.session.modeRaw)
+                        .font(.headline)
+                    if run.session.wasReduced {
+                        Label("축소 세션: \(run.questions.count)문항", systemImage: "info.circle")
+                            .foregroundStyle(.orange)
                     }
-                    .controlSize(.large)
+                    Spacer()
+                    Text("\(index + 1) / \(run.questions.count)")
+                        .monospacedDigit()
+                }
+                ProgressView(value: Double(index), total: Double(run.questions.count))
+                Text(question.direction.rawValue)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(question.format.title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Text(question.prompt)
+                    .font(.system(size: 34, weight: .medium, design: .rounded))
+                    .frame(maxWidth: .infinity, minHeight: 100, alignment: .center)
+
+                if question.format == .multipleChoice {
+                    multipleChoiceGrid(question)
+                } else {
+                    TextField("답안을 입력하세요", text: $answer)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.title2)
+                        .controlSize(.large)
+                        .frame(minHeight: 48)
+                        .focused($focus, equals: .answer)
+                        .onSubmit(submitForJudgement)
+                        .disabled(judgeResult != nil)
+                }
+
+                if let judgeResult {
+                    resultPanel(judgeResult, question: question)
+                } else {
+                    HStack {
+                        Button("제출", action: submitForJudgement)
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.large)
+                            .keyboardShortcut(.defaultAction)
+                        Button("모름") {
+                            judgeResult = JudgeResult(automaticResult: .unknown, matchedMeaningID: nil, isTypoSuggestion: false)
+                            chosenResult = .unknown
+                            correctedMeaningID = question.direction == .enToKo
+                                ? question.word.defaultCorrectionMeaningID
+                                : nil
+                            focus = .advance
+                        }
+                        .controlSize(.large)
+                    }
+                }
+                if let notice {
+                    Text(notice).foregroundStyle(.secondary)
                 }
             }
-            if let notice {
-                Text(notice).foregroundStyle(.secondary)
-            }
-            Spacer()
+            .frame(maxWidth: .infinity, alignment: .topLeading)
         }
         .padding(30)
+        .frame(minWidth: 760, minHeight: 640)
         .defaultFocus($focus, .answer)
         .onAppear {
             focus = .answer
@@ -256,6 +267,7 @@ struct TestRunnerView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(judgeResult != nil)
+                .keyboardShortcut(KeyEquivalent(Character("\(offset + 1)")), modifiers: [])
             }
         }
     }
@@ -298,6 +310,11 @@ struct TestRunnerView: View {
                 }
                 .pickerStyle(.segmented)
                 .focused($focus, equals: .finalJudgement)
+                Button("판정 전환") {
+                    _ = cycleFinalJudgement()
+                }
+                .keyboardShortcut(.tab, modifiers: [])
+                .controlSize(.small)
                 if (chosenResult ?? result.automaticResult) == .correct && result.automaticResult != .correct {
                     if question.direction == .enToKo {
                         Picker("확인한 핵심 뜻", selection: $correctedMeaningID) {
@@ -403,7 +420,7 @@ struct TestRunnerView: View {
             try LearningCoordinator(context: context).commit(answer: answer, result: final, automatic: judgeResult.automaticResult, matchedMeaningID: finalMeaningID, question: question, session: run.session, correction: final == judgeResult.automaticResult ? nil : (addAlias ? "acceptedAlias" : "oneTimeCorrection"))
             if index + 1 == run.questions.count {
                 try LearningCoordinator(context: context).completeSession(run.session)
-                dismiss()
+                closeRunner()
             } else {
                 index += 1
                 answer = ""
@@ -418,4 +435,112 @@ struct TestRunnerView: View {
             notice = error.localizedDescription
         }
     }
+
+    private func closeRunner() {
+        if let onClose {
+            onClose()
+        } else {
+            dismiss()
+        }
+    }
 }
+
+#if os(macOS)
+private struct TestRunnerWindowPresenter: NSViewRepresentable {
+    @Binding var run: TestRun?
+    let context: ModelContext
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(parent: self)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        NSView()
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.update(run: run, modelContext: self.context)
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.closeWindow()
+    }
+
+    final class Coordinator: NSObject, NSWindowDelegate {
+        var parent: TestRunnerWindowPresenter
+        private weak var window: NSWindow?
+        private var presentedRunID: UUID?
+
+        init(parent: TestRunnerWindowPresenter) {
+            self.parent = parent
+        }
+
+        func update(run: TestRun?, modelContext: ModelContext) {
+            guard let run else {
+                closeWindow()
+                return
+            }
+            if presentedRunID == run.id, window != nil {
+                return
+            }
+            closeWindow()
+            openWindow(for: run, modelContext: modelContext)
+        }
+
+        func closeWindow() {
+            presentedRunID = nil
+            let existing = window
+            window = nil
+            existing?.delegate = nil
+            existing?.close()
+        }
+
+        func windowWillClose(_ notification: Notification) {
+            presentedRunID = nil
+            window = nil
+            parent.run = nil
+        }
+
+        private func openWindow(for run: TestRun, modelContext: ModelContext) {
+            let window = NSWindow(
+                contentRect: NSRect(x: 0, y: 0, width: 840, height: 760),
+                styleMask: [.titled, .closable, .resizable, .miniaturizable],
+                backing: .buffered,
+                defer: false
+            )
+            window.title = "Vocab 테스트"
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.minSize = NSSize(width: 760, height: 640)
+            window.contentViewController = NSHostingController(
+                rootView: TestRunnerView(run: run) { [weak window] in
+                    window?.close()
+                }
+                .modelContext(modelContext)
+                .frame(minWidth: 760, idealWidth: 840, minHeight: 640, idealHeight: 760)
+            )
+            positionWindowAboveDock(window)
+            window.makeKeyAndOrderFront(nil)
+
+            self.window = window
+            presentedRunID = run.id
+        }
+
+        private func positionWindowAboveDock(_ window: NSWindow) {
+            guard let screen = NSScreen.main else {
+                window.center()
+                return
+            }
+            let visibleFrame = screen.visibleFrame
+            let frame = window.frame
+            let centeredX = visibleFrame.midX - frame.width / 2
+            let raisedCenterY = visibleFrame.midY - frame.height / 2 + 90
+            let maximumY = visibleFrame.maxY - frame.height - 24
+            let minimumY = visibleFrame.minY + 80
+            let originY = min(max(raisedCenterY, minimumY), maximumY)
+            window.setFrameOrigin(NSPoint(x: centeredX, y: originY))
+        }
+    }
+}
+#endif
