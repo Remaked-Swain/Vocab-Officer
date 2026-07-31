@@ -151,7 +151,6 @@ struct TestRunnerView: View {
     @State private var addAlias = false
     @State private var notice: String?
     @FocusState private var focus: FocusTarget?
-    @FocusState private var shortcutFocus: Bool
 
     private var question: SessionQuestion? {
         run.questions.indices.contains(index) ? run.questions[index] : nil
@@ -231,9 +230,16 @@ struct TestRunnerView: View {
         }
         .padding(30)
         .frame(minWidth: 760, minHeight: 640)
-        .focusable()
         .defaultFocus($focus, .answer)
-        .focused($shortcutFocus)
+        #if os(macOS)
+        .background(
+            TestKeyCaptureView(
+                isActive: question.format == .multipleChoice || judgeResult != nil,
+                onTab: cycleFinalJudgement,
+                onDigit: { value in selectChoice(at: value - 1) }
+            )
+        )
+        #endif
         .onAppear {
             updateKeyboardFocus(for: question)
         }
@@ -365,7 +371,6 @@ struct TestRunnerView: View {
         chosenResult = result.automaticResult
         correctedMeaningID = question.direction == .enToKo ? question.word.defaultCorrectionMeaningID : nil
         focus = nil
-        shortcutFocus = true
     }
 
     private func selectChoice(at offset: Int) -> Bool {
@@ -400,7 +405,6 @@ struct TestRunnerView: View {
         guard let index = order.firstIndex(of: current) else { return false }
         chosenResult = order[(index + 1) % order.count]
         focus = nil
-        shortcutFocus = true
         notice = nil
         return true
     }
@@ -456,11 +460,9 @@ struct TestRunnerView: View {
 
     private func updateKeyboardFocus(for question: SessionQuestion) {
         if question.format == .typed && judgeResult == nil {
-            shortcutFocus = false
             focus = .answer
         } else {
             focus = nil
-            shortcutFocus = true
         }
     }
 }
@@ -560,6 +562,59 @@ private struct TestRunnerWindowPresenter: NSViewRepresentable {
             let minimumY = visibleFrame.minY + 80
             let originY = min(max(raisedCenterY, minimumY), maximumY)
             window.setFrameOrigin(NSPoint(x: centeredX, y: originY))
+        }
+    }
+}
+
+private struct TestKeyCaptureView: NSViewRepresentable {
+    let isActive: Bool
+    let onTab: () -> Bool
+    let onDigit: (Int) -> Bool
+
+    func makeNSView(context: Context) -> KeyCaptureNSView {
+        KeyCaptureNSView()
+    }
+
+    func updateNSView(_ nsView: KeyCaptureNSView, context: Context) {
+        nsView.isActive = isActive
+        nsView.onTab = onTab
+        nsView.onDigit = onDigit
+        DispatchQueue.main.async {
+            guard isActive, nsView.window?.firstResponder !== nsView else { return }
+            nsView.window?.makeFirstResponder(nsView)
+        }
+    }
+
+    final class KeyCaptureNSView: NSView {
+        var isActive = false
+        var onTab: (() -> Bool)?
+        var onDigit: ((Int) -> Bool)?
+
+        override var acceptsFirstResponder: Bool { true }
+
+        override var focusRingType: NSFocusRingType {
+            get { .none }
+            set {}
+        }
+
+        override func keyDown(with event: NSEvent) {
+            guard isActive,
+                  !event.modifierFlags.contains(.command),
+                  !event.modifierFlags.contains(.control),
+                  !event.modifierFlags.contains(.option) else {
+                super.keyDown(with: event)
+                return
+            }
+            if event.keyCode == 48, onTab?() == true {
+                return
+            }
+            if let character = event.charactersIgnoringModifiers?.first,
+               let value = Int(String(character)),
+               (1...4).contains(value),
+               onDigit?(value) == true {
+                return
+            }
+            super.keyDown(with: event)
         }
     }
 }
