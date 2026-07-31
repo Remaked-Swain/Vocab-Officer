@@ -236,6 +236,7 @@ struct TestRunnerView: View {
             TestKeyCaptureView(
                 isActive: question.format == .multipleChoice || judgeResult != nil,
                 onTab: cycleFinalJudgement,
+                onReturn: handleReturnKey,
                 onDigit: { value in selectChoice(at: value - 1) }
             )
         )
@@ -409,6 +410,16 @@ struct TestRunnerView: View {
         return true
     }
 
+    private func handleReturnKey() -> Bool {
+        if judgeResult != nil {
+            commitAndAdvance()
+            return true
+        }
+        guard question?.format == .multipleChoice else { return false }
+        submitForJudgement()
+        return true
+    }
+
     private func commitAndAdvance() {
         guard let judgeResult, let question else { return }
         let final = chosenResult ?? judgeResult.automaticResult
@@ -569,6 +580,7 @@ private struct TestRunnerWindowPresenter: NSViewRepresentable {
 private struct TestKeyCaptureView: NSViewRepresentable {
     let isActive: Bool
     let onTab: () -> Bool
+    let onReturn: () -> Bool
     let onDigit: (Int) -> Bool
 
     func makeNSView(context: Context) -> KeyCaptureNSView {
@@ -578,6 +590,7 @@ private struct TestKeyCaptureView: NSViewRepresentable {
     func updateNSView(_ nsView: KeyCaptureNSView, context: Context) {
         nsView.isActive = isActive
         nsView.onTab = onTab
+        nsView.onReturn = onReturn
         nsView.onDigit = onDigit
         DispatchQueue.main.async {
             guard isActive, nsView.window?.firstResponder !== nsView else { return }
@@ -588,6 +601,7 @@ private struct TestKeyCaptureView: NSViewRepresentable {
     final class KeyCaptureNSView: NSView {
         var isActive = false
         var onTab: (() -> Bool)?
+        var onReturn: (() -> Bool)?
         var onDigit: ((Int) -> Bool)?
 
         override var acceptsFirstResponder: Bool { true }
@@ -606,6 +620,9 @@ private struct TestKeyCaptureView: NSViewRepresentable {
                 return
             }
             if event.keyCode == 48, onTab?() == true {
+                return
+            }
+            if [36, 76].contains(event.keyCode), onReturn?() == true {
                 return
             }
             if let character = event.charactersIgnoringModifiers?.first,
