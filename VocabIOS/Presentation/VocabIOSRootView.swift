@@ -400,6 +400,7 @@ private struct VocabIOSTestSetupView: View {
     @Query(filter: #Predicate<DailySetRecord> { $0.deletedAt == nil }) private var sets: [DailySetRecord]
     @State private var mode: SessionMode = .mixed
     @State private var direction: PracticeDirection = .enToKo
+    @State private var format: QuestionFormat = .typed
     @State private var selectedSetID: UUID?
     @State private var activeRun: VocabIOSTestRun?
     @State private var error: String?
@@ -427,6 +428,12 @@ private struct VocabIOSTestSetupView: View {
                 Picker("방향", selection: $direction) {
                     ForEach(PracticeDirection.allCases) { direction in
                         Text(direction.rawValue).tag(direction)
+                    }
+                }
+
+                Picker("시험 방식", selection: $format) {
+                    ForEach(QuestionFormat.allCases) { format in
+                        Text(format.title).tag(format)
                     }
                 }
 
@@ -475,7 +482,8 @@ private struct VocabIOSTestSetupView: View {
             let result = try LearningCoordinator(context: modelContext, syncMode: .cloudKitPrivate).generateSession(
                 mode: mode,
                 direction: direction,
-                setID: selectedSetID
+                setID: selectedSetID,
+                format: format
             )
             activeRun = VocabIOSTestRun(session: result.0, questions: result.1)
             error = nil
@@ -628,6 +636,9 @@ private struct VocabIOSTestRunnerView: View {
                     Text(question.direction.rawValue)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    Text(question.format.title)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
 
                     Text(question.prompt)
                         .font(.system(size: 34, weight: .bold, design: .rounded))
@@ -635,13 +646,17 @@ private struct VocabIOSTestRunnerView: View {
                         .padding()
                         .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
 
-                    TextField("답안을 입력하세요", text: $answer)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.title3)
-                        .focused($answerFocused)
-                        .submitLabel(.done)
-                        .onSubmit(submitForJudgement)
-                        .disabled(judgeResult != nil)
+                    if question.format == .multipleChoice {
+                        multipleChoiceOptions(question)
+                    } else {
+                        TextField("답안을 입력하세요", text: $answer)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.title3)
+                            .focused($answerFocused)
+                            .submitLabel(.done)
+                            .onSubmit(submitForJudgement)
+                            .disabled(judgeResult != nil)
+                    }
 
                     if let judgeResult {
                         resultPanel(judgeResult, question: question)
@@ -669,13 +684,40 @@ private struct VocabIOSTestRunnerView: View {
                     Button("닫기") { dismiss() }
                 }
             }
-            .onAppear { answerFocused = true }
+            .onAppear { answerFocused = question.format == .typed }
         } else {
             CompactEmptyState(
                 title: "출제 문항이 없습니다",
                 systemImage: "exclamationmark.triangle",
                 description: "테스트할 단어가 동기화된 뒤 다시 시도하세요."
             )
+        }
+    }
+
+    @ViewBuilder
+    private func multipleChoiceOptions(_ question: SessionQuestion) -> some View {
+        VStack(spacing: 10) {
+            ForEach(Array(question.choices.enumerated()), id: \.element.id) { offset, option in
+                Button {
+                    selectChoice(option)
+                } label: {
+                    HStack(alignment: .top, spacing: 12) {
+                        Text("\(offset + 1)")
+                            .font(.headline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(width: 24)
+                        Text(option.label)
+                            .font(.headline)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
+                    .padding(14)
+                    .background(choiceBackground(option), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(judgeResult != nil)
+            }
         }
     }
 
@@ -689,7 +731,10 @@ private struct VocabIOSTestRunnerView: View {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("원문: \(question.word.term)")
                     Text("등록 의미: \(question.word.activeMeanings.map(\.text).joined(separator: ", "))")
-                    Text("입력 답안: \(answer.isEmpty ? "(입력 없음)" : answer)")
+                    Text("입력 답안: \(displayedAnswer(for: question))")
+                    if question.format == .multipleChoice {
+                        Text("정답: \(question.choices.first(where: \.isCorrect)?.label ?? "")")
+                    }
                 }
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -726,6 +771,10 @@ private struct VocabIOSTestRunnerView: View {
 
     private func submitForJudgement() {
         guard let question, judgeResult == nil else { return }
+        if question.format == .multipleChoice, answer.isEmpty {
+            notice = "선택지를 먼저 고르세요."
+            return
+        }
         let result = LearningCoordinator(context: modelContext, syncMode: .cloudKitPrivate).judge(answer: answer, for: question)
         judgeResult = result
         chosenResult = result.automaticResult
@@ -737,6 +786,23 @@ private struct VocabIOSTestRunnerView: View {
         judgeResult = JudgeResult(automaticResult: .unknown, matchedMeaningID: nil, isTypoSuggestion: false)
         chosenResult = .unknown
         correctedMeaningID = question.direction == .enToKo ? question.word.defaultCorrectionMeaningID : nil
+    }
+
+    private func selectChoice(_ option: MultipleChoiceOption) {
+        guard judgeResult == nil else { return }
+        answer = option.id.uuidString
+        notice = nil
+        submitForJudgement()
+    }
+
+    private func choiceBackground(_ option: MultipleChoiceOption) -> Color {
+        guard answer == option.id.uuidString else { return Color.secondary.opacity(0.10) }
+        return Color.accentColor.opacity(0.18)
+    }
+
+    private func displayedAnswer(for question: SessionQuestion) -> String {
+        guard question.format == .multipleChoice else { return answer.isEmpty ? "(입력 없음)" : answer }
+        return question.choices.first { $0.id.uuidString == answer }?.label ?? "(선택 없음)"
     }
 
     private func commitAndAdvance() {
@@ -774,7 +840,8 @@ private struct VocabIOSTestRunnerView: View {
                 chosenResult = nil
                 correctedMeaningID = nil
                 notice = nil
-                answerFocused = true
+                let nextQuestion = run.questions.indices.contains(index) ? run.questions[index] : nil
+                answerFocused = nextQuestion?.format == .typed
             }
         } catch {
             notice = error.localizedDescription

@@ -64,7 +64,7 @@ final class VocabCloudReconciliationTests: XCTestCase {
 
     func testIncrementalAttemptSignatureCoversEveryCanonicalEqualityField() throws {
         enum Field: CaseIterable {
-            case direction, mode, sessionID, questionIndex, seoulDay, prompt, submittedAnswer
+            case direction, mode, sessionID, questionFormat, questionIndex, seoulDay, prompt, submittedAnswer
             case automaticJudgement, finalJudgement, correction, matchedMeaning, answeredAt, word
         }
 
@@ -97,6 +97,7 @@ final class VocabCloudReconciliationTests: XCTestCase {
             case .direction: attempt.directionRaw = PracticeDirection.koToEn.rawValue
             case .mode: attempt.modeRaw = SessionMode.mixed.rawValue
             case .sessionID: attempt.sessionID = UUID()
+            case .questionFormat: attempt.questionFormatRaw = QuestionFormat.multipleChoice.rawValue
             case .questionIndex: attempt.questionIndex += 1
             case .seoulDay: attempt.seoulDay = "2026-07-18"
             case .prompt: attempt.prompt = "changed prompt"
@@ -663,8 +664,8 @@ final class VocabCloudReconciliationTests: XCTestCase {
         context.insert(deleted)
         try context.save()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
-        let question = SessionQuestion(word: word, direction: .enToKo, index: 0)
-        let reverseQuestion = SessionQuestion(word: word, direction: .koToEn, index: 1)
+        let question = SessionQuestion(word: word, direction: .enToKo, format: .typed, index: 0, choices: [])
+        let reverseQuestion = SessionQuestion(word: word, direction: .koToEn, format: .typed, index: 1, choices: [])
 
         XCTAssertEqual(word.activeMeanings.map(\.text), ["은행"])
         XCTAssertEqual(word.correctionCandidateMeanings.map(\.text), ["은행"])

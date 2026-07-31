@@ -154,6 +154,7 @@ final class AttemptRecord {
     var automaticJudgementRaw: String = ""
     var finalJudgementRaw: String = ""
     var correctionRaw: String?
+    var questionFormatRaw: String = QuestionFormat.typed.rawValue
     var matchedMeaningID: UUID?
     var answeredAt: Date = Date.distantPast
     var updatedAt: Date = Date.distantPast
@@ -161,7 +162,7 @@ final class AttemptRecord {
     var deletedAt: Date?
     var word: WordRecord?
 
-    init(directionRaw: String, modeRaw: String, sessionID: UUID, questionIndex: Int, seoulDay: String, prompt: String, submittedAnswer: String, automaticJudgementRaw: String, finalJudgementRaw: String, matchedMeaningID: UUID?, answeredAt: Date = .now) {
+    init(directionRaw: String, modeRaw: String, sessionID: UUID, questionIndex: Int, seoulDay: String, prompt: String, submittedAnswer: String, automaticJudgementRaw: String, finalJudgementRaw: String, matchedMeaningID: UUID?, answeredAt: Date = .now, questionFormatRaw: String = QuestionFormat.typed.rawValue) {
         self.id = UUID()
         self.directionRaw = directionRaw
         self.modeRaw = modeRaw
@@ -172,6 +173,7 @@ final class AttemptRecord {
         self.submittedAnswer = submittedAnswer
         self.automaticJudgementRaw = automaticJudgementRaw
         self.finalJudgementRaw = finalJudgementRaw
+        self.questionFormatRaw = questionFormatRaw
         self.matchedMeaningID = matchedMeaningID
         self.answeredAt = answeredAt
         self.updatedAt = answeredAt
@@ -187,18 +189,20 @@ final class TestSessionRecord {
     var seoulDay: String = ""
     var startedAt: Date = Date.distantPast
     var completedAt: Date?
+    var questionFormatRaw: String = QuestionFormat.typed.rawValue
     var wordIDs: [UUID] = []
     var wasReduced: Bool = false
     var updatedAt: Date = Date.distantPast
     var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
     var deletedAt: Date?
 
-    init(id: UUID = UUID(), directionRaw: String, modeRaw: String, seoulDay: String, wordIDs: [UUID], wasReduced: Bool, startedAt: Date = .now) {
+    init(id: UUID = UUID(), directionRaw: String, modeRaw: String, seoulDay: String, wordIDs: [UUID], wasReduced: Bool, startedAt: Date = .now, questionFormatRaw: String = QuestionFormat.typed.rawValue) {
         self.id = id
         self.directionRaw = directionRaw
         self.modeRaw = modeRaw
         self.seoulDay = seoulDay
         self.startedAt = startedAt
+        self.questionFormatRaw = questionFormatRaw
         self.updatedAt = startedAt
         self.originDeviceID = VocabDeviceIdentity.current
         self.wordIDs = wordIDs

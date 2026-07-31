@@ -92,6 +92,7 @@ struct VocabSyncSnapshot: Codable, Equatable {
         var id: UUID
         var directionRaw: String
         var modeRaw: String
+        var questionFormatRaw: String = QuestionFormat.typed.rawValue
         var seoulDay: String
         var startedAt: Date
         var completedAt: Date?
@@ -106,6 +107,7 @@ struct VocabSyncSnapshot: Codable, Equatable {
         var id: UUID
         var directionRaw: String
         var modeRaw: String
+        var questionFormatRaw: String = QuestionFormat.typed.rawValue
         var sessionID: UUID
         var questionIndex: Int
         var seoulDay: String
@@ -187,6 +189,84 @@ extension VocabSyncSnapshot {
         ) ?? []
         memoryAidCaches = try container.decodeIfPresent([MemoryAidCachePayload].self, forKey: .memoryAidCaches) ?? []
         tombstones = try container.decodeIfPresent([TombstonePayload].self, forKey: .tombstones) ?? []
+    }
+}
+
+extension VocabSyncSnapshot.TestSessionPayload {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case directionRaw
+        case modeRaw
+        case questionFormatRaw
+        case seoulDay
+        case startedAt
+        case completedAt
+        case wordIDs
+        case wasReduced
+        case updatedAt
+        case originDeviceID
+        case deletedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        directionRaw = try container.decode(String.self, forKey: .directionRaw)
+        modeRaw = try container.decode(String.self, forKey: .modeRaw)
+        questionFormatRaw = try container.decodeIfPresent(String.self, forKey: .questionFormatRaw) ?? QuestionFormat.typed.rawValue
+        seoulDay = try container.decode(String.self, forKey: .seoulDay)
+        startedAt = try container.decode(Date.self, forKey: .startedAt)
+        completedAt = try container.decodeIfPresent(Date.self, forKey: .completedAt)
+        wordIDs = try container.decode([UUID].self, forKey: .wordIDs)
+        wasReduced = try container.decode(Bool.self, forKey: .wasReduced)
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
+        originDeviceID = try container.decodeIfPresent(String.self, forKey: .originDeviceID)
+        deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
+    }
+}
+
+extension VocabSyncSnapshot.AttemptPayload {
+    private enum CodingKeys: String, CodingKey {
+        case id
+        case directionRaw
+        case modeRaw
+        case questionFormatRaw
+        case sessionID
+        case questionIndex
+        case seoulDay
+        case prompt
+        case submittedAnswer
+        case automaticJudgementRaw
+        case finalJudgementRaw
+        case correctionRaw
+        case matchedMeaningID
+        case answeredAt
+        case wordID
+        case updatedAt
+        case originDeviceID
+        case deletedAt
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        directionRaw = try container.decode(String.self, forKey: .directionRaw)
+        modeRaw = try container.decode(String.self, forKey: .modeRaw)
+        questionFormatRaw = try container.decodeIfPresent(String.self, forKey: .questionFormatRaw) ?? QuestionFormat.typed.rawValue
+        sessionID = try container.decode(UUID.self, forKey: .sessionID)
+        questionIndex = try container.decode(Int.self, forKey: .questionIndex)
+        seoulDay = try container.decode(String.self, forKey: .seoulDay)
+        prompt = try container.decode(String.self, forKey: .prompt)
+        submittedAnswer = try container.decode(String.self, forKey: .submittedAnswer)
+        automaticJudgementRaw = try container.decode(String.self, forKey: .automaticJudgementRaw)
+        finalJudgementRaw = try container.decode(String.self, forKey: .finalJudgementRaw)
+        correctionRaw = try container.decodeIfPresent(String.self, forKey: .correctionRaw)
+        matchedMeaningID = try container.decodeIfPresent(UUID.self, forKey: .matchedMeaningID)
+        answeredAt = try container.decode(Date.self, forKey: .answeredAt)
+        wordID = try container.decodeIfPresent(UUID.self, forKey: .wordID)
+        updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt)
+        originDeviceID = try container.decodeIfPresent(String.self, forKey: .originDeviceID)
+        deletedAt = try container.decodeIfPresent(Date.self, forKey: .deletedAt)
     }
 }
 
@@ -555,6 +635,7 @@ enum VocabSyncSnapshotService {
                 session.id = payload.id
                 session.directionRaw = payload.directionRaw
                 session.modeRaw = payload.modeRaw
+                session.questionFormatRaw = payload.questionFormatRaw
                 session.seoulDay = payload.seoulDay
                 session.startedAt = payload.startedAt
                 session.completedAt = payload.completedAt
@@ -586,6 +667,7 @@ enum VocabSyncSnapshotService {
                 attempt.id = payload.id
                 attempt.directionRaw = payload.directionRaw
                 attempt.modeRaw = payload.modeRaw
+                attempt.questionFormatRaw = payload.questionFormatRaw
                 attempt.sessionID = payload.sessionID
                 attempt.questionIndex = payload.questionIndex
                 attempt.seoulDay = payload.seoulDay
@@ -907,6 +989,7 @@ enum VocabSyncSnapshotService {
             id: session.id,
             directionRaw: session.directionRaw,
             modeRaw: session.modeRaw,
+            questionFormatRaw: session.questionFormatRaw,
             seoulDay: session.seoulDay,
             startedAt: session.startedAt,
             completedAt: session.completedAt,
@@ -923,6 +1006,7 @@ enum VocabSyncSnapshotService {
             id: attempt.id,
             directionRaw: attempt.directionRaw,
             modeRaw: attempt.modeRaw,
+            questionFormatRaw: attempt.questionFormatRaw,
             sessionID: attempt.sessionID,
             questionIndex: attempt.questionIndex,
             seoulDay: attempt.seoulDay,

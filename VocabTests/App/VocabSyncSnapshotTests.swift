@@ -26,7 +26,8 @@ final class VocabSyncSnapshotTests: XCTestCase {
             seoulDay: "2026-07-13",
             wordIDs: [word.id],
             wasReduced: false,
-            startedAt: Date(timeIntervalSince1970: 120)
+            startedAt: Date(timeIntervalSince1970: 120),
+            questionFormatRaw: QuestionFormat.multipleChoice.rawValue
         )
         session.completedAt = Date(timeIntervalSince1970: 180)
         let attempt = AttemptRecord(
@@ -40,7 +41,8 @@ final class VocabSyncSnapshotTests: XCTestCase {
             automaticJudgementRaw: FinalResult.correct.rawValue,
             finalJudgementRaw: FinalResult.correct.rawValue,
             matchedMeaningID: meaning.id,
-            answeredAt: Date(timeIntervalSince1970: 160)
+            answeredAt: Date(timeIntervalSince1970: 160),
+            questionFormatRaw: QuestionFormat.multipleChoice.rawValue
         )
         attempt.word = word
         let aggregate = AnonymousAggregateRecord(seoulDay: "2026-07-13", modeRaw: SessionMode.mixed.rawValue)
@@ -104,9 +106,11 @@ final class VocabSyncSnapshotTests: XCTestCase {
         XCTAssertEqual(restoredSets.first?.allItems.first?.wordID, word.id)
         XCTAssertEqual(restoredSessions.first?.id, session.id)
         XCTAssertEqual(restoredSessions.first?.wordIDs, [word.id])
+        XCTAssertEqual(restoredSessions.first?.questionFormatRaw, QuestionFormat.multipleChoice.rawValue)
         XCTAssertEqual(restoredAttempts.first?.id, attempt.id)
         XCTAssertEqual(restoredAttempts.first?.word?.id, word.id)
         XCTAssertEqual(restoredAttempts.first?.matchedMeaningID, meaning.id)
+        XCTAssertEqual(restoredAttempts.first?.questionFormatRaw, QuestionFormat.multipleChoice.rawValue)
         XCTAssertEqual(restoredAggregates.first?.correctCount, 1)
         XCTAssertEqual(restoredCaches.first?.wordID, word.id)
         XCTAssertEqual(restoredCaches.first?.markdown, "memory aid")

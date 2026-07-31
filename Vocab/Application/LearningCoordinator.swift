@@ -207,6 +207,20 @@ enum PracticeDirection: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum QuestionFormat: String, CaseIterable, Identifiable {
+    case typed
+    case multipleChoice
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .typed: "직접 입력"
+        case .multipleChoice: "4지선택형"
+        }
+    }
+}
+
 enum FinalResult: String {
     case correct
     case incorrect
@@ -443,6 +457,7 @@ struct VocabAttemptCanonicalPayload: Equatable {
     let automaticJudgementRaw: String
     let finalJudgementRaw: String
     let correctionRaw: String?
+    let questionFormatRaw: String
     let matchedMeaningID: UUID?
     let answeredAt: Date
     let wordID: UUID?
@@ -458,6 +473,7 @@ struct VocabAttemptCanonicalPayload: Equatable {
         automaticJudgementRaw = record.automaticJudgementRaw
         finalJudgementRaw = record.finalJudgementRaw
         correctionRaw = record.correctionRaw
+        questionFormatRaw = record.questionFormatRaw
         matchedMeaningID = record.matchedMeaningID
         answeredAt = record.answeredAt
         wordID = record.word?.id
@@ -467,17 +483,26 @@ struct VocabAttemptCanonicalPayload: Equatable {
         [
             directionRaw, modeRaw, sessionID.uuidString, String(questionIndex), seoulDay,
             prompt, submittedAnswer, automaticJudgementRaw, finalJudgementRaw,
-            correctionRaw ?? "", matchedMeaningID?.uuidString ?? "",
+            correctionRaw ?? "", questionFormatRaw, matchedMeaningID?.uuidString ?? "",
             String(answeredAt.timeIntervalSince1970), wordID?.uuidString ?? ""
         ]
     }
+}
+
+struct MultipleChoiceOption: Identifiable, Equatable {
+    let id: UUID
+    let label: String
+    let isCorrect: Bool
+    let matchedMeaningID: UUID?
 }
 
 struct SessionQuestion: Identifiable {
     let id = UUID()
     let word: WordRecord
     let direction: PracticeDirection
+    let format: QuestionFormat
     let index: Int
+    let choices: [MultipleChoiceOption]
 
     var prompt: String {
         switch direction {
@@ -648,7 +673,7 @@ final class LearningCoordinator {
         return word
     }
 
-    func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now) throws -> (TestSessionRecord, [SessionQuestion]) {
+    func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now, format: QuestionFormat = .typed) throws -> (TestSessionRecord, [SessionQuestion]) {
         try requireLearningFactWriting()
         let day = SeoulCalendar.day(for: date)
         let words = try activeWords()
@@ -731,15 +756,27 @@ final class LearningCoordinator {
             appendUnique(from: orderedReview, to: &selected, limit: 20)
             appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
         }
-        guard !selected.isEmpty else { throw LearningError.noSessionCandidates }
-        let session = TestSessionRecord(directionRaw: direction.rawValue, modeRaw: mode.rawValue, seoulDay: day, wordIDs: selected.map(\.id), wasReduced: selected.count < 20, startedAt: date)
+        let sessionID = UUID()
+        let questions = makeQuestions(
+            selected: selected,
+            allWords: words,
+            direction: direction,
+            format: format,
+            sessionID: sessionID
+        )
+        guard !questions.isEmpty else { throw LearningError.noSessionCandidates }
+        selected = questions.map(\.word)
+        let session = TestSessionRecord(id: sessionID, directionRaw: direction.rawValue, modeRaw: mode.rawValue, seoulDay: day, wordIDs: selected.map(\.id), wasReduced: selected.count < 20, startedAt: date, questionFormatRaw: format.rawValue)
         context.insert(session)
         recordPresentation(for: selected, at: date)
         try saveAndNotifyChange()
-        return (session, selected.enumerated().map { SessionQuestion(word: $0.element, direction: direction, index: $0.offset) })
+        return (session, questions)
     }
 
     func judge(answer: String, for question: SessionQuestion) -> JudgeResult {
+        if question.format == .multipleChoice {
+            return judgeMultipleChoice(answer: answer, for: question)
+        }
         let normalized = question.direction == .enToKo ? TextNormalizer.normalizeKorean(answer) : TextNormalizer.normalizeEnglish(answer)
         switch question.direction {
         case .enToKo:
@@ -759,13 +796,30 @@ final class LearningCoordinator {
         }
     }
 
+    private func judgeMultipleChoice(answer: String, for question: SessionQuestion) -> JudgeResult {
+        guard let selectedID = UUID(uuidString: answer),
+              let option = question.choices.first(where: { $0.id == selectedID }) else {
+            return JudgeResult(automaticResult: .incorrect, matchedMeaningID: nil, isTypoSuggestion: false)
+        }
+        return JudgeResult(
+            automaticResult: option.isCorrect ? .correct : .incorrect,
+            matchedMeaningID: option.isCorrect ? option.matchedMeaningID : nil,
+            isTypoSuggestion: false
+        )
+    }
+
+    private func storedAnswer(_ answer: String, for question: SessionQuestion) -> String {
+        guard question.format == .multipleChoice else { return answer }
+        return question.choices.first { $0.id.uuidString == answer }?.label ?? answer
+    }
+
     func commit(answer: String, result: FinalResult, automatic: FinalResult, matchedMeaningID: UUID?, question: SessionQuestion, session: TestSessionRecord, correction: String? = nil, date: Date = .now) throws {
         try requireLearningFactWriting()
         let existingAttempt = try context.fetch(FetchDescriptor<AttemptRecord>()).contains {
             $0.deletedAt == nil && $0.sessionID == session.id && $0.questionIndex == question.index
         }
         guard !existingAttempt else { return }
-        let attempt = AttemptRecord(directionRaw: question.direction.rawValue, modeRaw: session.modeRaw, sessionID: session.id, questionIndex: question.index, seoulDay: SeoulCalendar.day(for: date), prompt: question.prompt, submittedAnswer: answer, automaticJudgementRaw: automatic.rawValue, finalJudgementRaw: result.rawValue, matchedMeaningID: matchedMeaningID, answeredAt: date)
+        let attempt = AttemptRecord(directionRaw: question.direction.rawValue, modeRaw: session.modeRaw, sessionID: session.id, questionIndex: question.index, seoulDay: SeoulCalendar.day(for: date), prompt: question.prompt, submittedAnswer: storedAnswer(answer, for: question), automaticJudgementRaw: automatic.rawValue, finalJudgementRaw: result.rawValue, matchedMeaningID: matchedMeaningID, answeredAt: date, questionFormatRaw: question.format.rawValue)
         attempt.correctionRaw = correction
         attempt.word = question.word
         question.word.appendAttempt(attempt)
@@ -988,6 +1042,8 @@ final class LearningCoordinator {
         for attempt in attempts {
             guard let result = FinalResult(rawValue: attempt.finalJudgementRaw),
                   let direction = PracticeDirection(rawValue: attempt.directionRaw) else { continue }
+            let format = QuestionFormat(rawValue: attempt.questionFormatRaw) ?? .typed
+            let contributesToMastery = format == .typed
             expected.lastTestedAt = attempt.answeredAt
             let day = SeoulCalendar.day(for: attempt.answeredAt)
             switch result {
@@ -1004,14 +1060,15 @@ final class LearningCoordinator {
             case .correct:
                 if direction == .enToKo {
                     expected.enToKoStreak += 1
-                    if let meaningID = attempt.matchedMeaningID,
+                    if contributesToMastery,
+                       let meaningID = attempt.matchedMeaningID,
                        trackableCoreMeaningIDs.contains(meaningID),
                        expected.meaningSuccessDays[meaningID]?.contains(day) == false {
                         expected.meaningSuccessDays[meaningID, default: []].append(day)
                     }
                 } else {
                     expected.koToEnStreak += 1
-                    if !expected.koToEnSuccessDays.contains(day) {
+                    if contributesToMastery, !expected.koToEnSuccessDays.contains(day) {
                         expected.koToEnSuccessDays.append(day)
                     }
                 }
@@ -1147,6 +1204,128 @@ final class LearningCoordinator {
         let sets = try context.fetch(FetchDescriptor<DailySetRecord>()).filter { $0.deletedAt == nil }
         dailySetCache = sets
         return sets
+    }
+
+    private func makeQuestions(
+        selected: [WordRecord],
+        allWords: [WordRecord],
+        direction: PracticeDirection,
+        format: QuestionFormat,
+        sessionID: UUID
+    ) -> [SessionQuestion] {
+        switch format {
+        case .typed:
+            return selected.enumerated().map {
+                SessionQuestion(word: $0.element, direction: direction, format: .typed, index: $0.offset, choices: [])
+            }
+        case .multipleChoice:
+            var questions: [SessionQuestion] = []
+            for word in selected {
+                guard let choices = multipleChoiceOptions(
+                    for: word,
+                    candidates: selected + allWords,
+                    direction: direction,
+                    sessionID: sessionID,
+                    questionIndex: questions.count
+                ) else { continue }
+                questions.append(SessionQuestion(
+                    word: word,
+                    direction: direction,
+                    format: .multipleChoice,
+                    index: questions.count,
+                    choices: choices
+                ))
+            }
+            return questions
+        }
+    }
+
+    private func multipleChoiceOptions(
+        for target: WordRecord,
+        candidates: [WordRecord],
+        direction: PracticeDirection,
+        sessionID: UUID,
+        questionIndex: Int
+    ) -> [MultipleChoiceOption]? {
+        guard let correct = multipleChoiceOption(for: target, direction: direction, isCorrect: true) else { return nil }
+        let correctKey = multipleChoiceDeduplicationKey(correct.label, direction: direction)
+        var seen = Set([correctKey])
+        var options = [correct]
+        let distractorCandidates = stableShuffleWords(
+            uniqueWords(candidates.filter { $0.id != target.id }),
+            seed: "\(sessionID.uuidString)-\(questionIndex)-\(target.id.uuidString)-\(direction.rawValue)-distractors"
+        )
+        for candidate in distractorCandidates {
+            guard let option = multipleChoiceOption(for: candidate, direction: direction, isCorrect: false) else { continue }
+            let key = multipleChoiceDeduplicationKey(option.label, direction: direction)
+            guard seen.insert(key).inserted else { continue }
+            options.append(option)
+            if options.count == 4 { break }
+        }
+        guard options.count == 4 else { return nil }
+        return stableShuffle(
+            options,
+            seed: "\(sessionID.uuidString)-\(questionIndex)-\(target.id.uuidString)-\(direction.rawValue)"
+        )
+    }
+
+    private func multipleChoiceOption(
+        for word: WordRecord,
+        direction: PracticeDirection,
+        isCorrect: Bool
+    ) -> MultipleChoiceOption? {
+        switch direction {
+        case .enToKo:
+            let meanings = word.activeMeanings.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            guard !meanings.isEmpty else { return nil }
+            let matchedMeaningID = meanings.first(where: \.isTrackableCoreMeaning)?.id
+                ?? meanings.first(where: \.isCore)?.id
+                ?? meanings.first?.id
+            return MultipleChoiceOption(
+                id: UUID(),
+                label: meanings.map(\.text).joined(separator: ", "),
+                isCorrect: isCorrect,
+                matchedMeaningID: isCorrect ? matchedMeaningID : nil
+            )
+        case .koToEn:
+            let term = word.term.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !term.isEmpty else { return nil }
+            return MultipleChoiceOption(id: UUID(), label: term, isCorrect: isCorrect, matchedMeaningID: nil)
+        }
+    }
+
+    private func multipleChoiceDeduplicationKey(_ label: String, direction: PracticeDirection) -> String {
+        switch direction {
+        case .enToKo: TextNormalizer.normalizeKorean(label)
+        case .koToEn: TextNormalizer.normalizeEnglish(label)
+        }
+    }
+
+    private func stableShuffle<T>(_ values: [T], seed: String) -> [T] {
+        values.enumerated().sorted { lhs, rhs in
+            let left = stableHash("\(seed)-\(lhs.offset)")
+            let right = stableHash("\(seed)-\(rhs.offset)")
+            if left != right { return left < right }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
+    }
+
+    private func stableShuffleWords(_ values: [WordRecord], seed: String) -> [WordRecord] {
+        values.sorted { lhs, rhs in
+            let left = stableHash("\(seed)-\(lhs.id.uuidString)")
+            let right = stableHash("\(seed)-\(rhs.id.uuidString)")
+            if left != right { return left < right }
+            return lhs.id.uuidString < rhs.id.uuidString
+        }
+    }
+
+    private func stableHash(_ value: String) -> UInt64 {
+        var hash: UInt64 = 14_695_981_039_346_656_037
+        for byte in value.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1_099_511_628_211
+        }
+        return hash
     }
 
     private func invalidateSessionCandidateCache() {

@@ -6,6 +6,7 @@ struct TestSetupView: View {
     @Query(filter: #Predicate<DailySetRecord> { $0.deletedAt == nil }) private var sets: [DailySetRecord]
     @State private var mode: SessionMode = .mixed
     @State private var direction: PracticeDirection = .enToKo
+    @State private var format: QuestionFormat = .typed
     @State private var selectedSetID: UUID?
     @State private var activeRun: TestRun?
     @State private var error: String?
@@ -32,6 +33,12 @@ struct TestSetupView: View {
                 Picker("방향", selection: $direction) {
                     ForEach(PracticeDirection.allCases, id: \.self) { direction in
                         Text(direction.rawValue).tag(direction)
+                    }
+                }
+                .pickerStyle(.segmented)
+                Picker("시험 방식", selection: $format) {
+                    ForEach(QuestionFormat.allCases) { format in
+                        Text(format.title).tag(format)
                     }
                 }
                 .pickerStyle(.segmented)
@@ -69,7 +76,7 @@ struct TestSetupView: View {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
             }
-            Button("20문항 테스트 시작", action: start)
+            Button(format == .multipleChoice ? "4지선택형 테스트 시작" : "20문항 테스트 시작", action: start)
                 .keyboardShortcut(.return, modifiers: .command)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -90,7 +97,7 @@ struct TestSetupView: View {
 
     private func start() {
         do {
-            let result = try LearningCoordinator(context: context).generateSession(mode: mode, direction: direction, setID: selectedSetID)
+            let result = try LearningCoordinator(context: context).generateSession(mode: mode, direction: direction, setID: selectedSetID, format: format)
             activeRun = TestRun(session: result.0, questions: result.1)
             error = nil
         } catch let caughtError {
@@ -167,18 +174,25 @@ struct TestRunnerView: View {
             Text(question.direction.rawValue)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Text(question.format.title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
             Text(question.prompt)
                 .font(.system(size: 34, weight: .medium, design: .rounded))
                 .frame(maxWidth: .infinity, minHeight: 100, alignment: .center)
 
-            TextField("답안을 입력하세요", text: $answer)
-                .textFieldStyle(.roundedBorder)
-                .font(.title2)
-                .controlSize(.large)
-                .frame(minHeight: 48)
-                .focused($focus, equals: .answer)
-                .onSubmit(submitForJudgement)
-                .disabled(judgeResult != nil)
+            if question.format == .multipleChoice {
+                multipleChoiceGrid(question)
+            } else {
+                TextField("답안을 입력하세요", text: $answer)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.title2)
+                    .controlSize(.large)
+                    .frame(minHeight: 48)
+                    .focused($focus, equals: .answer)
+                    .onSubmit(submitForJudgement)
+                    .disabled(judgeResult != nil)
+            }
 
             if let judgeResult {
                 resultPanel(judgeResult, question: question)
@@ -212,6 +226,38 @@ struct TestRunnerView: View {
         .onKeyPress(.tab) {
             cycleFinalJudgement() ? .handled : .ignored
         }
+        .onKeyPress(characters: .decimalDigits) { press in
+            guard let character = press.characters.first,
+                  let value = Int(String(character)),
+                  (1...4).contains(value) else { return .ignored }
+            return selectChoice(at: value - 1) ? .handled : .ignored
+        }
+    }
+
+    @ViewBuilder
+    private func multipleChoiceGrid(_ question: SessionQuestion) -> some View {
+        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+            ForEach(Array(question.choices.enumerated()), id: \.element.id) { offset, option in
+                Button {
+                    selectChoice(option)
+                } label: {
+                    HStack(alignment: .top, spacing: 10) {
+                        Text("\(offset + 1)")
+                            .font(.headline.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                        Text(option.label)
+                            .font(.title3.weight(.semibold))
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
+                    .padding(14)
+                    .background(choiceBackground(option), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .disabled(judgeResult != nil)
+            }
+        }
     }
 
     @ViewBuilder
@@ -228,7 +274,12 @@ struct TestRunnerView: View {
                             .multilineTextAlignment(.trailing)
                     }
                     LabeledContent("입력 답안") {
-                        Text(answer.isEmpty ? "(입력 없음)" : answer)
+                        Text(displayedAnswer(for: question))
+                    }
+                    if question.format == .multipleChoice {
+                        LabeledContent("정답") {
+                            Text(question.choices.first(where: \.isCorrect)?.label ?? "")
+                        }
                     }
                 }
                 if result.isTypoSuggestion {
@@ -256,10 +307,16 @@ struct TestRunnerView: View {
                         }
                         .focused($focus, equals: .correctedMeaning)
                     }
-                    Toggle("이 답안을 이후 허용 답안으로 추가", isOn: $addAlias)
-                        .focused($focus, equals: .addAlias)
+                    if question.format == .typed {
+                        Toggle("이 답안을 이후 허용 답안으로 추가", isOn: $addAlias)
+                            .focused($focus, equals: .addAlias)
+                    } else {
+                        Text("선택형 보정은 이번 답안의 최종 판정에만 반영합니다.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                Text("Return으로 제출·확정하고, Tab으로 최종 판정을 전환할 수 있습니다.")
+                Text(question.format == .multipleChoice ? "1-4로 선택하고 Return으로 확정합니다. Tab으로 최종 판정을 전환할 수 있습니다." : "Return으로 제출·확정하고, Tab으로 최종 판정을 전환할 수 있습니다.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Button(index + 1 == run.questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
@@ -274,11 +331,40 @@ struct TestRunnerView: View {
 
     private func submitForJudgement() {
         guard let question else { return }
+        if question.format == .multipleChoice, answer.isEmpty {
+            notice = "선택지를 먼저 고르세요."
+            return
+        }
         let result = LearningCoordinator(context: context).judge(answer: answer, for: question)
         judgeResult = result
         chosenResult = result.automaticResult
         correctedMeaningID = question.direction == .enToKo ? question.word.defaultCorrectionMeaningID : nil
         focus = result.automaticResult == .incorrect ? .finalJudgement : .advance
+    }
+
+    private func selectChoice(at offset: Int) -> Bool {
+        guard let question,
+              question.format == .multipleChoice,
+              judgeResult == nil,
+              question.choices.indices.contains(offset) else { return false }
+        selectChoice(question.choices[offset])
+        return true
+    }
+
+    private func selectChoice(_ option: MultipleChoiceOption) {
+        answer = option.id.uuidString
+        notice = nil
+        submitForJudgement()
+    }
+
+    private func choiceBackground(_ option: MultipleChoiceOption) -> Color {
+        guard answer == option.id.uuidString else { return Color.secondary.opacity(0.10) }
+        return Color.accentColor.opacity(0.18)
+    }
+
+    private func displayedAnswer(for question: SessionQuestion) -> String {
+        guard question.format == .multipleChoice else { return answer.isEmpty ? "(입력 없음)" : answer }
+        return question.choices.first { $0.id.uuidString == answer }?.label ?? "(선택 없음)"
     }
 
     private func cycleFinalJudgement() -> Bool {

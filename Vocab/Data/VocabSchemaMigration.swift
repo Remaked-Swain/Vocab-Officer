@@ -251,6 +251,26 @@ enum VocabSchemaV2: VersionedSchema {
 
     static var models: [any PersistentModel.Type] {
         [
+            VocabSchemaV3.WordRecord.self,
+            VocabSchemaV3.MeaningRecord.self,
+            VocabSchemaV3.DailySetRecord.self,
+            VocabSchemaV3.DailySetItemRecord.self,
+            VocabSchemaV3.TestSessionRecord.self,
+            VocabSchemaV3.AttemptRecord.self,
+            VocabSchemaV3.ReviewStateRecord.self,
+            VocabSchemaV3.AnonymousAggregateRecord.self,
+            VocabSchemaV3.MemoryAidCacheRecord.self,
+            VocabSchemaV3.CloudBootstrapRecord.self,
+            VocabSchemaV3.RecordTombstone.self
+        ]
+    }
+}
+
+enum VocabSchemaV3: VersionedSchema {
+    static var versionIdentifier = Schema.Version(3, 0, 0)
+
+    static var models: [any PersistentModel.Type] {
+        [
             WordRecord.self,
             MeaningRecord.self,
             DailySetRecord.self,
@@ -261,13 +281,223 @@ enum VocabSchemaV2: VersionedSchema {
             AnonymousAggregateRecord.self,
             MemoryAidCacheRecord.self,
             CloudBootstrapRecord.self,
+            BootstrapExportReceipt.self,
             RecordTombstone.self
         ]
     }
+
+    @Model
+    final class WordRecord {
+        var id: UUID = UUID()
+        var term: String = ""
+        var normalizedTerm: String = ""
+        var englishAliases: [String] = []
+        var createdAt: Date = Date.distantPast
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var statusRaw: String = "active"
+        var deletedAt: Date?
+        @Relationship(deleteRule: .nullify, inverse: \MeaningRecord.word) var meanings: [MeaningRecord]?
+        @Relationship(deleteRule: .nullify, inverse: \AttemptRecord.word) var attempts: [AttemptRecord]?
+        @Relationship(deleteRule: .nullify, inverse: \ReviewStateRecord.word) var reviewState: ReviewStateRecord?
+
+        init() {}
+    }
+
+    @Model
+    final class MeaningRecord {
+        var id: UUID = UUID()
+        var text: String = ""
+        var normalizedText: String = ""
+        var isCore: Bool = true
+        var aliases: [String] = []
+        var successDays: [String] = []
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var deletedAt: Date?
+        var word: WordRecord?
+
+        init() {}
+    }
+
+    @Model
+    final class DailySetRecord {
+        var id: UUID = UUID()
+        var seoulDay: String = ""
+        var createdAt: Date = Date.distantPast
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var completedAt: Date?
+        var deletedAt: Date?
+        @Relationship(deleteRule: .nullify, inverse: \DailySetItemRecord.set) var items: [DailySetItemRecord]?
+
+        init() {}
+    }
+
+    @Model
+    final class DailySetItemRecord {
+        var id: UUID = UUID()
+        var orderIndex: Int = 0
+        var entryKind: String = ""
+        var wordID: UUID = UUID()
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var deletedAt: Date?
+        var set: DailySetRecord?
+
+        init() {}
+    }
+
+    @Model
+    final class AttemptRecord {
+        var id: UUID = UUID()
+        var directionRaw: String = ""
+        var modeRaw: String = ""
+        var sessionID: UUID = UUID()
+        var questionIndex: Int = 0
+        var seoulDay: String = ""
+        var prompt: String = ""
+        var submittedAnswer: String = ""
+        var automaticJudgementRaw: String = ""
+        var finalJudgementRaw: String = ""
+        var correctionRaw: String?
+        var matchedMeaningID: UUID?
+        var answeredAt: Date = Date.distantPast
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var deletedAt: Date?
+        var word: WordRecord?
+
+        init() {}
+    }
+
+    @Model
+    final class TestSessionRecord {
+        var id: UUID = UUID()
+        var directionRaw: String = ""
+        var modeRaw: String = ""
+        var seoulDay: String = ""
+        var startedAt: Date = Date.distantPast
+        var completedAt: Date?
+        var wordIDs: [UUID] = []
+        var wasReduced: Bool = false
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var deletedAt: Date?
+
+        init() {}
+    }
+
+    @Model
+    final class ReviewStateRecord {
+        var id: UUID = UUID()
+        var failureCheck: Int = 0
+        var activePriority: Int = 0
+        var enToKoStreak: Int = 0
+        var koToEnStreak: Int = 0
+        var koToEnSuccessDays: [String] = []
+        var latestWrongDirection: String?
+        var latestWrongAt: Date?
+        var lastTestedAt: Date?
+        var presentationCount: Int?
+        var lastPresentedAt: Date?
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var deletedAt: Date?
+        var word: WordRecord?
+
+        init() {}
+    }
+
+    @Model
+    final class AnonymousAggregateRecord {
+        var id: UUID = UUID()
+        var seoulDay: String = ""
+        var modeRaw: String = ""
+        var correctCount: Int = 0
+        var incorrectCount: Int = 0
+        var unknownCount: Int = 0
+        var deletedMasteredCount: Int = 0
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var deletedAt: Date?
+
+        init() {}
+    }
+
+    @Model
+    final class MemoryAidCacheRecord {
+        var id: UUID = UUID()
+        var wordID: UUID = UUID()
+        var modelRaw: String = ""
+        var promptVersion: Int = 0
+        var contentSignature: String = ""
+        var markdown: String = ""
+        var generatedAt: Date = Date.distantPast
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var deletedAt: Date?
+
+        init() {}
+    }
+
+    @Model
+    final class CloudBootstrapRecord {
+        var id: UUID = UUID()
+        var key: String = "primary"
+        var schemaVersion: Int = 1
+        var bootstrapUUID: UUID = UUID()
+        var contentFingerprint: String = ""
+        var expectedWordCount: Int = 0
+        var expectedMeaningCount: Int = 0
+        var expectedDailySetCount: Int = 0
+        var expectedDailySetItemCount: Int = 0
+        var expectedTestSessionCount: Int = 0
+        var expectedAttemptCount: Int = 0
+        var expectedAnonymousAggregateCount: Int = 0
+        var expectedMemoryAidCacheCount: Int = 0
+        var expectedTombstoneCount: Int = 0
+        var sourcePlatform: String = "macOS"
+        var sourceDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var createdAt: Date = Date.distantPast
+        var completedAt: Date = Date.distantPast
+        var lastReconciledAt: Date?
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+        var deletedAt: Date?
+
+        init() {}
+    }
+
+    @Model
+    final class BootstrapExportReceipt {
+        var id: UUID = UUID()
+        var requestID: UUID = UUID()
+        var fingerprint: String = ""
+        var storeUUID: String = ""
+        var transactionCommittedAt: Date = Date.distantPast
+        var probeGeneration: Int = 0
+        var state: String = "awaitingExport"
+        var nonce: UUID = UUID()
+
+        init() {}
+    }
+
+    @Model
+    final class RecordTombstone {
+        var id: UUID = UUID()
+        var recordID: UUID = UUID()
+        var recordType: String = ""
+        var deletedAt: Date = Date.distantPast
+        var updatedAt: Date = Date.distantPast
+        var originDeviceID: String = VocabRecordMetadata.legacyOriginDeviceID
+
+        init() {}
+    }
 }
 
-enum VocabSchemaV3: VersionedSchema {
-    static var versionIdentifier = Schema.Version(3, 0, 0)
+enum VocabSchemaV4: VersionedSchema {
+    static var versionIdentifier = Schema.Version(4, 0, 0)
 
     static var models: [any PersistentModel.Type] {
         VocabModelContainerFactory.schemaModels
@@ -276,13 +506,14 @@ enum VocabSchemaV3: VersionedSchema {
 
 enum VocabSchemaMigrationPlan: SchemaMigrationPlan {
     static var schemas: [any VersionedSchema.Type] {
-        [VocabSchemaV1.self, VocabSchemaV2.self, VocabSchemaV3.self]
+        [VocabSchemaV1.self, VocabSchemaV2.self, VocabSchemaV3.self, VocabSchemaV4.self]
     }
 
     static var stages: [MigrationStage] {
         [
             .lightweight(fromVersion: VocabSchemaV1.self, toVersion: VocabSchemaV2.self),
-            .lightweight(fromVersion: VocabSchemaV2.self, toVersion: VocabSchemaV3.self)
+            .lightweight(fromVersion: VocabSchemaV2.self, toVersion: VocabSchemaV3.self),
+            .lightweight(fromVersion: VocabSchemaV3.self, toVersion: VocabSchemaV4.self)
         ]
     }
 }

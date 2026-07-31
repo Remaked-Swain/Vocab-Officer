@@ -257,6 +257,83 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(Set(existing.allMeanings.map(\.text)), ["뜻-0", "보충뜻"])
     }
 
+    func testMultipleChoiceSessionBuildsFourUniqueChoicesAndJudgesBothDirections() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+
+        let enToKo = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate, format: .multipleChoice)
+
+        XCTAssertEqual(enToKo.0.questionFormatRaw, QuestionFormat.multipleChoice.rawValue)
+        XCTAssertEqual(enToKo.1.count, 20)
+        let first = try XCTUnwrap(enToKo.1.first)
+        XCTAssertEqual(first.format, .multipleChoice)
+        XCTAssertEqual(first.choices.count, 4)
+        XCTAssertEqual(first.choices.filter(\.isCorrect).count, 1)
+        XCTAssertEqual(Set(first.choices.map(\.label)).count, 4)
+        let correct = try XCTUnwrap(first.choices.first(where: \.isCorrect))
+        let wrong = try XCTUnwrap(first.choices.first(where: { !$0.isCorrect }))
+        XCTAssertEqual(coordinator.judge(answer: correct.id.uuidString, for: first).automaticResult, .correct)
+        XCTAssertEqual(coordinator.judge(answer: wrong.id.uuidString, for: first).automaticResult, .incorrect)
+
+        let koToEn = try coordinator.generateSession(mode: .today, direction: .koToEn, date: testDate, format: .multipleChoice)
+        let koToEnQuestion = try XCTUnwrap(koToEn.1.first)
+        XCTAssertEqual(koToEnQuestion.choices.filter(\.isCorrect).first?.label, koToEnQuestion.word.term)
+        XCTAssertEqual(coordinator.judge(answer: try XCTUnwrap(koToEnQuestion.choices.first(where: \.isCorrect)).id.uuidString, for: koToEnQuestion).automaticResult, .correct)
+    }
+
+    func testMultipleChoiceDistractorsVaryBetweenSessions() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+
+        let first = try XCTUnwrap(coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate, format: .multipleChoice).1.first)
+        let second = try XCTUnwrap(coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate, format: .multipleChoice).1.first)
+        let firstDistractors = Set(first.choices.filter { !$0.isCorrect }.map(\.label))
+        let secondDistractors = Set(second.choices.filter { !$0.isCorrect }.map(\.label))
+
+        XCTAssertNotEqual(firstDistractors, secondDistractors)
+    }
+
+    func testMultipleChoiceSessionSkipsQuestionsWhenDistractorsAreInsufficient() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        _ = try coordinator.addLooseWord(term: "alpha", meaningsText: "공통뜻", date: testDate)
+        _ = try coordinator.addLooseWord(term: "beta", meaningsText: "공통뜻", date: testDate)
+        _ = try coordinator.addLooseWord(term: "gamma", meaningsText: "다른뜻", date: testDate)
+
+        XCTAssertThrowsError(
+            try coordinator.generateSession(mode: .loose, direction: .enToKo, date: testDate, format: .multipleChoice)
+        )
+        XCTAssertTrue(try context.fetch(FetchDescriptor<TestSessionRecord>()).isEmpty)
+    }
+
+    func testMultipleChoiceCorrectRelievesReviewButDoesNotAddMasterySuccessDays() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate, format: .multipleChoice)
+        let question = try XCTUnwrap(generated.1.first)
+        question.word.reviewState?.activePriority = 1
+        let correct = try XCTUnwrap(question.choices.first(where: \.isCorrect))
+
+        try coordinator.commit(
+            answer: correct.id.uuidString,
+            result: .correct,
+            automatic: .correct,
+            matchedMeaningID: correct.matchedMeaningID,
+            question: question,
+            session: generated.0,
+            date: testDate
+        )
+
+        XCTAssertEqual(question.word.reviewState?.enToKoStreak, 1)
+        XCTAssertTrue(question.word.activeMeanings.allSatisfy(\.successDays.isEmpty))
+        let attempt = try XCTUnwrap(context.fetch(FetchDescriptor<AttemptRecord>()).first)
+        XCTAssertEqual(attempt.questionFormatRaw, QuestionFormat.multipleChoice.rawValue)
+        XCTAssertEqual(attempt.submittedAnswer, correct.label)
+    }
+
     func testTodaySessionPrioritizesWordsNotPreviouslyPresentedThatDay() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
@@ -501,7 +578,7 @@ final class LearningCoordinatorTests: XCTestCase {
         values[0] = WordDraft(term: "example", meanings: "첫 의미, 둘째 의미, 셋째 의미")
         try coordinator.saveDailySet(values, date: testDate)
         let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "example" })
-        let question = SessionQuestion(word: word, direction: .enToKo, index: 0)
+        let question = SessionQuestion(word: word, direction: .enToKo, format: .typed, index: 0, choices: [])
 
         let result = coordinator.judge(answer: "둘째 의미", for: question)
 
@@ -569,7 +646,7 @@ final class LearningCoordinatorTests: XCTestCase {
         try coordinator.saveDailySet(values, date: testDate)
         let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.term == "formula" })
         let meaning = try XCTUnwrap(word.allMeanings.first)
-        let question = SessionQuestion(word: word, direction: .enToKo, index: 0)
+        let question = SessionQuestion(word: word, direction: .enToKo, format: .typed, index: 0, choices: [])
 
         XCTAssertTrue(meaning.isTrackableCoreMeaning)
         XCTAssertEqual(word.correctionCandidateMeanings.map(\.text), ["(수학, 화학) 공식"])

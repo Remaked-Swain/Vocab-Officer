@@ -94,7 +94,7 @@ final class AuthoringCapabilityTests: XCTestCase {
 
             XCTAssertEqual(word.activeMeanings.first?.text, "뜻")
             assertIntegrityBlocked { _ = try coordinator.generateSession(mode: .loose, direction: .enToKo) }
-            let question = SessionQuestion(word: word, direction: .enToKo, index: 0)
+            let question = SessionQuestion(word: word, direction: .enToKo, format: .typed, index: 0, choices: [])
             assertIntegrityBlocked {
                 try coordinator.commit(
                     answer: "뜻",

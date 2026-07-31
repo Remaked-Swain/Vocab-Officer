@@ -81,7 +81,7 @@ enum VocabModelContainerFactory {
     private static func makeContainer(syncMode: VocabSyncMode, storeURL: URL?) throws -> ModelContainer {
         let configuration = try makeConfiguration(syncMode: syncMode, storeURL: storeURL)
         return try ModelContainer(
-            for: Schema(VocabSchemaV3.models),
+            for: Schema(VocabSchemaV4.models),
             migrationPlan: VocabSchemaMigrationPlan.self,
             configurations: configuration
         )
