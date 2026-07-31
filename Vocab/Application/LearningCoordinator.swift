@@ -549,6 +549,7 @@ final class LearningCoordinator {
     private let authoringCapability: VocabAuthoringCapability
     private let learningFactAuthority: VocabMutationAuthority
     private var activeWordCache: [WordRecord]?
+    private var activeWordByIDCache: [UUID: WordRecord]?
     private var dailySetCache: [DailySetRecord]?
 
     init(
@@ -677,7 +678,7 @@ final class LearningCoordinator {
         try requireLearningFactWriting()
         let day = SeoulCalendar.day(for: date)
         let words = try activeWords()
-        let wordsByID = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
+        let wordsByID = try activeWordsByID()
         let sets = try dailySets()
         let setsByRecency = sets.filter { $0.seoulDay <= day }.sorted {
             if $0.seoulDay != $1.seoulDay { return $0.seoulDay > $1.seoulDay }
@@ -1196,7 +1197,14 @@ final class LearningCoordinator {
             $0.deletedAt == nil && $0.statusRaw == "active"
         }))
         activeWordCache = words
+        activeWordByIDCache = Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
         return words
+    }
+
+    private func activeWordsByID() throws -> [UUID: WordRecord] {
+        if let activeWordByIDCache { return activeWordByIDCache }
+        _ = try activeWords()
+        return activeWordByIDCache ?? [:]
     }
 
     private func dailySets() throws -> [DailySetRecord] {
@@ -1220,11 +1228,15 @@ final class LearningCoordinator {
             }
         case .multipleChoice:
             var questions: [SessionQuestion] = []
+            let choiceCandidates = uniqueWords(selected + allWords).compactMap {
+                multipleChoiceCandidate(for: $0, direction: direction)
+            }
+            let choiceCandidatesByWordID = Dictionary(uniqueKeysWithValues: choiceCandidates.map { ($0.wordID, $0) })
             for word in selected {
+                guard let target = choiceCandidatesByWordID[word.id] else { continue }
                 guard let choices = multipleChoiceOptions(
-                    for: word,
-                    candidates: selected + allWords,
-                    direction: direction,
+                    for: target,
+                    candidates: choiceCandidates,
                     sessionID: sessionID,
                     questionIndex: questions.count
                 ) else { continue }
@@ -1240,40 +1252,76 @@ final class LearningCoordinator {
         }
     }
 
+    private struct MultipleChoiceCandidate {
+        let wordID: UUID
+        let label: String
+        let deduplicationKey: String
+        let matchedMeaningID: UUID?
+    }
+
     private func multipleChoiceOptions(
-        for target: WordRecord,
-        candidates: [WordRecord],
-        direction: PracticeDirection,
+        for target: MultipleChoiceCandidate,
+        candidates: [MultipleChoiceCandidate],
         sessionID: UUID,
         questionIndex: Int
     ) -> [MultipleChoiceOption]? {
-        guard let correct = multipleChoiceOption(for: target, direction: direction, isCorrect: true) else { return nil }
-        let correctKey = multipleChoiceDeduplicationKey(correct.label, direction: direction)
-        var seen = Set([correctKey])
-        var options = [correct]
-        let distractorCandidates = stableShuffleWords(
-            uniqueWords(candidates.filter { $0.id != target.id }),
-            seed: "\(sessionID.uuidString)-\(questionIndex)-\(target.id.uuidString)-\(direction.rawValue)-distractors"
+        let correct = MultipleChoiceOption(
+            id: UUID(),
+            label: target.label,
+            isCorrect: true,
+            matchedMeaningID: target.matchedMeaningID
         )
-        for candidate in distractorCandidates {
-            guard let option = multipleChoiceOption(for: candidate, direction: direction, isCorrect: false) else { continue }
-            let key = multipleChoiceDeduplicationKey(option.label, direction: direction)
-            guard seen.insert(key).inserted else { continue }
-            options.append(option)
-            if options.count == 4 { break }
-        }
+        let distractors = multipleChoiceDistractors(
+            for: target,
+            candidates: candidates,
+            seed: "\(sessionID.uuidString)-\(questionIndex)-\(target.wordID.uuidString)-distractors"
+        )
+        let options = [correct] + distractors
         guard options.count == 4 else { return nil }
         return stableShuffle(
             options,
-            seed: "\(sessionID.uuidString)-\(questionIndex)-\(target.id.uuidString)-\(direction.rawValue)"
+            seed: "\(sessionID.uuidString)-\(questionIndex)-\(target.wordID.uuidString)"
         )
     }
 
-    private func multipleChoiceOption(
+    private func multipleChoiceDistractors(
+        for target: MultipleChoiceCandidate,
+        candidates: [MultipleChoiceCandidate],
+        seed: String
+    ) -> [MultipleChoiceOption] {
+        var selected: [(rank: UInt64, tieBreaker: String, key: String, option: MultipleChoiceOption)] = []
+        var selectedKeys = Set([target.deduplicationKey])
+        for candidate in candidates where candidate.wordID != target.wordID {
+            guard !selectedKeys.contains(candidate.deduplicationKey) else { continue }
+            let tieBreaker = candidate.wordID.uuidString
+            let entry = (
+                rank: stableHash("\(seed)-\(tieBreaker)"),
+                tieBreaker: tieBreaker,
+                key: candidate.deduplicationKey,
+                option: MultipleChoiceOption(
+                    id: UUID(),
+                    label: candidate.label,
+                    isCorrect: false,
+                    matchedMeaningID: nil
+                )
+            )
+            selected.append(entry)
+            selectedKeys.insert(candidate.deduplicationKey)
+            selected.sort {
+                if $0.rank != $1.rank { return $0.rank < $1.rank }
+                return $0.tieBreaker < $1.tieBreaker
+            }
+            if selected.count > 3 {
+                selectedKeys.remove(selected.removeLast().key)
+            }
+        }
+        return selected.map(\.option)
+    }
+
+    private func multipleChoiceCandidate(
         for word: WordRecord,
-        direction: PracticeDirection,
-        isCorrect: Bool
-    ) -> MultipleChoiceOption? {
+        direction: PracticeDirection
+    ) -> MultipleChoiceCandidate? {
         switch direction {
         case .enToKo:
             let meanings = word.activeMeanings.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
@@ -1281,23 +1329,22 @@ final class LearningCoordinator {
             let matchedMeaningID = meanings.first(where: \.isTrackableCoreMeaning)?.id
                 ?? meanings.first(where: \.isCore)?.id
                 ?? meanings.first?.id
-            return MultipleChoiceOption(
-                id: UUID(),
-                label: meanings.map(\.text).joined(separator: ", "),
-                isCorrect: isCorrect,
-                matchedMeaningID: isCorrect ? matchedMeaningID : nil
+            let label = meanings.map(\.text).joined(separator: ", ")
+            return MultipleChoiceCandidate(
+                wordID: word.id,
+                label: label,
+                deduplicationKey: TextNormalizer.normalizeKorean(label),
+                matchedMeaningID: matchedMeaningID
             )
         case .koToEn:
             let term = word.term.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !term.isEmpty else { return nil }
-            return MultipleChoiceOption(id: UUID(), label: term, isCorrect: isCorrect, matchedMeaningID: nil)
-        }
-    }
-
-    private func multipleChoiceDeduplicationKey(_ label: String, direction: PracticeDirection) -> String {
-        switch direction {
-        case .enToKo: TextNormalizer.normalizeKorean(label)
-        case .koToEn: TextNormalizer.normalizeEnglish(label)
+            return MultipleChoiceCandidate(
+                wordID: word.id,
+                label: term,
+                deduplicationKey: TextNormalizer.normalizeEnglish(term),
+                matchedMeaningID: nil
+            )
         }
     }
 
@@ -1308,15 +1355,6 @@ final class LearningCoordinator {
             if left != right { return left < right }
             return lhs.offset < rhs.offset
         }.map(\.element)
-    }
-
-    private func stableShuffleWords(_ values: [WordRecord], seed: String) -> [WordRecord] {
-        values.sorted { lhs, rhs in
-            let left = stableHash("\(seed)-\(lhs.id.uuidString)")
-            let right = stableHash("\(seed)-\(rhs.id.uuidString)")
-            if left != right { return left < right }
-            return lhs.id.uuidString < rhs.id.uuidString
-        }
     }
 
     private func stableHash(_ value: String) -> UInt64 {
@@ -1330,6 +1368,7 @@ final class LearningCoordinator {
 
     private func invalidateSessionCandidateCache() {
         activeWordCache = nil
+        activeWordByIDCache = nil
         dailySetCache = nil
     }
 

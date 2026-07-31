@@ -12,6 +12,7 @@ struct TestSetupView: View {
     @State private var format: QuestionFormat = .typed
     @State private var selectedSetID: UUID?
     @State private var activeRun: TestRun?
+    @State private var isStarting = false
     @State private var error: String?
 
     private var orderedSets: [DailySetRecord] {
@@ -79,10 +80,20 @@ struct TestSetupView: View {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
             }
-            Button(format == .multipleChoice ? "4지선택형 테스트 시작" : "20문항 테스트 시작", action: start)
-                .keyboardShortcut(.return, modifiers: .command)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+            HStack(spacing: 12) {
+                Button(format == .multipleChoice ? "4지선택형 테스트 시작" : "20문항 테스트 시작", action: start)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(isStarting || activeRun != nil)
+                if isStarting {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("테스트 준비 중...")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
 
             Spacer()
         }
@@ -103,13 +114,24 @@ struct TestSetupView: View {
     }
 
     private func start() {
-        do {
-            let result = try LearningCoordinator(context: context).generateSession(mode: mode, direction: direction, setID: selectedSetID, format: format)
-            activeRun = TestRun(session: result.0, questions: result.1)
-            error = nil
-        } catch let caughtError {
-            activeRun = nil
-            self.error = caughtError.localizedDescription
+        guard !isStarting, activeRun == nil else { return }
+        isStarting = true
+        error = nil
+
+        let mode = mode
+        let direction = direction
+        let selectedSetID = selectedSetID
+        let format = format
+        Task { @MainActor in
+            await Task.yield()
+            do {
+                let result = try LearningCoordinator(context: context).generateSession(mode: mode, direction: direction, setID: selectedSetID, format: format)
+                activeRun = TestRun(session: result.0, questions: result.1)
+            } catch let caughtError {
+                activeRun = nil
+                self.error = caughtError.localizedDescription
+            }
+            isStarting = false
         }
     }
 
