@@ -712,11 +712,9 @@ final class VocabApplicationStoreBoundary: ObservableObject {
     convenience init() {
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
             let reopen = {
-                VocabLaunchPlan(
-                    container: try! VocabModelContainerFactory.makeInMemoryContainer(),
-                    mode: .localOnly,
-                    connectionError: nil
-                )
+                VocabModelContainerFactory.makeLaunchPlan(preferredMode: .localOnly) { _ in
+                    try VocabModelContainerFactory.makeInMemoryContainer()
+                }
             }
             self.init(launchPlan: reopen(), reopen: reopen)
             return
@@ -724,7 +722,7 @@ final class VocabApplicationStoreBoundary: ObservableObject {
 
         let preferredMode = VocabSyncMode.current(allowsCloudKit: true)
         if preferredMode == .cloudKitPrivate {
-            VocabMutationAuthorityRuntime.beginValidationEpoch()
+            VocabMutationAuthorityRuntime.beginLaunchValidationEpoch()
         }
         let interruptedRecoveryError: Error?
         do {

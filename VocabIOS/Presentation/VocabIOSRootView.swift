@@ -37,6 +37,8 @@ struct VocabIOSRootView: View {
     @State private var reconciliationWorker: VocabCloudReconciliationWorker?
     @State private var refreshQueue = VocabHydrationRefreshQueue()
     @State private var localContentIsUsable = VocabSyncRuntimeStateStore.persistedLocalContentIsUsable()
+    @State private var maintenanceAuditTask: Task<Void, Never>?
+    @State private var maintenanceAuditSlot = VocabMaintenanceTaskSlot()
 
     var body: some View {
         TabView {
@@ -51,18 +53,36 @@ struct VocabIOSRootView: View {
                 }
             }
         }
-        .task { await requestConnectionRefresh(reason: .initial) }
+        .task {
+            if localContentIsUsable {
+                hydrationState = .ready
+                if !VocabMutationAuthorityRuntime.restorePersistedAuthorization(
+                    container: modelContext.container,
+                    context: modelContext
+                ) {
+                    hydrationMessage = "저장된 검증 정보가 없어 다음 유휴 시점에 무결성을 확인합니다."
+                    await VocabSyncRuntimeStateStore.shared.requestFullAudit()
+                }
+            } else {
+                await requestConnectionRefresh(reason: .initial)
+            }
+        }
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
-            VocabMutationAuthorityRuntime.noteForegroundReentry()
-            Task { await requestConnectionRefresh(reason: .foreground) }
+            switch phase {
+            case .active:
+                maintenanceAuditTask?.cancel()
+                maintenanceAuditTask = nil
+                maintenanceAuditSlot.cancel()
+                VocabMutationAuthorityRuntime.noteForegroundReentry()
+            case .inactive, .background:
+                scheduleMaintenanceAuditIfEligible()
+            @unknown default:
+                break
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
-                if VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .remoteStoreChange, state: hydrationState) {
-                    await requestConnectionRefresh(reason: .remoteStoreChange)
-                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { notification in
@@ -79,11 +99,10 @@ struct VocabIOSRootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { notification in
             guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
-            if VocabMutationAuthorityPolicy.shouldInvalidateForStoreEvent(reason: .successfulImport) {
-                VocabMutationAuthorityRuntime.invalidate()
-            }
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
+                try? await Task.sleep(for: .milliseconds(750))
+                guard !Task.isCancelled else { return }
                 await requestConnectionRefresh(reason: .successfulImport)
             }
         }
@@ -142,7 +161,11 @@ struct VocabIOSRootView: View {
         do {
             let worker = await ensureReconciliationWorker()
             if reason == .successfulImport {
-                let result = try await worker.reconcileImportedChanges(syncMode: .cloudKitPrivate)
+                let result = try await worker.reconcileImportedChanges(
+                    syncMode: .cloudKitPrivate,
+                    source: .trustedLocalIdentifiers,
+                    allowsFullAudit: !localContentIsUsable
+                )
                 hydrationState = result.state
                 hydrationMessage = result.message
                 completedMetadataMissingSince = nil
@@ -157,7 +180,7 @@ struct VocabIOSRootView: View {
                     state: status.state
                 )
                 let fullAuditIsDue = await VocabSyncRuntimeStateStore.shared.shouldRunFullAudit()
-                let currentEpochRequiresAudit = (reason == .initial || reason == .foreground)
+                let currentEpochRequiresAudit = (reason == .initial || reason == .manual)
                     && VocabMutationAuthorityRuntime.current == .integrityBlocked
                 let scheduledAuditIsDue = status.state == .ready
                     && (fullAuditIsDue || currentEpochRequiresAudit)
@@ -202,6 +225,35 @@ struct VocabIOSRootView: View {
         )
         reconciliationWorker = worker
         return worker
+    }
+
+    @MainActor
+    private func scheduleMaintenanceAuditIfEligible() {
+        guard localContentIsUsable,
+              maintenanceAuditTask == nil,
+              let generation = maintenanceAuditSlot.begin() else { return }
+        let container = modelContext.container
+        maintenanceAuditTask = Task { @MainActor in
+            defer {
+                if maintenanceAuditSlot.complete(generation: generation) {
+                    maintenanceAuditTask = nil
+                }
+            }
+            guard await VocabSyncRuntimeStateStore.shared.shouldRunFullAudit(),
+                  !Task.isCancelled else { return }
+            do {
+                let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: container)
+                let result = try await worker.auditAll(syncMode: .cloudKitPrivate)
+                guard !Task.isCancelled else { return }
+                hydrationState = result.state
+                hydrationMessage = result.message
+                await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted()
+            } catch is CancellationError {
+                return
+            } catch {
+                hydrationMessage = "유휴 상태 무결성 점검을 다음 기회에 다시 시도합니다."
+            }
+        }
     }
 
     private var hydrationDescription: String {

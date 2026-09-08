@@ -45,6 +45,8 @@ struct RootView: View {
     @State private var reconciliationWorker: VocabCloudReconciliationWorker?
     @State private var localContentIsUsable = false
     @State private var recoveryReplicaTask: Task<Void, Never>?
+    @State private var maintenanceAuditTask: Task<Void, Never>?
+    @State private var maintenanceAuditSlot = VocabMaintenanceTaskSlot()
 
     var body: some View {
         NavigationSplitView {
@@ -91,19 +93,35 @@ struct RootView: View {
         .task {
             localContentIsUsable = syncMode == .localOnly
                 || VocabSyncRuntimeStateStore.persistedLocalContentIsUsable()
-            scheduleHydrationRefresh(reason: .initial)
+            if localContentIsUsable {
+                hydrationState = syncMode == .localOnly ? .localOnly : .ready
+                if syncMode == .cloudKitPrivate,
+                   !VocabMutationAuthorityRuntime.restorePersistedAuthorization(
+                    container: modelContext.container,
+                    context: modelContext
+                   ) {
+                    hydrationMessage = "저장된 검증 정보가 없어 다음 유휴 시점에 무결성을 확인합니다."
+                    await VocabSyncRuntimeStateStore.shared.requestFullAudit()
+                }
+            } else {
+                scheduleHydrationRefresh(reason: .initial)
+            }
             await resumeBootstrapIfNeeded()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .active:
+                maintenanceAuditTask?.cancel()
+                maintenanceAuditTask = nil
+                maintenanceAuditSlot.cancel()
                 if syncMode == .cloudKitPrivate {
                     VocabMutationAuthorityRuntime.noteForegroundReentry()
                 }
-                scheduleHydrationRefresh(reason: .foreground)
             case .inactive:
+                scheduleMaintenanceAuditIfEligible()
                 scheduleRecoveryReplicaIfEligible(trigger: .inactive)
             case .background:
+                scheduleMaintenanceAuditIfEligible()
                 scheduleRecoveryReplicaIfEligible(trigger: .background)
             @unknown default:
                 break
@@ -111,7 +129,6 @@ struct RootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
             Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
-            scheduleHydrationRefresh(reason: .remoteStoreChange)
         }
         .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { notification in
             guard let source = notification.object as? ModelContext,
@@ -127,10 +144,6 @@ struct RootView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { notification in
             guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
-            if VocabMutationAuthorityPolicy.shouldInvalidateForStoreEvent(reason: .successfulImport) {
-                VocabMutationAuthorityRuntime.invalidate()
-                VocabFullAuditReceiptStore.invalidateDefault()
-            }
             Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
             scheduleHydrationRefresh(reason: .successfulImport)
         }
@@ -149,7 +162,8 @@ struct RootView: View {
         guard hydrationRefreshTask == nil else { return }
         hydrationRefreshTask = Task { @MainActor in
             // SwiftData can coalesce several remote notifications for one CloudKit transaction.
-            try? await Task.sleep(for: .milliseconds(300))
+            let delay: Duration = reason == .successfulImport ? .milliseconds(750) : .milliseconds(300)
+            try? await Task.sleep(for: delay)
             while hasPendingHydrationRefresh, !Task.isCancelled {
                 hasPendingHydrationRefresh = false
                 let reason = pendingRefreshReason
@@ -180,12 +194,46 @@ struct RootView: View {
     }
 
     @MainActor
+    private func scheduleMaintenanceAuditIfEligible() {
+        guard syncMode == .cloudKitPrivate,
+              localContentIsUsable,
+              maintenanceAuditTask == nil,
+              let generation = maintenanceAuditSlot.begin() else { return }
+        let container = modelContext.container
+        maintenanceAuditTask = Task { @MainActor in
+            defer {
+                if maintenanceAuditSlot.complete(generation: generation) {
+                    maintenanceAuditTask = nil
+                }
+            }
+            guard await VocabSyncRuntimeStateStore.shared.shouldRunFullAudit(),
+                  !Task.isCancelled else { return }
+            do {
+                let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: container)
+                let result = try await worker.auditAll(syncMode: syncMode)
+                guard !Task.isCancelled else { return }
+                hydrationState = result.state
+                hydrationMessage = result.message
+                await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted()
+            } catch is CancellationError {
+                return
+            } catch {
+                hydrationMessage = "유휴 상태 무결성 점검을 다음 기회에 다시 시도합니다."
+            }
+        }
+    }
+
+    @MainActor
     private func refreshHydration(reason: VocabHydrationRefreshReason) async {
         guard await VocabSyncRuntimeStateStore.shared.shouldRunDiagnostic(reason: reason) else { return }
         do {
             let worker = await ensureReconciliationWorker()
             if reason == .successfulImport {
-                let result = try await worker.reconcileImportedChanges(syncMode: syncMode)
+                let result = try await worker.reconcileImportedChanges(
+                    syncMode: syncMode,
+                    source: .trustedLocalIdentifiers,
+                    allowsFullAudit: !localContentIsUsable
+                )
                 hydrationState = result.state
                 hydrationMessage = result.message
             } else {
@@ -196,7 +244,7 @@ struct RootView: View {
                 )
                 let fullAuditIsDue = await VocabSyncRuntimeStateStore.shared.shouldRunFullAudit()
                 let currentEpochRequiresAudit = syncMode == .cloudKitPrivate
-                    && (reason == .initial || reason == .foreground)
+                    && (reason == .initial || reason == .manual)
                     && VocabMutationAuthorityRuntime.current == .integrityBlocked
                 let scheduledAuditIsDue = status.state == .ready
                     && (fullAuditIsDue || currentEpochRequiresAudit)
@@ -288,7 +336,9 @@ struct RootView: View {
         configuration.createsNewApplicationInstance = true
         NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL, configuration: configuration) { _, error in
             guard error == nil else { return }
-            DispatchQueue.main.async { NSApplication.shared.terminate(nil) }
+            Task { @MainActor in
+                NSApplication.shared.terminate(nil)
+            }
         }
     }
 }

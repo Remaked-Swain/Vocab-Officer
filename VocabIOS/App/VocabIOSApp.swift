@@ -21,7 +21,7 @@ struct VocabIOSApp: App {
             defaultMode: .cloudKitPrivate
         )
         if preferredMode == .cloudKitPrivate {
-            VocabMutationAuthorityRuntime.beginValidationEpoch()
+            VocabMutationAuthorityRuntime.beginLaunchValidationEpoch()
         }
         return VocabModelContainerFactory.makeLaunchPlan(preferredMode: preferredMode)
     }()
