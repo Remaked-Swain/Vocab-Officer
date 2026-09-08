@@ -2,11 +2,15 @@
 
 | Field | Value |
 | --- | --- |
-| Status | active |
+| Status | superseded |
 | Date | 2026-07-15 (Asia/Seoul) |
 | Scope | `Docs/ClosedLoop/`, `Docs/Verification.md`, `script/closed_loop_pipeline.sh`, Closed-Loop role-agent lifecycle and token efficiency |
 | Agents | Director, Executor, Monitor, Recorder, Codex main agent |
+| Superseded by | CL-0025 |
 | Archive review | retain while Codex Closed-Loop workflow exists |
+
+> Historical record only. Its four-role lifecycle is no longer operative.
+> Current work follows CL-0025 and AGENTS.md.
 
 ## Problem
 
@@ -15,7 +19,7 @@ recreating it spends time and tokens restoring its connection and context. It
 also weakens continuity across Monitor rejection and Executor rework even
 though the pipeline already requires one stable identity per role.
 
-## Decision
+## Historical Decision
 
 - Role execution remains strictly sequential. Only the role opened by the
   pipeline may receive an active instruction or mutate its owned artifact.
@@ -42,11 +46,8 @@ though the pipeline already requires one stable identity per role.
 ## Partial Supersession
 
 This record partially supersedes `CL-0012` only for its requirement to close a
-healthy role execution before spawning the successor. `CL-0012` remains active
-for ordered role activation, just-in-time first spawn, stable identity,
-artifact hash tokens, rejection routing, concurrency locking and validated
-Recorder close. `CL-0015` continues to govern whether a Closed-Loop is used and
-the Codex main-agent orchestration boundary.
+healthy role execution before spawning the successor. These relationships are
+retained as history only; CL-0025 replaces the complete four-role lifecycle.
 
 ## Evidence
 

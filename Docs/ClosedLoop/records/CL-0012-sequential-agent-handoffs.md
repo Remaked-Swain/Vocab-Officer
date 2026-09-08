@@ -2,11 +2,15 @@
 
 | Field | Value |
 | --- | --- |
-| Status | active |
+| Status | superseded |
 | Date | 2026-06-28 (Asia/Seoul) |
 | Scope | `Docs/ClosedLoop/`, `script/closed_loop_pipeline.sh`, Closed-Loop role scheduling and handoff state |
 | Agents | Director, Executor, Monitor, Recorder |
+| Superseded by | CL-0025 |
 | Archive review | retain while Codex Closed-Loop workflow exists |
+
+> Historical record only. None of the four-role instructions below are
+> operative. Current work must follow CL-0025 and AGENTS.md.
 
 ## Problem
 
@@ -15,7 +19,7 @@ to proceed without the exact output it must review. Completion messages alone
 do not prove which artifact crossed a handoff, and concurrent updates can
 corrupt or bypass an informal workflow state.
 
-## Decision
+## Historical Decision
 
 - Closed-Loop is not the default workflow. `CL-0015` requires the Director to
   decide whether to use it and record the use or non-use reason.
@@ -59,16 +63,14 @@ corrupt or bypass an informal workflow state.
   XCTest work and saves agent tokens and elapsed time without weakening the
   pipeline and record checks selected for this scope.
 
-## Partial Supersession
+## Historical Supersession
 
 This record is partially superseded by `CL-0018` only for closing and
-respawning healthy role sessions at handoff boundaries. Sequential activation,
-just-in-time first spawn, stable role identity and all repository-local
-handoff enforcement remain active.
+respawning healthy role sessions at handoff boundaries. Those intermediate
+rules were later replaced in full by CL-0025.
 
 This record is partially superseded by `CL-0015` only for the previous
-default-use rule. Its sequential handoff and repository-local enforcement
-rules remain active.
+default-use rule. That four-role pipeline was later replaced by CL-0025.
 
 This record partially supersedes:
 
@@ -78,9 +80,8 @@ This record partially supersedes:
   agents; bootstrap facts are now passed just in time when each eligible role
   starts.
 
-`CL-0002` retention and verification selection remain active. `CL-0007`
-canonical-root, sandbox, dirty-worktree and Swift/Xcode-first rules remain
-active.
+The independent retention guidance in `CL-0002` and workspace/tooling guidance
+in `CL-0007` remain current; this record's role lifecycle does not.
 
 ## Evidence
 
@@ -117,9 +118,5 @@ app or Xcode project behavior changed.
 ## Limitation
 
 The shell cannot prevent Codex or another external orchestrator from spawning
-or retaining agents outside this API. The orchestrator must enforce agent
-lifecycle timing; pipeline role registration and hash tokens enforce and audit
-the repository-local handoff boundary. During a Closed-Loop run, the Codex main
-agent must not directly change code or documentation; it only orchestrates
-role order, handoff tokens, token budget, sandbox state and verification
-visibility.
+or retaining agents outside this API. This was the historical limitation of
+the retired state machine. CL-0025 defines the current Main/Auditor boundary.

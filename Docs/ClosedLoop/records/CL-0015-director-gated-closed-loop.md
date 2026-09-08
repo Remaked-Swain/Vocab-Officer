@@ -2,11 +2,15 @@
 
 | Field | Value |
 | --- | --- |
-| Status | active |
+| Status | superseded |
 | Date | 2026-07-14 (Asia/Seoul) |
 | Scope | `Docs/ClosedLoop/`, `Docs/Verification.md`, Closed-Loop default-use policy and role lifecycle |
 | Agents | Director, Executor, Monitor, Recorder, Codex main agent |
+| Superseded by | CL-0025 |
 | Archive review | retain while Codex Closed-Loop workflow exists |
+
+> Historical record only. Its Director/Executor/Monitor/Recorder instructions
+> must not be applied. Current work follows CL-0025 and AGENTS.md.
 
 ## Problem
 
@@ -15,7 +19,7 @@ task did not need durable multi-role review. That wastes tokens and elapsed
 time, and it encourages role creation before there is a clear Director reason
 for using the heavier workflow.
 
-## Decision
+## Historical Decision
 
 - Closed-Loop is not the default workflow. The Director decides whether to use
   it and records the use or non-use reason in the Director artifact.
@@ -46,7 +50,8 @@ for using the heavier workflow.
 This record partially supersedes `CL-0012` only for the statement that
 Closed-Loop should be used by default. The sequential handoff state machine,
 hash-token requirements, same-Executor rejection path, Recorder validation and
-repository-local enforcement limitations from `CL-0012` remain active.
+repository-local enforcement limitations from `CL-0012` remained in force
+until CL-0025 replaced the four-role workflow.
 
 ## Evidence
 
