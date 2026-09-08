@@ -618,8 +618,8 @@ private struct TestKeyCaptureView: NSViewRepresentable {
         nsView.onTab = onTab
         nsView.onReturn = onReturn
         nsView.onDigit = onDigit
-        DispatchQueue.main.async {
-            guard isActive, nsView.window?.firstResponder !== nsView else { return }
+        Task { @MainActor [weak nsView] in
+            guard let nsView, isActive, nsView.window?.firstResponder !== nsView else { return }
             nsView.window?.makeFirstResponder(nsView)
         }
     }

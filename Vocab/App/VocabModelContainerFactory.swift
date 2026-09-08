@@ -108,7 +108,8 @@ enum VocabModelContainerFactory {
                 let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
                 errorContainer = try ModelContainer(for: schema, configurations: configuration)
             } catch {
-                fatalError("Unable to prepare recovery UI data: \(error.localizedDescription)")
+                // No model container exists from which even the recovery UI can render.
+                fatalError("Unable to prepare recovery UI data: \(error.localizedDescription)") // swift-style: allow(fatalError)
             }
             let target = preferredMode == .cloudKitPrivate ? "iCloud mirrored 저장소" : "로컬 저장소"
             return VocabLaunchPlan(

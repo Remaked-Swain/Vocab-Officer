@@ -27,16 +27,28 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$intake_ui_plan" == *"xcodebuild"* ]]
   [[ "$intake_ui_plan" == *"build"* ]]
 
-  process_plan="$("$0" --plan Docs/ClosedLoop/README.md script/verify_changed.sh)"
+  process_plan="$("$0" --plan AGENTS.md Docs/ClosedLoop/README.md script/verify_changed.sh)"
   [[ "$process_plan" == *"bash -n"* ]]
   [[ "$process_plan" == *"closed_loop_pipeline.sh\" --self-test"* ]]
   [[ "$process_plan" == *"closed_loop_records.sh\" validate"* ]]
+  [[ "$process_plan" == *"closed_loop_records.sh\" --self-test"* ]]
   [[ "$process_plan" != *"xcodebuild"* ]]
 
   records_plan="$("$0" --plan Docs/ClosedLoop/INDEX.md)"
   [[ "$records_plan" == *"closed_loop_pipeline.sh\" --self-test"* ]]
   [[ "$records_plan" == *"closed_loop_records.sh\" validate"* ]]
   [[ "$records_plan" != *"xcodebuild"* ]]
+
+  verification_policy_plan="$("$0" --plan Docs/Verification.md)"
+  [[ "$verification_policy_plan" == *"closed_loop_pipeline.sh\" --self-test"* ]]
+  [[ "$verification_policy_plan" == *"closed_loop_records.sh\" validate"* ]]
+
+  swift_plan="$("$0" --plan Vocab/Presentation/RootView.swift)"
+  [[ "$swift_plan" == *"swift_style_check.sh"* ]]
+
+  style_plan="$("$0" --plan Docs/SwiftStyleGuide.md script/swift_style_check.sh)"
+  [[ "$style_plan" == *"swift_style_check.sh\" --self-test"* ]]
+  [[ "$style_plan" == *"swift_style_check.sh\""* ]]
 
   echo "Verification selection self-test passed."
   exit 0
@@ -76,6 +88,7 @@ run_full=false
 run_build=false
 run_shell=false
 run_closed_loop=false
+run_swift_style=false
 manual_ui=false
 no_baseline=false
 
@@ -87,7 +100,12 @@ fi
 for file in "${changed_files[@]}"; do
   file="${file#"$ROOT_DIR"/}"
   case "$file" in
-    Docs/ClosedLoop/*)
+    Docs/SwiftStyleGuide.md)
+      run_shell=true
+      run_closed_loop=true
+      run_swift_style=true
+      ;;
+    AGENTS.md|Docs/Verification.md|Docs/ClosedLoop/*)
       run_closed_loop=true
       ;;
     Docs/*|.gitignore|.codex/*)
@@ -95,6 +113,11 @@ for file in "${changed_files[@]}"; do
     script/closed_loop_pipeline.sh|script/closed_loop_records.sh|script/verify_changed.sh)
       run_shell=true
       run_closed_loop=true
+      ;;
+    script/swift_style_check.sh)
+      run_shell=true
+      run_closed_loop=true
+      run_swift_style=true
       ;;
     script/*.sh)
       run_shell=true
@@ -126,6 +149,11 @@ for file in "${changed_files[@]}"; do
       run_full=true
       ;;
   esac
+  case "$file" in
+    Vocab/*.swift|Vocab/**/*.swift|VocabIOS/*.swift|VocabIOS/**/*.swift|VocabTests/*.swift|VocabTests/**/*.swift)
+      run_swift_style=true
+      ;;
+  esac
 done
 
 if "$run_full"; then
@@ -146,10 +174,18 @@ if "$run_shell"; then
   if [[ -f "$ROOT_DIR/script/build_and_run.sh" ]]; then
     actions+=("bash -n \"$ROOT_DIR/script/build_and_run.sh\"")
   fi
+  if [[ -f "$ROOT_DIR/script/swift_style_check.sh" ]]; then
+    actions+=("bash -n \"$ROOT_DIR/script/swift_style_check.sh\"")
+  fi
   actions+=("\"$ROOT_DIR/script/verify_changed.sh\" --self-test")
+fi
+if "$run_swift_style"; then
+  actions+=("\"$ROOT_DIR/script/swift_style_check.sh\" --self-test")
+  actions+=("\"$ROOT_DIR/script/swift_style_check.sh\"")
 fi
 if "$run_closed_loop"; then
   actions+=("\"$ROOT_DIR/script/closed_loop_pipeline.sh\" --self-test")
+  actions+=("\"$ROOT_DIR/script/closed_loop_records.sh\" --self-test")
   actions+=("\"$ROOT_DIR/script/closed_loop_records.sh\" validate")
 fi
 if "$run_full"; then

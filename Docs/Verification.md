@@ -1,8 +1,9 @@
 # Verification Checklist
 
-- Save exactly 100 new headwords; reject 99, 101, duplicates and existing-word edits.
-- Paste 100 lines in the supported in-app formats, preserving internal
-  punctuation in headwords and multiple meanings; reject malformed lines.
+- Save 1 to 100 daily-set entries, append later entries to the same incomplete
+  Seoul-day set, complete it at 100, and reject only overflow or malformed input.
+- Paste 1 to 100 lines in the supported in-app formats, preserving internal
+  punctuation in headwords and multiple meanings.
 - Generate Today, Selected Set, Review and Mixed sessions with at most 20
   distinct words and visibly reduced sessions when fewer candidates exist.
 - With two completed intake sets and no attempt for the earlier set, select
@@ -25,16 +26,15 @@
   preservation.
 - Confirm no learning payload, local SwiftData store, secret material or test
   result bundle is tracked in Git before publishing.
-- For each Closed-Loop change, read `Docs/ClosedLoop/INDEX.md`, apply
-  `CL-0015` to decide whether Closed-Loop is justified, and run
-  `script/verify_changed.sh` with only that loop's affected files before
-  broadening verification scope. Closed-Loop is not the default; record the
-  Director's use or non-use reason when the workflow is considered.
-- When Closed-Loop is used, apply `CL-0018`: spawn each eligible role once,
-  retain its agent session under a run-local role-to-agent map, reactivate that
-  same ID for later turns, and close retained sessions only after validated
-  terminal closure. Role activation remains sequential; idle retention does
-  not permit parallel work.
+- Apply `AGENTS.md` and `CL-0025`: the main agent implements changes and a
+  single read-only Auditor reviews code, persistence, sync, security,
+  data-safety, release, and harness work. Reuse that Auditor after rejection.
+  Simple questions, read-only inspection, and command-only operations require
+  no subagent.
+- Apply `Docs/SwiftStyleGuide.md` to every Swift change and run
+  `script/swift_style_check.sh`. Treat contextual convention review as part of
+  the Auditor's acceptance, not as a regex substitution for engineering
+  judgement.
 - Run unit tests, build the macOS target and execute the performance harness
   against the documented fixture before final acceptance.
 - Build and install the local executable with
