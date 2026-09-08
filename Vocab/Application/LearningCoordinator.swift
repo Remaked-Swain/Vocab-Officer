@@ -264,7 +264,7 @@ enum VocabMutationAuthorityRuntime {
     }
 
     static func set(_ authority: VocabMutationAuthority) {
-        if authority == .integrityBlocked { store.invalidate() }
+        if authority == .integrityBlocked { invalidatePersistedEvidence() }
     }
 
     static func invalidate() {
@@ -275,10 +275,72 @@ enum VocabMutationAuthorityRuntime {
         store.invalidate()
     }
 
+    static func invalidatePersistedEvidence(receiptURL: URL? = nil) {
+        invalidate()
+        if let receiptURL {
+            VocabFullAuditReceiptStore.invalidate(at: receiptURL)
+        } else {
+            VocabFullAuditReceiptStore.invalidateDefault()
+        }
+    }
+
     @discardableResult
     static func beginValidationEpoch() -> UUID {
         invalidate()
         return currentValidationEpoch
+    }
+
+    @discardableResult
+    static func beginLaunchValidationEpoch() -> UUID {
+        lock.withLock {
+            validationEpoch = UUID()
+            authorizedEpoch = nil
+            return validationEpoch
+        }
+    }
+
+    static func restorePersistedAuthorization(
+        container: ModelContainer,
+        context: ModelContext,
+        receiptURL: URL? = nil
+    ) -> Bool {
+        do {
+            guard let metadata = try VocabMutationLeaseStore.activeMetadata(context: context),
+                  metadata.schemaVersion == VocabCloudReconciler.metadataSchemaVersion,
+                  !metadata.contentFingerprint.isEmpty,
+                  metadata.lastReconciledAt != nil else {
+                return false
+            }
+            let storeIdentity = VocabFullAuditReceipt.storeIdentity(for: container)
+            if let lease = store.load(),
+               lease.formatVersion == VocabMutationLease.currentFormatVersion,
+               lease.storeIdentity == storeIdentity,
+               lease.bootstrapUUID == metadata.bootstrapUUID,
+               lease.schemaVersion == metadata.schemaVersion {
+                lock.withLock { authorizedEpoch = validationEpoch }
+                return true
+            }
+            guard let receipt = try VocabFullAuditReceiptStore.load(
+                from: try receiptURL ?? VocabFullAuditReceiptStore.defaultURL()
+            ),
+                  receipt.formatVersion == VocabFullAuditReceipt.currentFormatVersion,
+                  receipt.storeIdentity == storeIdentity,
+                  receipt.bootstrapUUID == metadata.bootstrapUUID,
+                  receipt.schemaVersion == metadata.schemaVersion,
+                  receipt.reconciliationVersion == VocabFullAuditReceipt.reconciliationVersion,
+                  receipt.importIndexFormatVersion == VocabImportedChangeIndex.currentFormatVersion else {
+                return false
+            }
+            try authorize(
+                container: container,
+                context: context,
+                receipt: receipt,
+                validationEpoch: currentValidationEpoch
+            )
+            return current == .allowed
+        } catch {
+            return false
+        }
     }
 
     static func noteForegroundReentry() {
@@ -297,6 +359,15 @@ enum VocabMutationAuthorityRuntime {
         }
         store.invalidate()
         return epoch
+    }
+
+    static func prepareForMaintenanceAudit(
+        container: ModelContainer,
+        context: ModelContext
+    ) -> UUID {
+        permitsMutation(container: container, context: context)
+            ? currentValidationEpoch
+            : prepareForFullAudit()
     }
 
     static func authorize(
@@ -329,8 +400,10 @@ enum VocabMutationAuthorityRuntime {
 
     static func permitsMutation(container: ModelContainer, context: ModelContext) -> Bool {
         do {
-            guard lock.withLock({ authorizedEpoch == validationEpoch }),
-                  let lease = store.load(),
+            guard lock.withLock({ authorizedEpoch == validationEpoch }) else {
+                return false
+            }
+            guard let lease = store.load(),
                   lease.formatVersion == VocabMutationLease.currentFormatVersion,
                   lease.storeIdentity == VocabFullAuditReceipt.storeIdentity(for: container),
                   let metadata = try VocabMutationLeaseStore.activeMetadata(context: context),
@@ -2349,6 +2422,10 @@ enum VocabFullAuditReceiptStore {
 
     static func invalidateDefault() {
         guard let url = try? defaultURL() else { return }
+        invalidate(at: url)
+    }
+
+    static func invalidate(at url: URL) {
         try? FileManager.default.removeItem(at: url)
     }
 }
@@ -2398,6 +2475,46 @@ enum VocabCloudReconciler {
             anonymousAggregates: try context.fetchCount(FetchDescriptor<AnonymousAggregateRecord>()),
             memoryAidCaches: try context.fetchCount(FetchDescriptor<MemoryAidCacheRecord>()),
             tombstones: try context.fetchCount(FetchDescriptor<RecordTombstone>())
+        )
+    }
+
+    static func lightweightStatus(
+        context: ModelContext,
+        syncMode: VocabSyncMode
+    ) throws -> VocabHydrationStatus {
+        guard syncMode == .cloudKitPrivate else {
+            return VocabHydrationStatus(
+                state: .localOnly,
+                counts: .zero,
+                expectedBootstrapUUID: nil,
+                message: nil
+            )
+        }
+        let metadata = try context.fetch(FetchDescriptor<CloudBootstrapRecord>())
+            .filter { $0.deletedAt == nil && $0.key == "primary" }
+            .max { $0.createdAt < $1.createdAt }
+        guard let metadata else {
+            return VocabHydrationStatus(
+                state: .awaitingBootstrapMetadata,
+                counts: .zero,
+                expectedBootstrapUUID: nil,
+                message: "bootstrap metadata가 아직 관찰되지 않았습니다."
+            )
+        }
+        guard metadata.schemaVersion == metadataSchemaVersion,
+              !metadata.contentFingerprint.isEmpty else {
+            return VocabHydrationStatus(
+                state: .failed,
+                counts: .zero,
+                expectedBootstrapUUID: metadata.bootstrapUUID,
+                message: "metadata schema 또는 fingerprint가 유효하지 않습니다."
+            )
+        }
+        return VocabHydrationStatus(
+            state: metadata.lastReconciledAt == nil ? .reconciling : .ready,
+            counts: .zero,
+            expectedBootstrapUUID: metadata.bootstrapUUID,
+            message: nil
         )
     }
 
@@ -2811,7 +2928,10 @@ actor VocabCloudReconciliationWorker {
         auditReceiptURL: URL? = nil
     ) async throws -> VocabHydrationStatus {
         let validationEpoch = syncMode == .cloudKitPrivate
-            ? VocabMutationAuthorityRuntime.prepareForFullAudit()
+            ? VocabMutationAuthorityRuntime.prepareForMaintenanceAudit(
+                container: modelContainer,
+                context: modelContext
+            )
             : nil
         _ = await VocabSyncWorkBarrier.shared.beginReconciliation()
         do {
@@ -2852,7 +2972,15 @@ actor VocabCloudReconciliationWorker {
             }
             await VocabSyncWorkBarrier.shared.finishReconciliation()
             return result
+        } catch is CancellationError {
+            await VocabSyncWorkBarrier.shared.finishReconciliation()
+            throw CancellationError()
         } catch {
+            if syncMode == .cloudKitPrivate,
+               error is VocabCloudReconciliationError {
+                let resolvedReceiptURL = try? auditReceiptURL ?? VocabFullAuditReceiptStore.defaultURL()
+                VocabMutationAuthorityRuntime.invalidatePersistedEvidence(receiptURL: resolvedReceiptURL)
+            }
             await VocabSyncWorkBarrier.shared.finishReconciliation()
             throw error
         }
@@ -2864,11 +2992,10 @@ actor VocabCloudReconciliationWorker {
         indexURL: URL? = nil,
         auditReceiptURL: URL? = nil,
         identifierBuffer: VocabImportedIdentifierBuffer = .shared,
-        source: VocabImportedChangeSource = .cloudImportWithoutIdentifiers
+        source: VocabImportedChangeSource = .cloudImportWithoutIdentifiers,
+        allowsFullAudit: Bool = true,
+        runtimeStateStore: VocabSyncRuntimeStateStore = .shared
     ) async throws -> VocabHydrationStatus {
-        let validationEpoch = syncMode == .cloudKitPrivate
-            ? VocabMutationAuthorityRuntime.prepareForFullAudit()
-            : nil
         _ = await VocabSyncWorkBarrier.shared.beginReconciliation()
         do {
         guard syncMode == .cloudKitPrivate else {
@@ -2911,14 +3038,21 @@ actor VocabCloudReconciliationWorker {
         case .cloudImportWithoutIdentifiers:
             changes = auditFallback
         }
-        let periodicAuditIsDue = await VocabSyncRuntimeStateStore.shared.shouldRunFullAudit(now: now)
         let needsAudit = source == .cloudImportWithoutIdentifiers
-            || pendingChanges.records.isEmpty
             || pendingChanges.requiresFullAudit
             || changes.requiresFullAudit
-            || periodicAuditIsDue
         let result: VocabHydrationStatus
         if needsAudit {
+            guard allowsFullAudit else {
+                await runtimeStateStore.requestFullAudit()
+                let status = try VocabCloudReconciler.lightweightStatus(
+                    context: modelContext,
+                    syncMode: syncMode
+                )
+                await VocabSyncWorkBarrier.shared.finishReconciliation()
+                return status
+            }
+            let validationEpoch = VocabMutationAuthorityRuntime.prepareForFullAudit()
             result = try await reconcileFullCooperatively(syncMode: syncMode, now: now)
             let auditedIndex = try await fullImportIndexCooperatively()
             let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: modelContext, exportedAt: now)
@@ -2945,9 +3079,9 @@ actor VocabCloudReconciliationWorker {
                 container: modelContainer,
                 context: modelContext,
                 receipt: receipt,
-                validationEpoch: validationEpoch!
+                validationEpoch: validationEpoch
             )
-            await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted(at: now)
+            await runtimeStateStore.markFullAuditCompleted(at: now)
             try VocabImportedChangeIndexStore.save(auditedIndex, to: resolvedURL)
         } else {
             result = try VocabCloudReconciler.reconcileAffected(
@@ -3008,7 +3142,8 @@ enum VocabCloudReconciliationWorkerFactory {
 }
 
 enum LearningError: LocalizedError {
-    case dailySetRequiresExactly100
+    case dailySetCountOutOfRange
+    case dailySetExceeds100(remaining: Int)
     case dailySetAlreadyExists
     case meaningRequired
     case termRequired
@@ -3021,7 +3156,8 @@ enum LearningError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .dailySetRequiresExactly100: "오늘의 완료 세트는 신규 단어 100개가 필요합니다."
+        case .dailySetCountOutOfRange: "한 번에 1개 이상 100개 이하의 단어를 입력하세요."
+        case .dailySetExceeds100(let remaining): "오늘 세트에는 \(remaining)개를 더 저장할 수 있습니다. 입력 개수를 줄여주세요."
         case .dailySetAlreadyExists: "오늘의 완료 세트가 이미 저장되어 있습니다."
         case .meaningRequired: "각 표제어에 뜻을 하나 이상 입력해야 합니다."
         case .termRequired: "영단어 표제어를 입력해야 합니다."

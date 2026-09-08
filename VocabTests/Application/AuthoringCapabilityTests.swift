@@ -312,7 +312,7 @@ final class AuthoringCapabilityTests: XCTestCase {
         XCTAssertNil(firstStore.load())
     }
 
-    func testPersistedLeaseNeverAuthorizesANewRuntimeEpoch() throws {
+    func testValidatedPersistedLeaseReauthorizesNewLaunchEpoch() throws {
         let context = try makeContext()
         _ = insertWord(context: context, term: "epoch-word")
         let metadata = CloudBootstrapRecord(contentFingerprint: "epoch-fingerprint")
@@ -346,32 +346,66 @@ final class AuthoringCapabilityTests: XCTestCase {
         )
         let (session, questions) = try authorizedCoordinator.generateSession(mode: .loose, direction: .enToKo)
         let question = try XCTUnwrap(questions.first)
-        let oldLease = try XCTUnwrap(VocabMutationLeaseStore().load())
-
-        VocabMutationAuthorityRuntime.beginValidationEpoch()
-        VocabMutationLeaseStore().save(oldLease)
+        VocabMutationAuthorityRuntime.beginLaunchValidationEpoch()
 
         XCTAssertEqual(VocabMutationAuthorityRuntime.current, .integrityBlocked)
         XCTAssertFalse(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
+        XCTAssertTrue(VocabMutationAuthorityRuntime.restorePersistedAuthorization(
+            container: context.container,
+            context: context
+        ))
+        XCTAssertTrue(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
         let coordinator = LearningCoordinator(
             context: context,
             syncMode: .cloudKitPrivate,
             authoringCapability: .macAuthor,
             mutationAuthority: .allowed
         )
-        assertIntegrityBlocked {
-            try coordinator.commit(
-                answer: "뜻",
-                result: .correct,
-                automatic: .correct,
-                matchedMeaningID: question.word.activeMeanings.first?.id,
-                question: question,
-                session: session,
-                correction: nil
-            )
-        }
-        assertIntegrityBlocked { _ = try coordinator.addLooseWord(term: "blocked", meaningsText: "차단") }
-        assertIntegrityBlocked { _ = try coordinator.generateSession(mode: .loose, direction: .enToKo) }
+        try coordinator.commit(
+            answer: "뜻",
+            result: .correct,
+            automatic: .correct,
+            matchedMeaningID: question.word.activeMeanings.first?.id,
+            question: question,
+            session: session,
+            correction: nil
+        )
+        _ = try coordinator.addLooseWord(term: "allowed", meaningsText: "허용")
+        _ = try coordinator.generateSession(mode: .loose, direction: .enToKo)
+    }
+
+    func testMaintenanceAuditPreparationPreservesExistingAuthority() throws {
+        let context = try makeContext()
+        let metadata = CloudBootstrapRecord(contentFingerprint: "maintenance-fingerprint")
+        metadata.schemaVersion = VocabCloudReconciler.metadataSchemaVersion
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+        let receipt = VocabFullAuditReceipt(
+            formatVersion: VocabFullAuditReceipt.currentFormatVersion,
+            storeIdentity: VocabFullAuditReceipt.storeIdentity(for: context.container),
+            bootstrapUUID: metadata.bootstrapUUID,
+            schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
+            importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
+            canonicalFingerprint: "maintenance-canonical",
+            auditedAt: .now
+        )
+        let authorizedEpoch = VocabMutationAuthorityRuntime.prepareForFullAudit()
+        try VocabMutationAuthorityRuntime.authorize(
+            container: context.container,
+            context: context,
+            receipt: receipt,
+            validationEpoch: authorizedEpoch
+        )
+
+        let maintenanceEpoch = VocabMutationAuthorityRuntime.prepareForMaintenanceAudit(
+            container: context.container,
+            context: context
+        )
+
+        XCTAssertEqual(maintenanceEpoch, authorizedEpoch)
+        XCTAssertTrue(VocabMutationAuthorityRuntime.permitsMutation(container: context.container, context: context))
     }
 
     func testForegroundReentryKeepsAuthorizedLease() throws {

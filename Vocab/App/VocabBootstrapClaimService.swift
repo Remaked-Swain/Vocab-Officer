@@ -760,6 +760,7 @@ actor VocabSyncRuntimeStateStore {
     private enum Key {
         static let lastDiagnosticAt = "vocabSyncRuntime.lastDiagnosticAt"
         static let lastFullAuditAt = "vocabSyncRuntime.lastFullAuditAt"
+        static let fullAuditRequested = "vocabSyncRuntime.fullAuditRequested"
         static let reachedReady = "vocabSyncRuntime.reachedReady"
     }
 
@@ -788,10 +789,14 @@ actor VocabSyncRuntimeStateStore {
     }
 
     func shouldRunFullAudit(now: Date = .now) -> Bool {
-        VocabHydrationDiagnosticPolicy.fullAuditIsDue(
+        defaults.bool(forKey: Key.fullAuditRequested) || VocabHydrationDiagnosticPolicy.fullAuditIsDue(
             lastAuditAt: defaults.object(forKey: Key.lastFullAuditAt) as? Date,
             now: now
         )
+    }
+
+    func requestFullAudit() {
+        defaults.set(true, forKey: Key.fullAuditRequested)
     }
 
     func hasCompletedFullAudit() -> Bool {
@@ -800,10 +805,31 @@ actor VocabSyncRuntimeStateStore {
 
     func markFullAuditCompleted(at date: Date = .now) {
         defaults.set(date, forKey: Key.lastFullAuditAt)
+        defaults.set(false, forKey: Key.fullAuditRequested)
     }
 
     static func persistedLocalContentIsUsable(defaults: UserDefaults = .standard) -> Bool {
         defaults.bool(forKey: Key.reachedReady)
+    }
+}
+
+struct VocabMaintenanceTaskSlot: Equatable {
+    private(set) var generation: UUID?
+
+    mutating func begin(generation newGeneration: UUID = UUID()) -> UUID? {
+        guard generation == nil else { return nil }
+        generation = newGeneration
+        return newGeneration
+    }
+
+    mutating func cancel() {
+        generation = nil
+    }
+
+    mutating func complete(generation completedGeneration: UUID) -> Bool {
+        guard generation == completedGeneration else { return false }
+        generation = nil
+        return true
     }
 }
 
@@ -1207,8 +1233,10 @@ enum VocabHydrationDiagnosticPolicy {
 
     static func shouldRefresh(reason: VocabHydrationRefreshReason, state: VocabHydrationState) -> Bool {
         switch reason {
-        case .initial, .foreground, .manual, .remoteStoreChange, .successfulImport:
+        case .initial, .manual, .successfulImport:
             true
+        case .foreground, .remoteStoreChange:
+            false
         case .pollingTick(let sceneIsActive):
             shouldPoll(sceneIsActive: sceneIsActive, state: state)
         }
@@ -1227,10 +1255,7 @@ enum VocabHydrationDiagnosticPolicy {
         switch reason {
         case .initial, .manual, .successfulImport:
             return true
-        case .foreground:
-            guard let lastDiagnosticAt else { return true }
-            return now.timeIntervalSince(lastDiagnosticAt) >= ttl
-        case .remoteStoreChange:
+        case .foreground, .remoteStoreChange:
             return false
         case .pollingTick:
             return true

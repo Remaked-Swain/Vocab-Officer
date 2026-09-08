@@ -4,14 +4,28 @@ import XCTest
 
 @MainActor
 final class VocabCloudReconciliationTests: XCTestCase {
-    func testForegroundDiagnosticsAreThrottledWhileManualAndImportBypassTTL() {
+    func testCanceledMaintenanceTaskCannotClearReplacementTaskSlot() {
+        var slot = VocabMaintenanceTaskSlot()
+        let first = UUID()
+        let replacement = UUID()
+
+        XCTAssertEqual(slot.begin(generation: first), first)
+        slot.cancel()
+        XCTAssertEqual(slot.begin(generation: replacement), replacement)
+        XCTAssertFalse(slot.complete(generation: first))
+        XCTAssertEqual(slot.generation, replacement)
+        XCTAssertTrue(slot.complete(generation: replacement))
+        XCTAssertNil(slot.generation)
+    }
+
+    func testForegroundNeverStartsDiagnosticsWhileManualAndImportBypassTTL() {
         let now = Date(timeIntervalSince1970: 10_000)
         XCTAssertFalse(VocabHydrationDiagnosticPolicy.diagnosticIsDue(
             reason: .foreground,
             lastDiagnosticAt: now.addingTimeInterval(-60),
             now: now
         ))
-        XCTAssertTrue(VocabHydrationDiagnosticPolicy.diagnosticIsDue(
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.diagnosticIsDue(
             reason: .foreground,
             lastDiagnosticAt: now.addingTimeInterval(-901),
             now: now
@@ -239,6 +253,226 @@ final class VocabCloudReconciliationTests: XCTestCase {
         XCTAssertNotNil(try VocabFullAuditReceiptStore.load(from: receiptURL))
     }
 
+    func testForegroundImportUsesChangedIdentifiersWithoutWritingFullAuditReceipt() async throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "incremental")
+        let meaning = MeaningRecord(text: "증분")
+        meaning.word = word
+        word.appendMeaning(meaning)
+        let reviewState = ReviewStateRecord()
+        reviewState.word = word
+        word.reviewState = reviewState
+        context.insert(word)
+        context.insert(meaning)
+        context.insert(reviewState)
+        let metadata = readyMetadata()
+        metadata.expectedWordCount = 1
+        metadata.expectedMeaningCount = 1
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabIncrementalImport-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let indexURL = root.appendingPathComponent("index.json")
+        let receiptURL = root.appendingPathComponent("receipt.json")
+        let buffer = VocabImportedIdentifierBuffer(url: root.appendingPathComponent("ids.json"))
+        let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+        try VocabImportedChangeIndexStore.save(baseline, to: indexURL)
+
+        let attempt = makeAttempt(word: word, result: .incorrect, answeredAt: .now)
+        word.appendAttempt(attempt)
+        context.insert(attempt)
+        try context.save()
+        await buffer.capture([try XCTUnwrap(VocabChangedRecordID(attempt))])
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        let result = try await worker.reconcileImportedChanges(
+            syncMode: .cloudKitPrivate,
+            indexURL: indexURL,
+            auditReceiptURL: receiptURL,
+            identifierBuffer: buffer,
+            source: .trustedLocalIdentifiers,
+            allowsFullAudit: false
+        )
+
+        XCTAssertEqual(result.state, .ready)
+        let refreshed = ModelContext(context.container)
+        let refreshedState = try XCTUnwrap(refreshed.fetch(FetchDescriptor<ReviewStateRecord>()).first)
+        XCTAssertEqual(refreshedState.failureCheck, 1)
+        XCTAssertNil(try VocabFullAuditReceiptStore.load(from: receiptURL))
+        let remaining = await buffer.snapshot()
+        XCTAssertEqual(remaining, .empty)
+    }
+
+    func testForegroundImportDefersRequiredFullAuditAndPreservesPendingIdentifiers() async throws {
+        let context = try makeContext()
+        let metadata = readyMetadata()
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabDeferredAudit-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let buffer = VocabImportedIdentifierBuffer(url: root.appendingPathComponent("ids.json"))
+        await buffer.capture([], requiresFullAudit: true)
+        let suiteName = "VocabDeferredAudit-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let runtimeState = VocabSyncRuntimeStateStore(defaults: defaults)
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        let result = try await worker.reconcileImportedChanges(
+            syncMode: .cloudKitPrivate,
+            indexURL: root.appendingPathComponent("missing-index.json"),
+            auditReceiptURL: root.appendingPathComponent("receipt.json"),
+            identifierBuffer: buffer,
+            source: .trustedLocalIdentifiers,
+            allowsFullAudit: false,
+            runtimeStateStore: runtimeState
+        )
+
+        XCTAssertEqual(result.state, .ready)
+        let auditWasRequested = await runtimeState.shouldRunFullAudit()
+        XCTAssertTrue(auditWasRequested)
+        let pending = await buffer.snapshot()
+        XCTAssertTrue(pending.requiresFullAudit)
+    }
+
+    func testForegroundImportWithoutCapturedIdentifiersRequestsDeferredAudit() async throws {
+        let context = try makeContext()
+        let metadata = readyMetadata()
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabMissingImportIdentifiers-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let indexURL = root.appendingPathComponent("index.json")
+        let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+        try VocabImportedChangeIndexStore.save(baseline, to: indexURL)
+        let buffer = VocabImportedIdentifierBuffer(url: root.appendingPathComponent("ids.json"))
+        let suiteName = "VocabMissingImportIdentifiers-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let runtimeState = VocabSyncRuntimeStateStore(defaults: defaults)
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        let result = try await worker.reconcileImportedChanges(
+            syncMode: .cloudKitPrivate,
+            indexURL: indexURL,
+            auditReceiptURL: root.appendingPathComponent("receipt.json"),
+            identifierBuffer: buffer,
+            source: .trustedLocalIdentifiers,
+            allowsFullAudit: false,
+            runtimeStateStore: runtimeState
+        )
+
+        XCTAssertEqual(result.state, .ready)
+        let auditWasRequested = await runtimeState.shouldRunFullAudit()
+        XCTAssertTrue(auditWasRequested)
+    }
+
+    func testFailedMaintenanceAuditInvalidatesReceiptBeforeRelaunch() async throws {
+        let context = try makeContext()
+        let metadata = readyMetadata()
+        metadata.schemaVersion = VocabCloudReconciler.metadataSchemaVersion + 1
+        context.insert(metadata)
+        try context.save()
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabFailedMaintenanceAudit-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let receiptURL = root.appendingPathComponent("receipt.json")
+        let staleReceipt = VocabFullAuditReceipt(
+            formatVersion: VocabFullAuditReceipt.currentFormatVersion,
+            storeIdentity: VocabFullAuditReceipt.storeIdentity(for: context.container),
+            bootstrapUUID: metadata.bootstrapUUID,
+            schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
+            importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
+            canonicalFingerprint: "stale",
+            auditedAt: .now
+        )
+        try VocabFullAuditReceiptStore.save(staleReceipt, to: receiptURL)
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        do {
+            _ = try await worker.auditAll(
+                syncMode: .cloudKitPrivate,
+                indexURL: root.appendingPathComponent("index.json"),
+                auditReceiptURL: receiptURL
+            )
+            XCTFail("Expected unsupported schema to fail the maintenance audit")
+        } catch {
+            XCTAssertNotNil(error as? VocabCloudReconciliationError)
+        }
+
+        XCTAssertNil(try VocabFullAuditReceiptStore.load(from: receiptURL))
+        VocabMutationAuthorityRuntime.beginLaunchValidationEpoch()
+        XCTAssertFalse(VocabMutationAuthorityRuntime.restorePersistedAuthorization(
+            container: context.container,
+            context: context,
+            receiptURL: receiptURL
+        ))
+    }
+
+    func testTransientMaintenanceReceiptWriteFailurePreservesAuthority() async throws {
+        let context = try makeContext()
+        let metadata = readyMetadata()
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+        let receipt = VocabFullAuditReceipt(
+            formatVersion: VocabFullAuditReceipt.currentFormatVersion,
+            storeIdentity: VocabFullAuditReceipt.storeIdentity(for: context.container),
+            bootstrapUUID: metadata.bootstrapUUID,
+            schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
+            importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
+            canonicalFingerprint: "valid-before-transient-io-failure",
+            auditedAt: .now
+        )
+        let epoch = VocabMutationAuthorityRuntime.prepareForFullAudit()
+        try VocabMutationAuthorityRuntime.authorize(
+            container: context.container,
+            context: context,
+            receipt: receipt,
+            validationEpoch: epoch
+        )
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabTransientMaintenanceFailure-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let blockingFile = root.appendingPathComponent("not-a-directory")
+        try Data("block".utf8).write(to: blockingFile)
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+
+        do {
+            _ = try await worker.auditAll(
+                syncMode: .cloudKitPrivate,
+                indexURL: root.appendingPathComponent("index.json"),
+                auditReceiptURL: blockingFile.appendingPathComponent("receipt.json")
+            )
+            XCTFail("Expected receipt filesystem failure")
+        } catch {
+            XCTAssertNil(error as? VocabCloudReconciliationError)
+        }
+
+        XCTAssertTrue(VocabMutationAuthorityRuntime.permitsMutation(
+            container: context.container,
+            context: context
+        ))
+    }
+
     func testCooperativeAuditIgnoresSoftDeletedConflictingAttemptAcrossBatches() async throws {
         let context = try makeContext()
         let word = WordRecord(term: "active-only-replay")
@@ -427,6 +661,8 @@ final class VocabCloudReconciliationTests: XCTestCase {
     }
 
     func testIOSManualRefreshImportEventAndPollingLifecyclePolicy() {
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .foreground, state: .ready))
+        XCTAssertFalse(VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .remoteStoreChange, state: .ready))
         XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .manual, state: .failed))
         XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .successfulImport, state: .awaitingBootstrapMetadata))
         XCTAssertTrue(VocabHydrationDiagnosticPolicy.shouldRefresh(
