@@ -20,18 +20,23 @@ only when its scope applies to the current change.
 | CL-0009 | active | 2026-06-12 | review-mode previous-set re-exposure and 14+6 selection | [Previous-set review re-exposure](records/CL-0009-previous-set-review-reexposure.md) | retain while review-session selection exists |
 | CL-0010 | active | 2026-06-17 | parenthesized-comma meaning tracking and correction | [Parenthesized-comma meaning tracking](records/CL-0010-parenthesized-comma-meaning-tracking.md) | retain while correction and meaning-tracking behavior exists |
 | CL-0011 | active | 2026-06-24 | OCR intake, input IO and performance refactor | [OCR intake, input IO and performance refactor](records/CL-0011-ocr-intake-input-io-performance-refactor.md) | retain while OCR intake, paste intake or performance acceptance exists |
-| CL-0012 | active | 2026-06-28 | JIT role registration, ordered identity/hash handoffs, scoped verification and validated Recorder close; default-use rule partially superseded by CL-0015 | [Sequential agent handoffs](records/CL-0012-sequential-agent-handoffs.md) | retain while Codex Closed-Loop workflow exists |
+| CL-0012 | superseded | 2026-06-28 | historical four-role sequential handoffs; replaced by CL-0025 | [Sequential agent handoffs](records/CL-0012-sequential-agent-handoffs.md) | retain through 2026-12-02 |
 | CL-0013 | active | 2026-06-28 | `Vocab/Presentation/LibraryViews.swift` and review UI | [Review grid cards](records/CL-0013-review-grid-cards.md) | retain while review UI exists |
 | CL-0014 | active | 2026-07-14 | automatic batch iCloud sync, snapshot cursor and conflict stop | [Automatic batch iCloud sync](records/CL-0014-automatic-batch-icloud-sync.md) | retain while iCloud sync or migration behavior exists |
-| CL-0015 | active | 2026-07-14 | Director-gated Closed-Loop use, use/non-use criteria, main-agent orchestration boundary and role lifecycle | [Director-gated Closed-Loop use](records/CL-0015-director-gated-closed-loop.md) | retain while Codex Closed-Loop workflow exists |
+| CL-0015 | superseded | 2026-07-14 | historical Director-gated four-role workflow; replaced by CL-0025 | [Director-gated Closed-Loop use](records/CL-0015-director-gated-closed-loop.md) | retain through 2026-12-02 |
 | CL-0016 | active | 2026-07-14 | per-record SwiftData CloudKit mirroring, V3 export receipt, tuple recovery, canonical fingerprint and migration safety | [Per-record CloudKit mirroring migration](records/CL-0016-per-record-cloudkit-mirroring.md) | code-level approved; real-device CloudKit export/import and bidirectional propagation pending |
-| CL-0017 | active | 2026-07-15 | CloudKit reconcile scheduling, bounded hydration polling, actor isolation and changed-only persistence | [CloudKit reconciliation scheduling](records/CL-0017-cloudkit-reconciliation-scheduling.md) | retain while per-record CloudKit reconciliation and hydration scheduling exist |
-| CL-0018 | active | 2026-07-15 | run-scoped role-agent reuse, sequential activation and terminal-only session close | [Run-scoped role agent reuse](records/CL-0018-run-scoped-role-agent-reuse.md) | retain while Codex Closed-Loop workflow exists |
+| CL-0017 | active | 2026-07-15 | CloudKit reconcile scheduling and actor isolation; foreground/import audit scheduling partially superseded by CL-0026 | [CloudKit reconciliation scheduling](records/CL-0017-cloudkit-reconciliation-scheduling.md) | retain while per-record CloudKit reconciliation and hydration scheduling exist |
+| CL-0018 | superseded | 2026-07-15 | historical four-role session reuse; replaced by CL-0025 | [Run-scoped role agent reuse](records/CL-0018-run-scoped-role-agent-reuse.md) | retain through 2026-12-02 |
 | CL-0019 | active | 2026-07-18 | explicit `Vocab.store` recovery, fail-closed CloudKit write authorization and automatic replica refresh limitation superseded by CL-0020 | [Explicit recovery and CloudKit write safety](records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md) | retain while mirrored-store recovery or CloudKit authoring exists |
 | CL-0020 | active | 2026-07-18 | foreground-safe automatic `Vocab.store` recovery-replica refresh, background-safe scheduling and publication guards | [Foreground-safe recovery replica refresh](records/CL-0020-foreground-safe-recovery-replica-refresh.md) | retain while automatic recovery-replica refresh or mirrored-store recovery exists |
 | CL-0021 | active | 2026-07-18 | macOS foreground authoring continuity, mutation authority validation and MemoryAid/Gemini response quality | [Foreground authoring and MemoryAid quality](records/CL-0021-foreground-authoring-and-memory-aid-quality.md) | retain while CloudKit authoring authorization or MemoryAid generation exists |
 | CL-0022 | active | 2026-07-18 | iOS ready/audited mirrored-store learning facts, Mac-only vocabulary authoring, foreground epoch continuity and mutation-lease test isolation | [iOS learning facts offline authority](records/CL-0022-ios-learning-facts-offline-authority.md) | retain while iOS learning sessions or CloudKit mutation authorization exist |
-| CL-0023 | active | 2026-07-18 | iCloud/SwiftData store notifications, mutation authority continuity and metadata fingerprint handling | [Store notification mutation authority](records/CL-0023-store-notification-mutation-authority.md) | retain while CloudKit mutation authorization or SwiftData mirroring exists |
+| CL-0023 | active | 2026-07-18 | store notifications and mutation authority; successful-import invalidation partially superseded by CL-0026 | [Store notification mutation authority](records/CL-0023-store-notification-mutation-authority.md) | retain while CloudKit mutation authorization or SwiftData mirroring exists |
+| CL-0024 | active | 2026-07-31 | four-choice test format, distractor generation, Mac/iOS test UX and sync payload compatibility | [Multiple choice test mode](records/CL-0024-multiple-choice-test-mode.md) | retain while multiple-choice testing exists |
+| CL-0025 | active | 2026-09-03 | main-agent implementation, one read-only Auditor, two-role pipeline and scoped durable evidence | [Main and Auditor Closed-Loop](records/CL-0025-main-auditor-closed-loop.md) | retain while Codex workflow uses this harness |
+| CL-0026 | active | 2026-09-03 | foreground-safe changed-ID CloudKit import reconciliation and deferred full audit | [Foreground incremental Cloud import](records/CL-0026-foreground-incremental-cloud-import.md) | retain while per-record CloudKit synchronization exists |
+| CL-0027 | active | 2026-09-04 | unbounded Auditor rejection and Main rework loop | [Unbounded Auditor rework](records/CL-0027-unbounded-auditor-rework.md) | retain while Codex workflow uses this harness |
+| CL-0028 | active | 2026-09-04 | Swift conventions, objective style checks, and contextual audit | [Swift coding conventions](records/CL-0028-swift-coding-conventions.md) | retain while Swift code is maintained |
 
 ## Load Rules
 
@@ -52,18 +57,19 @@ only when its scope applies to the current change.
   must load `CL-0006`.
 - Review-session previous-set recurrence or its 14+6 selection rule must load
   `CL-0009`.
-- Any future task that considers Closed-Loop must apply `CL-0015`: Closed-Loop
-  is not the default, and the Director records the use or non-use reason.
-- Any future Closed-Loop task must apply `CL-0012` for JIT role registration,
-  hash-token handoffs, rejection routing and validated Recorder close.
-- Any future Closed-Loop task must apply `CL-0018`: bind each role once when it
-  first becomes eligible, reuse that agent for the rest of the run, and close
-  retained agents only after validated terminal closure.
+- Any future code, persistence, sync, security, data-safety, release, or harness
+  change must apply `CL-0025`: the main agent implements and one read-only
+  Auditor reviews. Simple questions, read-only inspection, and command-only
+  operations remain main-only. Apply `CL-0027` to rejection handling: retry
+  count is diagnostic only and never terminates review.
 - Any future Closed-Loop task must also apply `CL-0002`; reading its full record is
   required only when changing workflow, retention or verification rules.
 - Any future task that uses agents or edits the app must apply `CL-0007`.
   Reading its full record is required when changing session bootstrap, sandbox
   handling, root-path handling or implementation tooling rules.
+- Any Swift implementation or review must load `CL-0028` and
+  `Docs/SwiftStyleGuide.md`, run the objective style checker, and include the
+  contextual conventions in Auditor review.
 - iCloud, iPhone sync, CloudKit, migration, cross-device data-loss or sync
   conflict work must load `CL-0014` and `Docs/iCloudIOSSyncPlan.md`.
 - Per-record CloudKit mirroring, mirrored-store migration, CloudKit-backed
@@ -80,7 +86,9 @@ only when its scope applies to the current change.
   must also load `CL-0022`.
 - Generic SwiftData/CloudKit store notifications, mutation-authority
   invalidation, full-audit receipt invalidation or metadata fingerprint gating
-  must also load `CL-0023`.
+  must also load `CL-0023` and `CL-0026`.
+- Multiple-choice test behavior, distractors, question-format persistence, or
+  Mac/iOS choice UX must also load `CL-0024`.
 - MemoryAid, Gemini prompt, repair prompt, response budget, cache-version or
   MemoryAid quality-gate work must also load `CL-0021`.
 - Superseded or archived records are read only when investigating regression,

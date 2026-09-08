@@ -265,7 +265,7 @@
     {
       "id": "CL-0012",
       "type": "decision",
-      "status": "active",
+      "status": "superseded",
       "retentionClass": "audit",
       "title": "Sequential agent handoffs",
       "date": "2026-06-28",
@@ -274,7 +274,7 @@
       "path": "Docs/ClosedLoop/records/CL-0012-sequential-agent-handoffs.md",
       "references": ["CL-0002", "CL-0007"],
       "supersedes": [],
-      "supersededBy": null,
+      "supersededBy": "CL-0025",
       "partiallySupersededBy": [
         {"id": "CL-0015", "scope": ["Closed-Loop default-use rule"]},
         {"id": "CL-0018", "scope": ["closing and respawning healthy role sessions at each handoff"]}
@@ -283,7 +283,7 @@
         {"id": "CL-0002", "scope": ["independent pre-spawn of all roles before predecessor artifact registration"]},
         {"id": "CL-0007", "scope": ["pre-spawn agent briefing instead of just-in-time eligible-role briefing"]}
       ],
-      "retentionUntil": null,
+      "retentionUntil": "2026-12-02",
       "protected": true,
       "unresolvedLimitations": ["shell enforcement cannot spawn or close external Codex agents; orchestrator lifecycle rules must run alongside the repository-local pipeline"]
     },
@@ -324,7 +324,7 @@
     {
       "id": "CL-0015",
       "type": "decision",
-      "status": "active",
+      "status": "superseded",
       "retentionClass": "audit",
       "title": "Director-gated Closed-Loop use",
       "date": "2026-07-14",
@@ -333,9 +333,9 @@
       "path": "Docs/ClosedLoop/records/CL-0015-director-gated-closed-loop.md",
       "references": ["CL-0002", "CL-0007", "CL-0012"],
       "supersedes": [],
-      "supersededBy": null,
+      "supersededBy": "CL-0025",
       "partiallySupersedes": [{"id": "CL-0012", "scope": ["Closed-Loop default-use rule"]}],
-      "retentionUntil": null,
+      "retentionUntil": "2026-12-02",
       "protected": true,
       "unresolvedLimitations": ["repository scripts cannot prevent external orchestrators from bypassing the main-agent orchestration boundary"]
     },
@@ -369,6 +369,7 @@
       "references": ["CL-0002", "CL-0016"],
       "supersedes": [],
       "supersededBy": null,
+      "partiallySupersededBy": [{"id": "CL-0026", "scope": ["foreground and successful-import full-audit scheduling"]}],
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["the UI heartbeat regression fixture uses 1,000 words and does not replace the separate 10,000-word full-reconciliation performance acceptance measurement"]
@@ -376,7 +377,7 @@
     {
       "id": "CL-0018",
       "type": "decision",
-      "status": "active",
+      "status": "superseded",
       "retentionClass": "audit",
       "title": "Run-scoped role agent reuse",
       "date": "2026-07-15",
@@ -385,9 +386,9 @@
       "path": "Docs/ClosedLoop/records/CL-0018-run-scoped-role-agent-reuse.md",
       "references": ["CL-0002", "CL-0012", "CL-0015"],
       "supersedes": [],
-      "supersededBy": null,
+      "supersededBy": "CL-0025",
       "partiallySupersedes": [{"id": "CL-0012", "scope": ["closing and respawning healthy role sessions at each handoff"]}],
-      "retentionUntil": null,
+      "retentionUntil": "2026-12-02",
       "protected": true,
       "unresolvedLimitations": ["repository scripts cannot directly keep external Codex agent sessions alive; the orchestrator must honor the run-scoped role-to-agent map"]
     },
@@ -474,9 +475,101 @@
       "references": ["CL-0016", "CL-0019", "CL-0021", "CL-0022"],
       "supersedes": [],
       "supersededBy": null,
+      "partiallySupersededBy": [{"id": "CL-0026", "scope": ["successful-import mutation-authority invalidation"]}],
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["presentation notification handlers are covered by policy/runtime tests rather than a rendered SwiftUI notification integration fixture", "real-device private-CloudKit propagation remains pending under CL-0016"]
+    },
+    {
+      "id": "CL-0024",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Multiple choice test mode",
+      "date": "2026-07-31",
+      "tags": ["testing", "multiple-choice", "distractors", "macos", "ios", "sync"],
+      "affectedPaths": ["Vocab/Domain/", "Vocab/Application/", "Vocab/Data/", "Vocab/Presentation/", "VocabIOS/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0024-multiple-choice-test-mode.md",
+      "references": ["CL-0001", "CL-0005", "CL-0016"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["long Korean meaning choices still require real-device layout acceptance"]
+    },
+    {
+      "id": "CL-0025",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "audit",
+      "title": "Main and Auditor Closed-Loop",
+      "date": "2026-09-03",
+      "tags": ["closed-loop", "main-agent", "auditor", "hash-chain", "token-efficiency", "record-integrity"],
+      "affectedPaths": ["AGENTS.md", "Docs/ClosedLoop/", "Docs/Verification.md", "script/closed_loop_pipeline.sh", "script/closed_loop_records.sh", "script/verify_changed.sh"],
+      "path": "Docs/ClosedLoop/records/CL-0025-main-auditor-closed-loop.md",
+      "references": ["CL-0002", "CL-0007"],
+      "supersedes": ["CL-0012", "CL-0015", "CL-0018"],
+      "supersededBy": null,
+      "partiallySupersededBy": [{"id": "CL-0027", "scope": ["rejection-limit policy"]}],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["repository scripts cannot create or constrain external Codex subagents; the orchestrator must obey AGENTS.md"]
+    },
+    {
+      "id": "CL-0026",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Foreground incremental Cloud import",
+      "date": "2026-09-03",
+      "tags": ["icloud", "cloudkit", "foreground", "incremental", "changed-identifiers", "deferred-audit", "performance"],
+      "affectedPaths": ["Vocab/App/VocabBootstrapClaimService.swift", "Vocab/Application/LearningCoordinator.swift", "Vocab/Presentation/RootView.swift", "VocabIOS/Presentation/VocabIOSRootView.swift", "VocabTests/App/VocabCloudReconciliationTests.swift", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0026-foreground-incremental-cloud-import.md",
+      "references": ["CL-0016", "CL-0025"],
+      "supersedes": [],
+      "supersededBy": null,
+      "partiallySupersedes": [
+        {"id": "CL-0017", "scope": ["foreground and successful-import full-audit scheduling"]},
+        {"id": "CL-0023", "scope": ["successful-import mutation-authority invalidation"]}
+      ],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["SwiftData lacks a stable public persistent-history token API, so unresolved identifiers require deferred full audit"]
+    },
+    {
+      "id": "CL-0027",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "audit",
+      "title": "Unbounded Auditor rework",
+      "date": "2026-09-04",
+      "tags": ["closed-loop", "auditor", "rejection", "rework", "termination-policy"],
+      "affectedPaths": ["AGENTS.md", "Docs/ClosedLoop/", "script/closed_loop_pipeline.sh"],
+      "path": "Docs/ClosedLoop/records/CL-0027-unbounded-auditor-rework.md",
+      "references": ["CL-0002", "CL-0025"],
+      "supersedes": [],
+      "supersededBy": null,
+      "partiallySupersedes": [{"id": "CL-0025", "scope": ["rejection-limit policy"]}],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["the repository harness cannot determine whether an external-state blocker requires user action"]
+    },
+    {
+      "id": "CL-0028",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "audit",
+      "title": "Swift coding conventions",
+      "date": "2026-09-04",
+      "tags": ["swift", "coding-conventions", "style-check", "audit", "quality"],
+      "affectedPaths": ["AGENTS.md", "Docs/SwiftStyleGuide.md", "Docs/Verification.md", "Docs/ClosedLoop/", "script/swift_style_check.sh", "script/verify_changed.sh", "Vocab/", "VocabIOS/", "VocabTests/"],
+      "path": "Docs/ClosedLoop/records/CL-0028-swift-coding-conventions.md",
+      "references": ["CL-0002", "CL-0007", "CL-0025", "CL-0027"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["semantic convention decisions require Auditor judgement"]
     }
   ]
 }
