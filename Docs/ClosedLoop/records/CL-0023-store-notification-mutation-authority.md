@@ -6,6 +6,7 @@
 | Date | 2026-07-18 (Asia/Seoul) |
 | Scope | iCloud/SwiftData store notifications, mutation authority continuity, metadata fingerprint handling |
 | Agents | Director, Executor, Monitor, Recorder |
+| Partially superseded by | CL-0026 for successful-import authority invalidation |
 | Archive review | retain while CloudKit mutation authorization or SwiftData mirroring exists |
 
 ## Decision

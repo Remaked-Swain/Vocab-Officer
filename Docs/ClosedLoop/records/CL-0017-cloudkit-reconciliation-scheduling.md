@@ -6,6 +6,7 @@
 | Date | 2026-07-15 (Asia/Seoul) |
 | Scope | macOS/iOS CloudKit remote-change handling, hydration polling, SwiftData reconciliation concurrency and write minimization |
 | Agents | Director, Executor, Monitor, Recorder |
+| Partially superseded by | CL-0026 for foreground/import full-audit scheduling |
 | Archive review | retain while per-record CloudKit reconciliation and hydration scheduling exist |
 
 ## Decision
