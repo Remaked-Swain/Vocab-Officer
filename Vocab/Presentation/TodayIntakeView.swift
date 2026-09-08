@@ -34,7 +34,7 @@ struct TodayIntakeView: View {
                 VStack(alignment: .leading) {
                     Text("오늘 입력")
                         .font(.largeTitle.weight(.semibold))
-                    Text("오늘 학습할 100개 항목을 등록하세요. 기존 표제어는 같은 단어에 새 뜻만 누적됩니다.")
+                    Text("오늘 학습할 단어를 최대 100개까지 등록하세요. 모자란 분량은 같은 날짜 세트에 나중에 이어서 저장할 수 있습니다.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
@@ -83,7 +83,7 @@ struct TodayIntakeView: View {
         VStack(alignment: .leading, spacing: 14) {
             GroupBox("단어장 캡쳐본에서 텍스트 추출") {
                 VStack(alignment: .leading, spacing: 12) {
-                    Text("이미지를 여러 장 선택하면 macOS Vision OCR로 로컬에서 추출한 뒤 앱 입력 형식으로 정리합니다. 저장 전 반드시 100개 인식 결과를 직접 검수하세요.")
+                    Text("이미지를 여러 장 선택하면 macOS Vision OCR로 로컬에서 추출한 뒤 앱 입력 형식으로 정리합니다. 저장 전 인식 결과를 원본과 대조하세요.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                     HStack {
@@ -117,7 +117,7 @@ struct TodayIntakeView: View {
                     .font(.title2.monospacedDigit().weight(.semibold))
                     .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
                 Spacer()
-                Button("검수한 100개 저장") {
+                Button("검수한 단어 저장") {
                     save(pasteAnalysis.drafts)
                 }
                 .keyboardShortcut(.return, modifiers: .command)
@@ -137,7 +137,7 @@ struct TodayIntakeView: View {
 
     private var pasteEntry: some View {
         VStack(alignment: .leading, spacing: 14) {
-            GroupBox("100개 일괄 붙여넣기") {
+            GroupBox("단어 일괄 붙여넣기") {
                 VStack(alignment: .leading, spacing: 12) {
                     Text("형식: 0001-well-known-널리 알려진 또는 sample<TAB>표본, 예시")
                         .font(.body)
@@ -162,7 +162,7 @@ struct TodayIntakeView: View {
                     .font(.title2.monospacedDigit().weight(.semibold))
                     .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
                 Spacer()
-                Button("붙여넣은 100개 저장") {
+                Button("붙여넣은 단어 저장") {
                     save(pasteAnalysis.drafts)
                 }
                 .keyboardShortcut(.return, modifiers: .command)
@@ -210,21 +210,25 @@ struct TodayIntakeView: View {
 
             HStack {
                 Spacer()
-                Button("직접 입력한 100개 저장") {
+                Button("입력한 단어 저장") {
                     save(drafts)
                 }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)
-                .disabled(filledCount != 100)
+                .disabled(filledCount == 0)
             }
         }
     }
 
     private func save(_ values: [WordDraft]) {
         do {
-            try LearningCoordinator(context: context).saveDailySet(values)
-            message = "Asia/Seoul 기준 오늘의 신규 100단어 세트를 저장했습니다."
+            let set = try LearningCoordinator(context: context).saveDailySet(values)
+            let count = set.allItems.filter { $0.deletedAt == nil }.count
+            message = "Asia/Seoul 기준 오늘 세트에 저장했습니다. 현재 \(count) / 100개입니다."
             isError = false
+            pastedText = ""
+            pasteAnalysis = .empty
+            drafts = (0..<100).map { _ in WordDraft() }
         } catch {
             message = error.localizedDescription
             isError = true
@@ -256,11 +260,11 @@ struct TodayIntakeView: View {
         case .manual:
             items.append(
                 FeedbackItem(
-                    text: filledCount == 100
-                        ? "100개가 채워졌습니다. 바로 저장할 수 있습니다."
-                        : "직접 입력은 100개를 모두 채워야 저장할 수 있습니다.",
-                    systemImage: filledCount == 100 ? "checkmark.circle.fill" : "info.circle",
-                    color: filledCount == 100 ? .green : .secondary
+                    text: filledCount > 0
+                        ? "\(filledCount)개를 오늘 세트에 저장할 수 있습니다."
+                        : "단어를 1개 이상 입력하세요.",
+                    systemImage: filledCount > 0 ? "checkmark.circle.fill" : "info.circle",
+                    color: filledCount > 0 ? .green : .secondary
                 )
             )
         }
@@ -278,12 +282,16 @@ struct TodayIntakeView: View {
         }
         do {
             let drafts = try DailyIntakePasteParser.parse(text)
-            if drafts.count == 100 {
-                return PasteAnalysis(drafts: drafts, status: "100개가 확인되었습니다. 바로 저장할 수 있습니다.", isReady: true)
-            }
             let missingNumbers = missingNumberHint(from: text)
             let suffix = missingNumbers.isEmpty ? "" : " 누락 의심 번호: \(missingNumbers.joined(separator: ", "))"
-            return PasteAnalysis(drafts: drafts, status: "\(drafts.count)개가 인식되었습니다. 정확히 100개가 필요합니다.\(suffix)", isReady: false)
+            if drafts.count <= 100 {
+                return PasteAnalysis(
+                    drafts: drafts,
+                    status: "\(drafts.count)개가 확인되었습니다. 오늘 세트에 저장할 수 있습니다.\(suffix)",
+                    isReady: true
+                )
+            }
+            return PasteAnalysis(drafts: drafts, status: "\(drafts.count)개가 인식되었습니다. 한 번에 최대 100개까지 저장할 수 있습니다.\(suffix)", isReady: false)
         } catch {
             return PasteAnalysis(drafts: [], status: error.localizedDescription, isReady: false)
         }
@@ -352,7 +360,7 @@ struct TodayIntakeView: View {
 }
 
 private struct PasteAnalysis {
-    static let empty = PasteAnalysis(drafts: [], status: "100개 단어를 한 번에 붙여넣으세요.", isReady: false)
+    static let empty = PasteAnalysis(drafts: [], status: "1~100개 단어를 붙여넣으세요.", isReady: false)
 
     let drafts: [WordDraft]
     let status: String

@@ -117,7 +117,7 @@ final class DailySetRecord {
         items = allItems + [item]
     }
 
-    var isComplete: Bool { allItems.count == 100 }
+    var isComplete: Bool { allItems.filter { $0.deletedAt == nil }.count == 100 }
 }
 
 @Model

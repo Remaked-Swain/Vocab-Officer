@@ -569,18 +569,23 @@ final class LearningCoordinator {
         NotificationCenter.default.post(name: .vocabLearningStoreDidChange, object: nil)
     }
 
-    func saveDailySet(_ drafts: [WordDraft], date: Date = .now) throws {
+    @discardableResult
+    func saveDailySet(_ drafts: [WordDraft], date: Date = .now) throws -> DailySetRecord {
         try requireLearningFactWriting()
         try requireVocabularyAuthoring()
         let validDrafts = drafts.filter { !$0.term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard validDrafts.count == 100 else {
-            throw LearningError.dailySetRequiresExactly100
+        guard !validDrafts.isEmpty, validDrafts.count <= 100 else {
+            throw LearningError.dailySetCountOutOfRange
         }
         let day = SeoulCalendar.day(for: date)
         let existingSet = try context.fetch(FetchDescriptor<DailySetRecord>(predicate: #Predicate {
             $0.seoulDay == day && $0.deletedAt == nil
         })).first
-        guard existingSet == nil else { throw LearningError.dailySetAlreadyExists }
+        let existingItemCount = existingSet?.allItems.filter { $0.deletedAt == nil }.count ?? 0
+        guard existingItemCount < 100 else { throw LearningError.dailySetAlreadyExists }
+        guard existingItemCount + validDrafts.count <= 100 else {
+            throw LearningError.dailySetExceeds100(remaining: 100 - existingItemCount)
+        }
         let allWords = try context.fetch(FetchDescriptor<WordRecord>())
         var wordsByNormalizedTerm: [String: WordRecord] = [:]
         for word in allWords where word.deletedAt == nil {
@@ -595,7 +600,7 @@ final class LearningCoordinator {
         }
         guard prepared.allSatisfy({ !$0.meanings.isEmpty }) else { throw LearningError.meaningRequired }
 
-        let set = DailySetRecord(seoulDay: day, createdAt: date)
+        let set = existingSet ?? DailySetRecord(seoulDay: day, createdAt: date)
         for (index, preparedDraft) in prepared.enumerated() {
             let word: WordRecord
             let isNewHeadword: Bool
@@ -623,55 +628,75 @@ final class LearningCoordinator {
                 word.appendMeaning(meaning)
                 existingMeanings.insert(normalizedMeaning)
             }
-            let item = DailySetItemRecord(orderIndex: index, entryKind: isNewHeadword ? "newHeadword" : "reusedHeadword", wordID: word.id)
+            let item = DailySetItemRecord(orderIndex: existingItemCount + index, entryKind: isNewHeadword ? "newHeadword" : "reusedHeadword", wordID: word.id)
             item.set = set
             set.appendItem(item)
             context.insert(item)
         }
-        set.completedAt = date
-        context.insert(set)
+        set.completedAt = existingItemCount + validDrafts.count == 100 ? date : nil
+        set.updatedAt = date
+        if existingSet == nil { context.insert(set) }
         try saveAndNotifyChange()
         invalidateSessionCandidateCache()
+        return set
     }
 
     @discardableResult
     func addLooseWord(term: String, meaningsText: String, date: Date = .now) throws -> WordRecord {
+        let words = try addLooseWords([WordDraft(term: term, meanings: meaningsText)], date: date)
+        guard let word = words.first else { throw LearningError.termRequired }
+        return word
+    }
+
+    @discardableResult
+    func addLooseWords(_ drafts: [WordDraft], date: Date = .now) throws -> [WordRecord] {
         try requireLearningFactWriting()
         try requireVocabularyAuthoring()
-        let trimmedTerm = term.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTerm.isEmpty else { throw LearningError.termRequired }
-        let normalizedTerm = TextNormalizer.normalizeEnglish(trimmedTerm)
-        let meaningValues = MeaningTextSplitter.split(meaningsText)
-        guard !meaningValues.isEmpty else { throw LearningError.meaningRequired }
-
-        let existing = try context.fetch(FetchDescriptor<WordRecord>()).first {
-            $0.deletedAt == nil && $0.normalizedTerm == normalizedTerm
+        guard !drafts.isEmpty else { throw LearningError.termRequired }
+        let prepared = try drafts.map { draft -> (term: String, normalizedTerm: String, meanings: [String]) in
+            let term = draft.term.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !term.isEmpty else { throw LearningError.termRequired }
+            let meanings = MeaningTextSplitter.split(draft.meanings)
+            guard !meanings.isEmpty else { throw LearningError.meaningRequired }
+            return (term, TextNormalizer.normalizeEnglish(term), meanings)
         }
-        let word: WordRecord
-        if let existing {
-            word = existing
-            if word.reviewState == nil {
-                word.reviewState = ReviewStateRecord()
+        var wordsByNormalizedTerm: [String: WordRecord] = [:]
+        for word in try activeWords() {
+            wordsByNormalizedTerm[word.normalizedTerm] = word
+        }
+        var savedWords: [WordRecord] = []
+        savedWords.reserveCapacity(prepared.count)
+
+        for value in prepared {
+            let word: WordRecord
+            if let existing = wordsByNormalizedTerm[value.normalizedTerm] {
+                word = existing
+                if word.reviewState == nil {
+                    word.reviewState = ReviewStateRecord()
+                }
+            } else {
+                let newWord = WordRecord(term: value.term, createdAt: date)
+                newWord.reviewState = ReviewStateRecord()
+                context.insert(newWord)
+                wordsByNormalizedTerm[value.normalizedTerm] = newWord
+                word = newWord
             }
-        } else {
-            let newWord = WordRecord(term: trimmedTerm, createdAt: date)
-            newWord.reviewState = ReviewStateRecord()
-            context.insert(newWord)
-            word = newWord
-        }
 
-        var existingMeanings = Set(word.activeMeanings.map(\.normalizedText))
-        for value in meaningValues {
-            let normalizedMeaning = TextNormalizer.normalizeKorean(value)
-            guard existingMeanings.insert(normalizedMeaning).inserted else { continue }
-            let meaning = MeaningRecord(text: value)
-            meaning.word = word
-            word.appendMeaning(meaning)
-            context.insert(meaning)
+            var existingMeanings = Set(word.activeMeanings.map(\.normalizedText))
+            for meaningText in value.meanings {
+                let normalizedMeaning = TextNormalizer.normalizeKorean(meaningText)
+                guard existingMeanings.insert(normalizedMeaning).inserted else { continue }
+                let meaning = MeaningRecord(text: meaningText)
+                meaning.word = word
+                word.appendMeaning(meaning)
+                context.insert(meaning)
+            }
+            word.updatedAt = date
+            savedWords.append(word)
         }
         try saveAndNotifyChange()
         invalidateSessionCandidateCache()
-        return word
+        return savedWords
     }
 
     func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now, format: QuestionFormat = .typed) throws -> (TestSessionRecord, [SessionQuestion]) {
@@ -695,6 +720,7 @@ final class LearningCoordinator {
         var selected: [WordRecord] = []
         func setWords(for items: [DailySetItemRecord]) -> [WordRecord] {
             uniqueWords(items
+                .filter { $0.deletedAt == nil }
                 .sorted { $0.orderIndex < $1.orderIndex }
                 .compactMap { wordsByID[$0.wordID] })
         }
@@ -712,9 +738,17 @@ final class LearningCoordinator {
             }
             return reviewOrder(review, exposure: exposure)
         }
+        let linkedWordIDs = Set(sets.flatMap(\.allItems).filter { $0.deletedAt == nil }.map(\.wordID))
+        let looseCandidates = fairOrder(
+            words.filter { !linkedWordIDs.contains($0.id) },
+            exposure: exposure
+        )
         switch mode {
         case .today:
-            selected = Array(referenceCandidates().prefix(20))
+            let reference = referenceCandidates()
+            selected = Array(reference.prefix(looseCandidates.isEmpty ? 20 : 16))
+            appendUnique(from: looseCandidates, to: &selected, limit: 20)
+            appendUnique(from: reference, to: &selected, limit: 20)
         case .set:
             guard let setID, let selectedSet = sets.first(where: { $0.id == setID }) else {
                 throw LearningError.setRequired
@@ -724,12 +758,7 @@ final class LearningCoordinator {
                 + fairOrder(selectedSetWords.filter { allPresentedIDs.contains($0.id) }, exposure: exposure)
             selected = Array(prioritized.prefix(20))
         case .loose:
-            let linkedWordIDs = Set(sets.flatMap(\.allItems).map(\.wordID))
-            let loose = fairOrder(
-                words.filter { !linkedWordIDs.contains($0.id) },
-                exposure: exposure
-            )
-            selected = Array(loose.prefix(20))
+            selected = Array(looseCandidates.prefix(20))
         case .review:
             let orderedReview = orderedReviewCandidates()
             let previousSetCandidates = fairOrder(setWords(for: previousSet?.items ?? []), exposure: exposure)
@@ -751,7 +780,8 @@ final class LearningCoordinator {
                 exposure: exposure
             )
             selected = Array(reference.prefix(12))
-            appendUnique(from: orderedReview, to: &selected, limit: min(18, 20))
+            appendUnique(from: orderedReview, to: &selected, limit: 17)
+            appendUnique(from: looseCandidates, to: &selected, limit: 20)
             appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
             appendUnique(from: reference, to: &selected, limit: 20)
             appendUnique(from: orderedReview, to: &selected, limit: 20)

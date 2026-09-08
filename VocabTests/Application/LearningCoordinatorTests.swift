@@ -142,18 +142,40 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertThrowsError(try DailyIntakePasteParser.parse("형식이 없는 단어 행"))
     }
 
-    func testDailySetRejectsNinetyNineAndAcceptsExactlyOneHundredWords() throws {
+    func testDailySetAllowsPartialSaveAndCompletesAtOneHundredWords() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
 
-        XCTAssertThrowsError(try coordinator.saveDailySet(drafts(count: 99), date: testDate))
+        let partial = try coordinator.saveDailySet(drafts(count: 99), date: testDate)
 
-        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        XCTAssertEqual(partial.allItems.count, 99)
+        XCTAssertFalse(partial.isComplete)
+        XCTAssertNil(partial.completedAt)
 
+        let completed = try coordinator.saveDailySet(drafts(count: 1, prefix: "completion"), date: testDate)
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 100)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<DailySetRecord>()).count, 1)
+        XCTAssertEqual(completed.allItems.count, 100)
+        XCTAssertTrue(completed.isComplete)
+        XCTAssertNotNil(completed.completedAt)
+    }
+
+    func testDailySetRejectsInputBeyondRemainingCapacity() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.saveDailySet(drafts(count: 99), date: testDate)
+
+        XCTAssertThrowsError(
+            try coordinator.saveDailySet(drafts(count: 2, prefix: "overflow"), date: testDate)
+        ) { error in
+            guard case LearningError.dailySetExceeds100(let remaining) = error else {
+                return XCTFail("Expected remaining-capacity error, got \(error)")
+            }
+            XCTAssertEqual(remaining, 1)
+        }
+
         let set = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first)
-        XCTAssertEqual(set.allItems.count, 100)
-        XCTAssertTrue(set.isComplete)
+        XCTAssertEqual(set.allItems.count, 99)
     }
 
     func testRepeatedHeadwordsReuseSingleWordAndMergeNewMeanings() throws {
@@ -195,7 +217,7 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(set.allItems.count, 100)
         XCTAssertFalse(try context.fetch(FetchDescriptor<DailySetItemRecord>()).contains { $0.wordID == loose.id })
         let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
-        XCTAssertFalse(generated.1.contains { $0.word.id == loose.id })
+        XCTAssertTrue(generated.1.contains { $0.word.id == loose.id })
     }
 
     func testLooseWordCanBeTestedWithoutDailySet() throws {
@@ -208,6 +230,36 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(generated.1.map(\.word.id), [loose.id])
         XCTAssertTrue(generated.0.wasReduced)
         XCTAssertEqual(generated.0.modeRaw, SessionMode.loose.rawValue)
+    }
+
+    func testLooseWordsCanBeBatchSavedAndMergeDuplicateMeanings() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        _ = try coordinator.addLooseWord(term: "alpha", meaningsText: "기존뜻", date: testDate)
+
+        let saved = try coordinator.addLooseWords([
+            WordDraft(term: "ALPHA", meanings: "기존뜻, 새뜻"),
+            WordDraft(term: "beta", meanings: "두번째뜻")
+        ], date: testDate)
+
+        XCTAssertEqual(saved.count, 2)
+        XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 2)
+        let alpha = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.normalizedTerm == "alpha" })
+        XCTAssertEqual(Set(alpha.activeMeanings.map(\.text)), ["기존뜻", "새뜻"])
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetItemRecord>()).isEmpty)
+    }
+
+    func testLooseWordBatchValidationIsAtomic() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+
+        XCTAssertThrowsError(try coordinator.addLooseWords([
+            WordDraft(term: "valid", meanings: "정상"),
+            WordDraft(term: "invalid", meanings: "")
+        ], date: testDate))
+
+        XCTAssertTrue(try context.fetch(FetchDescriptor<WordRecord>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<MeaningRecord>()).isEmpty)
     }
 
     func testLooseSessionExcludesSetWordsAndPrioritizesUnseenWords() throws {

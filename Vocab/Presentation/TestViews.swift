@@ -68,11 +68,15 @@ struct TestSetupView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if mode == .review {
-                Text("복습은 미암기 단어 최대 14개와 직전 세트 최대 6개를 조합합니다. 자리가 남으면 나머지 복습 대상과 기준 세트로 채웁니다.")
+                Text("복습은 미암기 단어, 직전 세트, 낱개 단어를 조합합니다. 자리가 남으면 나머지 복습 대상과 기준 세트로 채웁니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if mode == .mixed {
-                Text("혼합은 최근 기준 세트 12개를 우선하고 복습·미검증 과거 세트로 보충합니다. 오늘 세트가 없으면 가장 최근 세트를 기준으로 삼습니다.")
+                Text("혼합은 최근 기준 세트 12개를 우선하고 복습·낱개·미검증 과거 세트로 보충합니다. 오늘 세트가 없으면 가장 최근 세트를 기준으로 삼습니다.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            } else {
+                Text("최근 기준 세트 단어를 우선하고 낱개 단어도 일부 포함합니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

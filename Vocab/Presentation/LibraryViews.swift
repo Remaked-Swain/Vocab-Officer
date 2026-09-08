@@ -792,33 +792,59 @@ private struct WordEditSheet: View {
 }
 
 private struct LooseWordAddSheet: View {
+    private enum AddMode: String, CaseIterable, Identifiable {
+        case single = "한 개"
+        case batch = "여러 개"
+
+        var id: String { rawValue }
+    }
+
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     let onComplete: (String, Bool) -> Void
+    @State private var mode: AddMode = .single
     @State private var term = ""
     @State private var meaningsText = ""
+    @State private var batchInput = ""
     @State private var error: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
             Text("낱개 단어 추가")
                 .font(.title.weight(.semibold))
-            Text("일일 100개 세트에 포함하지 않고 단어장 SOT에만 저장합니다. 기존 표제어가 있으면 새 단어를 만들지 않고 뜻만 병합합니다.")
+            Text("일일 세트에 포함하지 않고 단어장 SOT에 저장합니다. 기존 표제어에는 새 뜻만 병합합니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            TextField("영단어", text: $term)
-                .textFieldStyle(.roundedBorder)
-                .font(.title3)
-                .controlSize(.large)
-            Text("한국어 뜻")
-                .font(.headline)
-            TextEditor(text: $meaningsText)
-                .font(.body)
-                .frame(minHeight: 130)
-                .overlay { RoundedRectangle(cornerRadius: 8).stroke(.quaternary) }
-            Text("쉼표, 슬래시 또는 줄바꿈으로 여러 뜻을 구분합니다. 괄호 안 쉼표는 뜻의 일부로 보존합니다.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+            Picker("추가 방식", selection: $mode) {
+                ForEach(AddMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            .pickerStyle(.segmented)
+            .controlSize(.large)
+
+            if mode == .single {
+                TextField("영단어", text: $term)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.title3)
+                    .controlSize(.large)
+                Text("한국어 뜻")
+                    .font(.headline)
+                TextEditor(text: $meaningsText)
+                    .font(.body)
+                    .frame(minHeight: 130)
+                    .overlay { RoundedRectangle(cornerRadius: 8).stroke(.quaternary) }
+            } else {
+                Text("형식: 0001-word-뜻 또는 word<TAB>뜻")
+                    .font(.headline)
+                TextEditor(text: $batchInput)
+                    .font(.system(.title3, design: .monospaced))
+                    .frame(minHeight: 220)
+                    .overlay { RoundedRectangle(cornerRadius: 8).stroke(.quaternary) }
+            }
+            Text(mode == .single
+                 ? "쉼표 또는 슬래시로 여러 의미를 구분합니다. 괄호 안 쉼표는 한 의미로 보존됩니다."
+                 : "한 줄에 한 단어씩 붙여넣으세요. 중복 표제어는 별도 단어를 만들지 않고 SOT에 병합됩니다.")
+            .font(.caption)
+            .foregroundStyle(.secondary)
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
@@ -827,11 +853,11 @@ private struct LooseWordAddSheet: View {
                 Spacer()
                 Button("취소") { dismiss() }
                     .controlSize(.large)
-                Button("낱개 단어 저장") { save() }
+                Button(mode == .single ? "낱개 단어 저장" : "낱개 단어 일괄 저장") { save() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || meaningsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(!canSave)
             }
         }
         .padding(28)
@@ -840,12 +866,32 @@ private struct LooseWordAddSheet: View {
 
     private func save() {
         do {
-            let word = try LearningCoordinator(context: context).addLooseWord(term: term, meaningsText: meaningsText)
-            onComplete("\(word.term)을 낱개 단어로 저장했습니다.", false)
+            let drafts: [WordDraft]
+            switch mode {
+            case .single:
+                drafts = [WordDraft(term: term, meanings: meaningsText)]
+            case .batch:
+                drafts = try DailyIntakePasteParser.parse(batchInput)
+            }
+            let words = try LearningCoordinator(context: context).addLooseWords(drafts)
+            let message = mode == .single
+                ? "\(words[0].term)을 낱개 단어로 저장했습니다."
+                : "낱개 단어 \(words.count)개를 저장했습니다. 중복 표제어는 기존 SOT에 병합했습니다."
+            onComplete(message, false)
             dismiss()
         } catch {
             self.error = error.localizedDescription
             onComplete(error.localizedDescription, true)
+        }
+    }
+
+    private var canSave: Bool {
+        switch mode {
+        case .single:
+            !term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && !meaningsText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        case .batch:
+            !batchInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         }
     }
 }
