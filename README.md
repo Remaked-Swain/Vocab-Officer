@@ -59,10 +59,9 @@ xcodebuild -project Vocab.xcodeproj -scheme Vocab \
 ./script/build_and_run.sh --install-verify
 ```
 
-iOS 타깃은 `VocabIOS`입니다. Xcode에서 개발 팀과 실기기를 선택해 실행할 수 있으며,
-실제 단어장 데이터와 API 키는 Git에서 제외합니다.
+iOS 타깃은 `VocabIOS`입니다. Xcode에서 개발 팀과 실기기를 선택해 실행할 수 있습니다.
 
 ---
 
-[Swain Yun](https://github.com/Remaked-Swain)의 **AI-Native iOS Developer** 포트폴리오 프로젝트입니다.
-AI를 기능 구현에 활용하되 아키텍처, 검증, 성능과 데이터 안전성은 네이티브 코드의 책임으로 설계했습니다.
+사용자 문제를 **OCR 입력 자동화**, **도메인 기반 복습 정책**, **LLM 응답 품질 파이프라인**,
+**증분 동기화**로 구체화하며 아이디어부터 멀티플랫폼 네이티브 제품까지 완성했습니다.
