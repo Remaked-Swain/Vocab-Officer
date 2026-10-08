@@ -37,6 +37,8 @@ only when its scope applies to the current change.
 | CL-0026 | active | 2026-09-03 | foreground-safe changed-ID CloudKit import reconciliation and deferred full audit | [Foreground incremental Cloud import](records/CL-0026-foreground-incremental-cloud-import.md) | retain while per-record CloudKit synchronization exists |
 | CL-0027 | active | 2026-09-04 | unbounded Auditor rejection and Main rework loop | [Unbounded Auditor rework](records/CL-0027-unbounded-auditor-rework.md) | retain while Codex workflow uses this harness |
 | CL-0028 | active | 2026-09-04 | Swift conventions, objective style checks, and contextual audit | [Swift coding conventions](records/CL-0028-swift-coding-conventions.md) | retain while Swift code is maintained |
+| CL-0029 | active | 2026-10-08 | restarted printed numbering, adaptive OCR layout and reset-aware gap diagnostics | [Restarted source numbering and adaptive OCR](records/CL-0029-restarted-source-numbering-and-adaptive-ocr.md) | retain while numbered paste or image OCR intake exists |
+| CL-0030 | active | 2026-10-08 | direction-agnostic mastery, multiple-choice credit and periodic revalidation | [Direction-agnostic mastery and revalidation](records/CL-0030-direction-agnostic-mastery-revalidation.md) | retain while Mastered lifecycle exists |
 
 ## Load Rules
 
@@ -91,6 +93,10 @@ only when its scope applies to the current change.
   Mac/iOS choice UX must also load `CL-0024`.
 - MemoryAid, Gemini prompt, repair prompt, response budget, cache-version or
   MemoryAid quality-gate work must also load `CL-0021`.
+- Printed source-number restarts, OCR page ordering, OCR layout inference or
+  missing-number diagnostics must also load `CL-0029`.
+- Mastery evidence, Mastered exclusion, maintenance revalidation or demotion
+  must also load `CL-0030`.
 - Superseded or archived records are read only when investigating regression,
   migration history or a stated dependency.
 - `index.json` is the machine-readable companion for validation tooling only.

@@ -570,6 +570,40 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["semantic convention decisions require Auditor judgement"]
+    },
+    {
+      "id": "CL-0029",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Restarted source numbering and adaptive OCR",
+      "date": "2026-10-08",
+      "tags": ["ocr", "source-number", "page-order", "layout-inference", "intake"],
+      "affectedPaths": ["Vocab/Application/OCRVocabularyFormatter.swift", "Vocab/Presentation/TodayIntakeView.swift", "VocabTests/Application/OCRVocabularyFormatterTests.swift", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0029-restarted-source-numbering-and-adaptive-ocr.md",
+      "references": ["CL-0004", "CL-0011", "CL-0028"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["a materially different source layout still requires a representative screenshot fixture"]
+    },
+    {
+      "id": "CL-0030",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Direction-agnostic mastery and revalidation",
+      "date": "2026-10-08",
+      "tags": ["mastery", "review", "multiple-choice", "revalidation", "demotion"],
+      "affectedPaths": ["Vocab/Domain/StudyPolicies.swift", "Vocab/Application/LearningCoordinator.swift", "Vocab/Presentation/MasteredView.swift", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0030-direction-agnostic-mastery-revalidation.md",
+      "references": ["CL-0001", "CL-0006", "CL-0009", "CL-0024", "CL-0028"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": []
     }
   ]
 }

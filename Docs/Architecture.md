@@ -46,14 +46,20 @@ grading, mastery or deletion policy.
   A corrected automatic mistake never commits the invalid failure event.
 - `activePriority` is separate and can be reduced only after both directions
   reach two consecutive correct outcomes.
-- A word becomes `Mastered` only after every core meaning has three distinct
-  Seoul-day English-to-Korean successes, Korean-to-English has three distinct
-  Seoul-day successes, and no wrong/unknown answer occurred in the last 14
-  Seoul days.
+- A word becomes `Mastered` after correct outcomes on three distinct Seoul
+  dates regardless of mode, direction or question format, provided no
+  wrong/unknown answer occurred in the last 14 Seoul days. Mastered words become
+  eligible for at most two maintenance questions in Review and Mixed sessions
+  after 30 days without a test; a wrong/unknown result restores Active status.
 - The intake screen supports a local paste flow for either
   `number-headword-meanings` lines or tab-separated `headword<TAB>meanings`
-  lines. Parsed drafts still pass through the same atomic daily-set policy;
-  pasted vocabulary is never written to repository files by the app.
+  lines. Printed numbers are transient source locators and may restart without
+  affecting UUID identity or normalized-headword SOT. Parsed drafts still pass
+  through the same atomic daily-set policy; pasted vocabulary is never written
+  to repository files by the app.
+- Image OCR infers columns and vocabulary-card blocks from number positions,
+  removes pronunciation text merged with a headword, and preserves selected
+  page order. Vision recognition and image downsampling run off the main actor.
 
 ## Deletion Contract
 
