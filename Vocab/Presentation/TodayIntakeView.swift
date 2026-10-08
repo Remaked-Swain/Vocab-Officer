@@ -1,9 +1,7 @@
 import AppKit
-import ImageIO
 import SwiftData
 import SwiftUI
 import UniformTypeIdentifiers
-import Vision
 
 struct TodayIntakeView: View {
     private enum IntakeMode: String, CaseIterable, Identifiable {
@@ -282,7 +280,7 @@ struct TodayIntakeView: View {
         }
         do {
             let drafts = try DailyIntakePasteParser.parse(text)
-            let missingNumbers = missingNumberHint(from: text)
+            let missingNumbers = IntakeNumberSequenceAnalyzer.missingNumbers(in: text)
             let suffix = missingNumbers.isEmpty ? "" : " 누락 의심 번호: \(missingNumbers.joined(separator: ", "))"
             if drafts.count <= 100 {
                 return PasteAnalysis(
@@ -295,24 +293,6 @@ struct TodayIntakeView: View {
         } catch {
             return PasteAnalysis(drafts: [], status: error.localizedDescription, isReady: false)
         }
-    }
-
-    private func missingNumberHint(from text: String) -> [String] {
-        let numbers = text.components(separatedBy: .newlines).compactMap { line -> Int? in
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let match = trimmed.range(of: #"^\d{4,}(?=\s*-)"#, options: .regularExpression) else {
-                return nil
-            }
-            return Int(trimmed[match])
-        }
-        guard numbers.count >= 2 else { return [] }
-        let sorted = Array(Set(numbers)).sorted()
-        var missing: [Int] = []
-        for pair in zip(sorted, sorted.dropFirst()) where pair.1 - pair.0 > 1 {
-            missing.append(contentsOf: (pair.0 + 1)..<pair.1)
-            if missing.count >= 8 { break }
-        }
-        return missing.prefix(8).map { String(format: "%0\(max(4, String(sorted[0]).count))d", $0) }
     }
 
     private func handleImageImport(_ result: Result<[URL], Error>) {
@@ -349,7 +329,7 @@ struct TodayIntakeView: View {
             var pages: [[OCRTextToken]] = []
             for url in urls {
                 try autoreleasepool {
-                    let imageTokens = try recognizeTokens(from: url)
+                    let imageTokens = try OCRTextRecognizer.recognizeTokens(from: url)
                     pages.append(imageTokens)
                 }
             }
@@ -365,49 +345,4 @@ private struct PasteAnalysis {
     let drafts: [WordDraft]
     let status: String
     let isReady: Bool
-}
-
-private func recognizeTokens(from url: URL) throws -> [OCRTextToken] {
-    guard let cgImage = downsampledCGImage(from: url) else {
-        throw OCRError.unreadableImage
-    }
-    let request = VNRecognizeTextRequest()
-    request.recognitionLevel = .accurate
-    request.recognitionLanguages = ["ko-KR", "en-US"]
-    request.usesLanguageCorrection = false
-    let handler = VNImageRequestHandler(cgImage: cgImage)
-    try handler.perform([request])
-    return (request.results ?? [])
-        .compactMap { observation in
-            guard let text = observation.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !text.isEmpty else {
-                return nil
-            }
-            return OCRTextToken(text: text, boundingBox: observation.boundingBox)
-        }
-}
-
-private func downsampledCGImage(from url: URL) -> CGImage? {
-    guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-    let options: [CFString: Any] = [
-        kCGImageSourceCreateThumbnailFromImageAlways: true,
-        kCGImageSourceShouldCacheImmediately: false,
-        kCGImageSourceCreateThumbnailWithTransform: true,
-        kCGImageSourceThumbnailMaxPixelSize: 2_400
-    ]
-    return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
-}
-
-private enum OCRError: LocalizedError {
-    case unreadableImage
-    case noText
-
-    var errorDescription: String? {
-        switch self {
-        case .unreadableImage:
-            "이미지를 읽을 수 없습니다."
-        case .noText:
-            "이미지에서 텍스트를 찾지 못했습니다."
-        }
-    }
 }

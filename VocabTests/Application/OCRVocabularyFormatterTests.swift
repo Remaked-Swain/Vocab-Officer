@@ -26,7 +26,7 @@ final class OCRVocabularyFormatterTests: XCTestCase {
         )
     }
 
-    func testSortsMultipleImagesByVocabularyNumber() throws {
+    func testPreservesSelectedPageOrderInsteadOfSortingByRestartedNumber() throws {
         let output = try OCRVocabularyFormatter.formatPages([
             [
                 token("10001", x: 0.119, y: 0.714),
@@ -43,10 +43,117 @@ final class OCRVocabularyFormatterTests: XCTestCase {
         XCTAssertEqual(
             output,
             """
-            0501-pill-알약
             10001-master-주인, 명인, 정복하다
+            0501-pill-알약
             """
         )
+    }
+
+    func testPreservesRepeatedPrintedNumbersAcrossPages() throws {
+        let output = try OCRVocabularyFormatter.formatPages([
+            [
+                token("0001", x: 0.150, y: 0.714),
+                token("legacy", x: 0.231, y: 0.729),
+                token("기존", x: 0.227, y: 0.715)
+            ],
+            [
+                token("0001", x: 0.150, y: 0.714),
+                token("renewal", x: 0.231, y: 0.729),
+                token("새로운 것", x: 0.227, y: 0.715)
+            ]
+        ])
+
+        XCTAssertEqual(
+            output,
+            """
+            0001-legacy-기존
+            0001-renewal-새로운 것
+            """
+        )
+    }
+
+    func testInfersLayoutWhenPrintedNumberIsToTheRightOfVocabulary() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.420, y: 0.714),
+            token("adapt", x: 0.150, y: 0.729),
+            token("적응하다", x: 0.150, y: 0.700)
+        ])
+
+        XCTAssertEqual(output, "0001-adapt-적응하다")
+    }
+
+    func testFormatsNumberTermAndMeaningOnSeparateLines() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760, height: 0.014),
+            token("categorically", x: 0.150, y: 0.738, height: 0.020),
+            token("[kætəgɔːrikəli]", x: 0.300, y: 0.738),
+            token("절대적으로, 단정적으로, 명확히", x: 0.150, y: 0.714),
+            token("0002", x: 0.150, y: 0.680, height: 0.014),
+            token("obsolete", x: 0.150, y: 0.658, height: 0.020),
+            token("구식의, 한물 간, 시대에 뒤떨어진", x: 0.150, y: 0.634)
+        ])
+
+        XCTAssertEqual(
+            output,
+            """
+            0001-categorically-절대적으로, 단정적으로, 명확히
+            0002-obsolete-구식의, 한물 간, 시대에 뒤떨어진
+            """
+        )
+    }
+
+    func testRemovesMergedPronunciationAndPreservesMultiwordTerm() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760),
+            token("impair timpear", x: 0.150, y: 0.738),
+            token("손상시키다, 악화시키다", x: 0.150, y: 0.714),
+            token("0002", x: 0.150, y: 0.680),
+            token("general election Id3enaral ilek/an]", x: 0.150, y: 0.658),
+            token("총선", x: 0.150, y: 0.634)
+        ])
+
+        XCTAssertEqual(
+            output,
+            """
+            0001-impair-손상시키다, 악화시키다
+            0002-general election-총선
+            """
+        )
+    }
+
+    func testRecognizesRestartedNumberingReferenceImage() throws {
+        let fixtureURL = try XCTUnwrap(
+            Bundle(for: Self.self).url(
+                forResource: "restarted-numbering-layout",
+                withExtension: "png",
+                subdirectory: "Fixtures"
+            ) ?? Bundle(for: Self.self).url(
+                forResource: "restarted-numbering-layout",
+                withExtension: "png"
+            )
+        )
+        let tokens = try OCRTextRecognizer.recognizeTokens(from: fixtureURL)
+        let output = try OCRVocabularyFormatter.format(tokens)
+        let rows = output.components(separatedBy: .newlines)
+
+        XCTAssertEqual(rows.count, 20, output)
+        XCTAssertEqual(rows.first, "0001-categorically-절대적으로, 단정적으로, 명확히")
+        XCTAssertTrue(rows.contains("0006-general election-총선"), output)
+        XCTAssertTrue(rows.contains("0011-insinuate-암시하다, 돌려서 말하다"), output)
+        XCTAssertEqual(rows.last, "0020-embryonic-배에 관한, 태아의, 미발달의, 미숙한")
+    }
+
+    func testMissingNumberAnalysisTreatsNumberRestartAsNewSequence() {
+        let missing = IntakeNumberSequenceAnalyzer.missingNumbers(
+            in: """
+            0098-old-기존
+            0100-gap-누락 있음
+            0001-new-새 항목
+            0003-next-다음 항목
+            """
+        )
+
+        XCTAssertEqual(missing, ["0099", "0002"])
     }
 
     func testRecoversNoisyNumbersAndLooserRowAlignment() throws {

@@ -21,7 +21,6 @@ enum OCRVocabularyFormatter {
 
     private static func format(_ entries: [VocabularyEntry]) -> String {
         entries
-            .sorted { $0.number < $1.number }
             .map { "\($0.numberText)-\($0.term)-\($0.meaning)" }
             .joined(separator: "\n")
     }
@@ -29,17 +28,22 @@ enum OCRVocabularyFormatter {
     private static func extractEntries(from tokens: [OCRTextToken]) -> [VocabularyEntry] {
         let normalized = tokens.map { NormalizedToken(text: clean($0.text), boundingBox: $0.boundingBox) }
             .filter { !$0.text.isEmpty && isContentToken($0) }
-        let rowIndex = Dictionary(grouping: normalized) { rowKey(for: $0) }
         let numbers = normalized.compactMap { token -> (token: NormalizedToken, number: Int, text: String)? in
             guard let numberText = normalizedNumberText(token.text), let number = Int(numberText) else {
                 return nil
             }
             return (token, number, numberText)
         }
+        let columnCenters = inferredColumnCenters(from: numbers.map(\.token))
         var entriesByNumber: [Int: VocabularyEntry] = [:]
 
         for number in numbers {
-            guard let entry = entry(for: number, rowIndex: rowIndex) else {
+            guard let entry = entry(
+                for: number,
+                tokens: normalized,
+                numbers: numbers,
+                columnCenters: columnCenters
+            ) else {
                 continue
             }
             if let existing = entriesByNumber[number.number], existing.score <= entry.score {
@@ -48,33 +52,68 @@ enum OCRVocabularyFormatter {
             entriesByNumber[number.number] = entry
         }
 
-        return Array(entriesByNumber.values)
+        return entriesByNumber.values.sorted(by: readingOrder)
     }
 
     private static func entry(
         for number: (token: NormalizedToken, number: Int, text: String),
-        rowIndex: [Int: [NormalizedToken]]
+        tokens: [NormalizedToken],
+        numbers: [(token: NormalizedToken, number: Int, text: String)],
+        columnCenters: [CGFloat]
     ) -> VocabularyEntry? {
-        let column = columnBounds(for: number.token)
-        let tolerance = max(CGFloat(0.036), number.token.height * 2.4)
-        let keyRadius = max(2, Int((tolerance * 120).rounded(.up)))
-        let nearbyRows = ((rowKey(for: number.token) - keyRadius)...(rowKey(for: number.token) + keyRadius))
-            .flatMap { rowIndex[$0] ?? [] }
-        let rowTokens = nearbyRows.filter {
+        let columnIndex = nearestColumnIndex(to: number.token.centerX, centers: columnCenters)
+        let column = columnBounds(at: columnIndex, centers: columnCenters)
+        let higherNumber = numbers
+            .map(\.token)
+            .filter {
+                $0 !== number.token &&
+                nearestColumnIndex(to: $0.centerX, centers: columnCenters) == columnIndex &&
+                $0.centerY > number.token.centerY
+            }
+            .min { $0.centerY < $1.centerY }
+        let lowerNumber = numbers
+            .map(\.token)
+            .filter {
+                $0 !== number.token &&
+                nearestColumnIndex(to: $0.centerX, centers: columnCenters) == columnIndex &&
+                $0.centerY < number.token.centerY
+            }
+            .max { $0.centerY < $1.centerY }
+        let upperBound = higherNumber.map {
+            ($0.centerY + number.token.centerY) / 2
+        } ?? min(CGFloat(0.98), number.token.centerY + 0.075)
+        let lowerBound = lowerNumber.map {
+            $0.centerY + max(0.004, $0.height * 0.25)
+        } ?? max(CGFloat(0.02), number.token.centerY - 0.075)
+        let broadRowTokens = tokens.filter {
             $0 !== number.token &&
             $0.centerX >= column.minX &&
             $0.centerX <= column.maxX &&
-            abs($0.centerY - number.token.centerY) <= tolerance
+            $0.centerY <= upperBound &&
+            $0.centerY > lowerBound
         }
+        let preferredUpperBound = min(
+            upperBound,
+            number.token.centerY + 0.022
+        )
+        let preferredRowTokens = broadRowTokens.filter { $0.centerY <= preferredUpperBound }
+        let rowTokens = containsVocabularyContent(preferredRowTokens)
+            ? preferredRowTokens
+            : broadRowTokens
 
-        guard let termToken = rowTokens
-            .filter({ isEnglishTerm($0.text) && $0.minX > number.token.maxX })
-            .min(by: { termScore($0, number: number.token) < termScore($1, number: number.token) }) else {
+        let termMatches = rowTokens.compactMap { token -> (NormalizedToken, String)? in
+            guard let term = englishTerm(from: token.text) else { return nil }
+            return (token, term)
+        }
+        guard let termMatch = termMatches.min(by: {
+            termScore($0.0, number: number.token) < termScore($1.0, number: number.token)
+        }) else {
             return nil
         }
+        let termToken = termMatch.0
 
         let meaningTokens = rowTokens
-            .filter { isMeaningToken($0.text) && $0.minX > number.token.maxX && $0 !== termToken }
+            .filter { isMeaningToken($0.text) && $0 !== termToken }
             .sorted { $0.minX < $1.minX }
         guard !meaningTokens.isEmpty else { return nil }
 
@@ -83,22 +122,51 @@ enum OCRVocabularyFormatter {
         return VocabularyEntry(
             number: number.number,
             numberText: number.text,
-            term: termToken.text.lowercased(),
+            term: termMatch.1.lowercased(),
             meaning: meaning,
-            score: score
+            score: score,
+            columnIndex: columnIndex,
+            centerY: number.token.centerY
         )
     }
 
-    private static func rowKey(for token: NormalizedToken) -> Int {
-        Int((token.centerY * 120).rounded())
+    private static func inferredColumnCenters(from numberTokens: [NormalizedToken]) -> [CGFloat] {
+        let sorted = numberTokens.map(\.centerX).sorted()
+        guard let first = sorted.first else { return [0.5] }
+        var clusters: [[CGFloat]] = [[first]]
+        for value in sorted.dropFirst() {
+            guard let previous = clusters.last?.last else { continue }
+            if value - previous > 0.16 {
+                clusters.append([value])
+            } else {
+                clusters[clusters.count - 1].append(value)
+            }
+        }
+        return clusters.map { $0.reduce(0, +) / CGFloat($0.count) }
     }
 
-    private static func columnBounds(for token: NormalizedToken) -> (minX: CGFloat, maxX: CGFloat) {
-        token.centerX < 0.45 ? (0.08, 0.52) : (0.48, 0.91)
+    private static func nearestColumnIndex(to value: CGFloat, centers: [CGFloat]) -> Int {
+        centers.indices.min { abs(centers[$0] - value) < abs(centers[$1] - value) } ?? 0
+    }
+
+    private static func columnBounds(at index: Int, centers: [CGFloat]) -> (minX: CGFloat, maxX: CGFloat) {
+        let minX = index == centers.startIndex ? 0.02 : (centers[index - 1] + centers[index]) / 2
+        let maxX = index == centers.index(before: centers.endIndex) ? 0.98 : (centers[index] + centers[index + 1]) / 2
+        return (minX, maxX)
+    }
+
+    private static func readingOrder(_ lhs: VocabularyEntry, _ rhs: VocabularyEntry) -> Bool {
+        if lhs.columnIndex != rhs.columnIndex {
+            return lhs.columnIndex < rhs.columnIndex
+        }
+        if lhs.centerY != rhs.centerY {
+            return lhs.centerY > rhs.centerY
+        }
+        return lhs.number < rhs.number
     }
 
     private static func termScore(_ token: NormalizedToken, number: NormalizedToken) -> CGFloat {
-        abs(token.centerY - number.centerY) + max(0, token.minX - number.maxX) * 0.12
+        abs(token.centerY - number.centerY) + abs(token.minX - number.maxX) * 0.12
     }
 
     private static func entryScore(
@@ -115,7 +183,7 @@ enum OCRVocabularyFormatter {
     }
 
     private static func isContentToken(_ token: NormalizedToken) -> Bool {
-        token.centerY > 0.08 && token.centerY < 0.78 && token.centerX > 0.07 && token.centerX < 0.92
+        token.centerY > 0.03 && token.centerY < 0.95 && token.centerX > 0.02 && token.centerX < 0.98
     }
 
     private static func clean(_ value: String) -> String {
@@ -131,7 +199,7 @@ enum OCRVocabularyFormatter {
             .replacingOccurrences(of: "O", with: "0")
             .replacingOccurrences(of: "o", with: "0")
         let digits = corrected.filter(\.isNumber)
-        guard digits.count >= 4, digits.count <= 6 else { return nil }
+        guard digits.count >= 4, digits.count <= 8 else { return nil }
         return String(digits)
     }
 
@@ -140,12 +208,75 @@ enum OCRVocabularyFormatter {
         return !value.localizedCaseInsensitiveContains("day")
     }
 
+    private static func containsVocabularyContent(_ tokens: [NormalizedToken]) -> Bool {
+        tokens.contains { englishTerm(from: $0.text) != nil } &&
+        tokens.contains { isMeaningToken($0.text) }
+    }
+
+    private static func englishTerm(from value: String) -> String? {
+        let pronunciationSeparators = ["[", "(", "|"]
+        let prefix = pronunciationSeparators
+            .compactMap { separator in value.range(of: separator)?.lowerBound }
+            .min()
+            .map { String(value[..<$0]) } ?? value
+        let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isEnglishTerm(trimmed) {
+            let words = trimmed.split(separator: " ").map(String.init)
+            if words.count == 2, isLikelyUnbracketedPronunciation(words[1]) {
+                return words[0]
+            }
+            return trimmed
+        }
+
+        let words = trimmed.split(separator: " ").map(String.init)
+        let validPrefix = words.prefix { isEnglishTerm($0) }
+        guard !validPrefix.isEmpty, validPrefix.count < words.count else { return nil }
+        return validPrefix.joined(separator: " ")
+    }
+
+    private static func isLikelyUnbracketedPronunciation(_ value: String) -> Bool {
+        if value.first == "I" { return true }
+        return value.lowercased().hasPrefix("ti") && value.lowercased().contains("mp")
+    }
+
     private static func containsHangul(_ value: String) -> Bool {
         value.range(of: #"[가-힣]"#, options: .regularExpression) != nil
     }
 
     private static func isMeaningToken(_ value: String) -> Bool {
         containsHangul(value) && !isEnglishTerm(value) && normalizedNumberText(value) == nil
+    }
+}
+
+enum IntakeNumberSequenceAnalyzer {
+    static func missingNumbers(in text: String, limit: Int = 8) -> [String] {
+        guard limit > 0 else { return [] }
+        let values = text.components(separatedBy: .newlines).compactMap(numberPrefix)
+        guard values.count >= 2 else { return [] }
+
+        var missing: [String] = []
+        var previous = values[0]
+        for current in values.dropFirst() {
+            defer { previous = current }
+            guard current.value > previous.value else { continue }
+            guard current.value - previous.value > 1 else { continue }
+            let width = max(previous.width, current.width)
+            for value in (previous.value + 1)..<current.value {
+                missing.append(String(format: "%0\(width)d", value))
+                guard missing.count < limit else { return missing }
+            }
+        }
+        return missing
+    }
+
+    private static func numberPrefix(from line: String) -> (value: Int, width: Int)? {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let separator = trimmed.firstIndex(of: "-") else { return nil }
+        let prefix = trimmed[..<separator].trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !prefix.isEmpty, prefix.allSatisfy(\.isNumber), let value = Int(prefix) else {
+            return nil
+        }
+        return (value, prefix.count)
     }
 }
 
@@ -182,4 +313,6 @@ private struct VocabularyEntry {
     let term: String
     let meaning: String
     let score: CGFloat
+    let columnIndex: Int
+    let centerY: CGFloat
 }
