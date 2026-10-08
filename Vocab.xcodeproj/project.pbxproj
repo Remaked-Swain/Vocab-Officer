@@ -23,6 +23,8 @@
 		A0000000000000000000030E /* Vocab/Application/LearningCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = A0000000000000000000032E /* Vocab/Application/LearningCoordinator.swift */; };
 		B00000000000000000000001 /* Vocab/App/VocabBootstrapClaimService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000011 /* Vocab/App/VocabBootstrapClaimService.swift */; };
 		B00000000000000000000002 /* Vocab/Data/VocabSchemaMigration.swift in Sources */ = {isa = PBXBuildFile; fileRef = B00000000000000000000012 /* Vocab/Data/VocabSchemaMigration.swift */; };
+		C00000000000000000000001 /* Vocab/Domain/DomainModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000011 /* Vocab/Domain/DomainModels.swift */; };
+		C00000000000000000000002 /* Vocab/Domain/StudyPolicies.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000012 /* Vocab/Domain/StudyPolicies.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -55,6 +57,8 @@
 		A0000000000000000000032E /* Vocab/Application/LearningCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/LearningCoordinator.swift; sourceTree = "<group>"; };
 		B00000000000000000000011 /* Vocab/App/VocabBootstrapClaimService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabBootstrapClaimService.swift; sourceTree = "<group>"; };
 		B00000000000000000000012 /* Vocab/Data/VocabSchemaMigration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Data/VocabSchemaMigration.swift; sourceTree = "<group>"; };
+		C00000000000000000000011 /* Vocab/Domain/DomainModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Domain/DomainModels.swift; sourceTree = "<group>"; };
+		C00000000000000000000012 /* Vocab/Domain/StudyPolicies.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Domain/StudyPolicies.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -305,6 +309,8 @@
 				A0000000000000000000030E /* Vocab/Application/LearningCoordinator.swift in Sources */,
 				B00000000000000000000001 /* Vocab/App/VocabBootstrapClaimService.swift in Sources */,
 				B00000000000000000000002 /* Vocab/Data/VocabSchemaMigration.swift in Sources */,
+				C00000000000000000000001 /* Vocab/Domain/DomainModels.swift in Sources */,
+				C00000000000000000000002 /* Vocab/Domain/StudyPolicies.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

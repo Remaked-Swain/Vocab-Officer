@@ -623,6 +623,7 @@ final class LearningCoordinator {
     private let learningFactAuthority: VocabMutationAuthority
     private var activeWordCache: [WordRecord]?
     private var activeWordByIDCache: [UUID: WordRecord]?
+    private var masteredWordCache: [WordRecord]?
     private var dailySetCache: [DailySetRecord]?
 
     init(
@@ -776,6 +777,13 @@ final class LearningCoordinator {
         try requireLearningFactWriting()
         let day = SeoulCalendar.day(for: date)
         let words = try activeWords()
+        let maintenanceWords: [WordRecord]
+        switch mode {
+        case .review, .mixed:
+            maintenanceWords = try masteredWords()
+        case .today, .set, .loose:
+            maintenanceWords = []
+        }
         let wordsByID = try activeWordsByID()
         let sets = try dailySets()
         let setsByRecency = sets.filter { $0.seoulDay <= day }.sorted {
@@ -786,7 +794,7 @@ final class LearningCoordinator {
         let todaySet = setsByRecency.first(where: { $0.seoulDay == day })
         let referenceSet = todaySet ?? setsByRecency.first
         let previousSet = setsByRecency.first(where: { $0.seoulDay < day })
-        let presentation = try presentationContext(for: words, day: day, now: date)
+        let presentation = try presentationContext(for: words + maintenanceWords, day: day, now: date)
         let exposure = presentation.exposure
         let alreadyPresentedTodayIDs = presentation.alreadyPresentedTodayIDs
         let allPresentedIDs = presentation.allPresentedIDs
@@ -816,6 +824,19 @@ final class LearningCoordinator {
             words.filter { !linkedWordIDs.contains($0.id) },
             exposure: exposure
         )
+        let maintenancePolicy = MasteryMaintenancePolicy()
+        let masteryMaintenanceCandidates = fairOrder(
+            maintenanceWords.filter {
+                maintenancePolicy.needsRevalidation(
+                    lastTestedAt: $0.reviewState?.lastTestedAt ?? $0.updatedAt,
+                    asOf: date
+                )
+            },
+            exposure: exposure
+        )
+        let masteryMaintenance = Array(
+            masteryMaintenanceCandidates.prefix(maintenancePolicy.maximumQuestionsPerSession)
+        )
         switch mode {
         case .today:
             let reference = referenceCandidates()
@@ -836,12 +857,14 @@ final class LearningCoordinator {
             let orderedReview = orderedReviewCandidates()
             let previousSetCandidates = fairOrder(setWords(for: previousSet?.items ?? []), exposure: exposure)
             let reference = referenceCandidates()
+            let activeCapacity = 20 - masteryMaintenance.count
             selected = Array(orderedReview.prefix(14))
             appendUnique(
                 from: previousSetCandidates,
                 to: &selected,
-                limit: min(20, selected.count + 6)
+                limit: min(activeCapacity, selected.count + 6)
             )
+            appendUnique(from: masteryMaintenance, to: &selected, limit: 20)
             appendUnique(from: orderedReview, to: &selected, limit: 20)
             appendUnique(from: reference, to: &selected, limit: 20)
         case .mixed:
@@ -854,6 +877,7 @@ final class LearningCoordinator {
             )
             selected = Array(reference.prefix(12))
             appendUnique(from: orderedReview, to: &selected, limit: 17)
+            appendUnique(from: masteryMaintenance, to: &selected, limit: 19)
             appendUnique(from: looseCandidates, to: &selected, limit: 20)
             appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
             appendUnique(from: reference, to: &selected, limit: 20)
@@ -863,7 +887,7 @@ final class LearningCoordinator {
         let sessionID = UUID()
         let questions = makeQuestions(
             selected: selected,
-            allWords: words,
+            allWords: words + maintenanceWords,
             direction: direction,
             format: format,
             sessionID: sessionID
@@ -928,9 +952,13 @@ final class LearningCoordinator {
         attempt.word = question.word
         question.word.appendAttempt(attempt)
         context.insert(attempt)
+        let previousStatus = question.word.statusRaw
         recomputeReviewState(for: question.word)
         compactAttempts(for: question.word, now: date)
         try saveAndNotifyChange()
+        if previousStatus != question.word.statusRaw {
+            invalidateSessionCandidateCache()
+        }
     }
 
     func completeSession(_ session: TestSessionRecord, date: Date = .now) throws {
@@ -1059,6 +1087,7 @@ final class LearningCoordinator {
         let day = SeoulCalendar.day(for: date)
         switch result {
         case .incorrect, .unknown:
+            word.statusRaw = "active"
             state.failureCheck = min(state.failureCheck + 1, 3)
             state.activePriority = max(state.activePriority, state.failureCheck)
             state.latestWrongDirection = direction.rawValue
@@ -1129,7 +1158,6 @@ final class LearningCoordinator {
 
         let activeMeanings = word.activeMeanings
         let trackableCoreMeaningIDs = Set(activeMeanings.filter(\.isTrackableCoreMeaning).map(\.id))
-        let coreMeaningIDs = activeMeanings.filter(\.isCore).map(\.id)
         var expected = RecomputedWordReviewState(
             statusRaw: word.deletedAt == nil ? "active" : word.statusRaw,
             presentationCount: word.reviewState?.presentationCount,
@@ -1146,12 +1174,11 @@ final class LearningCoordinator {
         for attempt in attempts {
             guard let result = FinalResult(rawValue: attempt.finalJudgementRaw),
                   let direction = PracticeDirection(rawValue: attempt.directionRaw) else { continue }
-            let format = QuestionFormat(rawValue: attempt.questionFormatRaw) ?? .typed
-            let contributesToMastery = format == .typed
             expected.lastTestedAt = attempt.answeredAt
             let day = SeoulCalendar.day(for: attempt.answeredAt)
             switch result {
             case .incorrect, .unknown:
+                expected.statusRaw = "active"
                 expected.failureCheck = min(expected.failureCheck + 1, 3)
                 expected.activePriority = max(expected.activePriority, expected.failureCheck)
                 expected.latestWrongDirection = direction.rawValue
@@ -1164,15 +1191,14 @@ final class LearningCoordinator {
             case .correct:
                 if direction == .enToKo {
                     expected.enToKoStreak += 1
-                    if contributesToMastery,
-                       let meaningID = attempt.matchedMeaningID,
+                    if let meaningID = attempt.matchedMeaningID,
                        trackableCoreMeaningIDs.contains(meaningID),
                        expected.meaningSuccessDays[meaningID]?.contains(day) == false {
                         expected.meaningSuccessDays[meaningID, default: []].append(day)
                     }
                 } else {
                     expected.koToEnStreak += 1
-                    if contributesToMastery, !expected.koToEnSuccessDays.contains(day) {
+                    if !expected.koToEnSuccessDays.contains(day) {
                         expected.koToEnSuccessDays.append(day)
                     }
                 }
@@ -1186,16 +1212,15 @@ final class LearningCoordinator {
                 }
             }
 
-            let coreIsTrackable = !coreMeaningIDs.isEmpty
-                && coreMeaningIDs.allSatisfy(trackableCoreMeaningIDs.contains)
-            let coreSatisfied = coreIsTrackable && coreMeaningIDs.allSatisfy {
-                Set(expected.meaningSuccessDays[$0] ?? []).count >= 3
+            var verifiedSuccessDays = Set(expected.koToEnSuccessDays)
+            for successDays in expected.meaningSuccessDays.values {
+                verifiedSuccessDays.formUnion(successDays)
             }
-            let koToEnSatisfied = Set(expected.koToEnSuccessDays).count >= 3
-            let noRecentFailure = expected.latestWrongAt.map {
-                $0 < SeoulCalendar.daysAgo(14, from: attempt.answeredAt)
-            } ?? true
-            if coreSatisfied && koToEnSatisfied && noRecentFailure {
+            if MasteryPolicy().isSatisfied(
+                verifiedSuccessDays: verifiedSuccessDays,
+                latestWrongAt: expected.latestWrongAt,
+                asOf: attempt.answeredAt
+            ) {
                 expected.statusRaw = "mastered"
             }
         }
@@ -1275,12 +1300,15 @@ final class LearningCoordinator {
     }
 
     private func masterySatisfied(for word: WordRecord, at date: Date) -> Bool {
-        let coreMeanings = word.activeMeanings.filter(\.isCore)
-        guard !coreMeanings.isEmpty, coreMeanings.allSatisfy(\.isTrackableCoreMeaning) else { return false }
-        let coreSatisfied = coreMeanings.allSatisfy { Set($0.successDays).count >= 3 }
-        let kToESatisfied = Set(word.reviewState?.koToEnSuccessDays ?? []).count >= 3
-        let noRecentFailure = word.reviewState?.latestWrongAt.map { $0 < SeoulCalendar.daysAgo(14, from: date) } ?? true
-        return coreSatisfied && kToESatisfied && noRecentFailure
+        var verifiedSuccessDays = Set(word.reviewState?.koToEnSuccessDays ?? [])
+        for meaning in word.activeMeanings {
+            verifiedSuccessDays.formUnion(meaning.successDays)
+        }
+        return MasteryPolicy().isSatisfied(
+            verifiedSuccessDays: verifiedSuccessDays,
+            latestWrongAt: word.reviewState?.latestWrongAt,
+            asOf: date
+        )
     }
 
     private struct PresentationStats {
@@ -1308,6 +1336,15 @@ final class LearningCoordinator {
         if let activeWordByIDCache { return activeWordByIDCache }
         _ = try activeWords()
         return activeWordByIDCache ?? [:]
+    }
+
+    private func masteredWords() throws -> [WordRecord] {
+        if let masteredWordCache { return masteredWordCache }
+        let words = try context.fetch(FetchDescriptor<WordRecord>(predicate: #Predicate {
+            $0.deletedAt == nil && $0.statusRaw == "mastered"
+        }))
+        masteredWordCache = words
+        return words
     }
 
     private func dailySets() throws -> [DailySetRecord] {
@@ -1472,6 +1509,7 @@ final class LearningCoordinator {
     private func invalidateSessionCandidateCache() {
         activeWordCache = nil
         activeWordByIDCache = nil
+        masteredWordCache = nil
         dailySetCache = nil
     }
 

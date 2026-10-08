@@ -212,7 +212,7 @@ public struct ProgressPolicy: Sendable {
         }
 
         let evaluationDate = date ?? chronologicalAttempts.last?.occurredAt ?? word.createdAt
-        if masterySatisfied(for: word, state: state, asOf: evaluationDate) {
+        if masterySatisfied(state: state, asOf: evaluationDate) {
             state.masteredOn = studyCalendar.startOfDay(for: evaluationDate)
         }
 
@@ -242,26 +242,88 @@ public struct ProgressPolicy: Sendable {
     }
 
     private func masterySatisfied(
-        for word: Word,
         state: ReviewState,
         asOf date: Date
     ) -> Bool {
-        guard !word.coreMeanings.isEmpty else { return false }
-        let allMeaningsSatisfied = word.coreMeanings.allSatisfy {
-            (state.coreMeaningSuccessDays[$0.id]?.count ?? 0) >= successDayRequirement
+        var verifiedSuccessDays = state.koToEnSuccessDays
+        for successDays in state.coreMeaningSuccessDays.values {
+            verifiedSuccessDays.formUnion(successDays)
         }
-        guard allMeaningsSatisfied,
-              state.koToEnSuccessDays.count >= successDayRequirement else {
-            return false
-        }
+        return MasteryPolicy(
+            studyCalendar: studyCalendar,
+            successDayRequirement: successDayRequirement,
+            recentFailureWindow: recentFailureWindow
+        ).isSatisfied(
+            verifiedSuccessDays: verifiedSuccessDays,
+            latestWrongAt: state.latestWrongAt,
+            asOf: date
+        )
+    }
+}
 
-        guard let latestWrongAt = state.latestWrongAt else { return true }
+public struct MasteryPolicy: Sendable {
+    public let studyCalendar: StudyCalendar
+    public let successDayRequirement: Int
+    public let recentFailureWindow: Int
+
+    public init(
+        studyCalendar: StudyCalendar = StudyCalendar(),
+        successDayRequirement: Int = 3,
+        recentFailureWindow: Int = 14
+    ) {
+        precondition(successDayRequirement > 0)
+        precondition(recentFailureWindow >= 0)
+        self.studyCalendar = studyCalendar
+        self.successDayRequirement = successDayRequirement
+        self.recentFailureWindow = recentFailureWindow
+    }
+
+    public func isSatisfied(
+        verifiedSuccessDays: Set<String>,
+        latestWrongAt: Date?,
+        asOf date: Date
+    ) -> Bool {
+        guard verifiedSuccessDays.count >= successDayRequirement else { return false }
+        guard let latestWrongAt else { return true }
         var components = DateComponents()
         components.day = -recentFailureWindow
-        let failureThreshold = Calendar(identifier: .gregorian).date(
+        guard let failureThreshold = Calendar(identifier: .gregorian).date(
             byAdding: components,
             to: studyCalendar.startOfDay(for: date)
-        )!
+        ) else {
+            return false
+        }
         return latestWrongAt < failureThreshold
+    }
+}
+
+public struct MasteryMaintenancePolicy: Sendable {
+    public let revalidationIntervalDays: Int
+    public let maximumQuestionsPerSession: Int
+    public let studyCalendar: StudyCalendar
+
+    public init(
+        revalidationIntervalDays: Int = 30,
+        maximumQuestionsPerSession: Int = 2,
+        studyCalendar: StudyCalendar = StudyCalendar()
+    ) {
+        precondition(revalidationIntervalDays > 0)
+        precondition(maximumQuestionsPerSession > 0)
+        self.revalidationIntervalDays = revalidationIntervalDays
+        self.maximumQuestionsPerSession = maximumQuestionsPerSession
+        self.studyCalendar = studyCalendar
+    }
+
+    public func needsRevalidation(lastTestedAt: Date?, asOf date: Date) -> Bool {
+        guard let lastTestedAt else { return true }
+        var components = DateComponents()
+        components.day = -revalidationIntervalDays
+        guard let threshold = Calendar(identifier: .gregorian).date(
+            byAdding: components,
+            to: studyCalendar.startOfDay(for: date)
+        ) else {
+            return false
+        }
+        return lastTestedAt <= threshold
     }
 }

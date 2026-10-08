@@ -16,9 +16,9 @@ struct MasteredView: View {
         VStack(alignment: .leading, spacing: 12) {
             GroupBox("Mastered란?") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("충분히 검증되어 일반 테스트·복습 출제에서 제외된 단어 보관함입니다.")
+                    Text("충분히 검증되어 일반 출제에서 제외되고 유지 점검만 받는 단어 보관함입니다.")
                         .font(.body.weight(.medium))
-                    Text("모든 핵심 뜻의 영→한 정답 이력과 한→영 정답 이력이 여러 날짜에 쌓이고, 최근 오답이 없을 때 자동 진입합니다. 삭제는 암기 완료 후 사용자가 명시적으로 실행하는 별도 동작입니다.")
+                    Text("테스트 모드·방향·시험 방식과 관계없이 서로 다른 날짜에 충분한 정답 이력이 쌓이고 최근 오답이 없을 때 자동 진입합니다. 일정 기간 뒤 복습·혼합 테스트에서 소수 문항으로 다시 점검하며, 오답이나 모름이면 활성 단어로 돌아갑니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }

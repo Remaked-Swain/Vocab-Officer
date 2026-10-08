@@ -94,15 +94,12 @@ final class StudyPoliciesTests: XCTestCase {
         XCTAssertEqual(state.koToEnStreak, 0)
     }
 
-    func testMasteryRequiresSuccessOnThreeDistinctSeoulDaysForEachDirection() {
+    func testMasteryAcceptsEnglishToKoreanOnlySuccessOnThreeDistinctSeoulDays() {
         let word = makeWord()
         let attempts = [
             attempt(word, .enToKo, .correct, "2026-05-22T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .koToEn, .correct, "2026-05-22T00:01:00Z"),
             attempt(word, .enToKo, .correct, "2026-05-23T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .koToEn, .correct, "2026-05-23T00:01:00Z"),
-            attempt(word, .enToKo, .correct, "2026-05-24T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .koToEn, .correct, "2026-05-24T00:01:00Z")
+            attempt(word, .enToKo, .correct, "2026-05-24T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id)
         ]
 
         let state = policy.state(for: word, attempts: attempts)
@@ -110,6 +107,22 @@ final class StudyPoliciesTests: XCTestCase {
         XCTAssertTrue(state.isMastered)
         XCTAssertEqual(seoul.dayKey(for: state.masteredOn!), "2026-05-24")
         XCTAssertEqual(state.coreMeaningSuccessDays[word.coreMeanings[0].id]?.count, 3)
+        XCTAssertTrue(state.koToEnSuccessDays.isEmpty)
+    }
+
+    func testMasteryAcceptsKoreanToEnglishOnlySuccessOnThreeDistinctSeoulDays() {
+        let word = makeWord()
+        let attempts = [
+            attempt(word, .koToEn, .correct, "2026-05-22T00:00:00Z"),
+            attempt(word, .koToEn, .correct, "2026-05-23T00:00:00Z"),
+            attempt(word, .koToEn, .correct, "2026-05-24T00:00:00Z")
+        ]
+
+        let state = policy.state(for: word, attempts: attempts)
+
+        XCTAssertTrue(state.isMastered)
+        XCTAssertEqual(seoul.dayKey(for: state.masteredOn!), "2026-05-24")
+        XCTAssertTrue(state.coreMeaningSuccessDays.isEmpty)
         XCTAssertEqual(state.koToEnSuccessDays.count, 3)
     }
 
@@ -117,11 +130,8 @@ final class StudyPoliciesTests: XCTestCase {
         let word = makeWord()
         let attempts = [
             attempt(word, .enToKo, .correct, "2026-05-22T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .koToEn, .correct, "2026-05-22T00:01:00Z"),
             attempt(word, .enToKo, .correct, "2026-05-23T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .koToEn, .correct, "2026-05-23T00:01:00Z"),
             attempt(word, .enToKo, .correct, "2026-05-24T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .koToEn, .correct, "2026-05-24T00:01:00Z"),
             attempt(word, .enToKo, .incorrect, "2026-05-25T00:00:00Z")
         ]
 
@@ -131,6 +141,24 @@ final class StudyPoliciesTests: XCTestCase {
         XCTAssertNil(state.masteredOn)
         XCTAssertEqual(state.failureCheck, 1)
         XCTAssertEqual(state.activePriority, 1)
+    }
+
+    func testMasteryMaintenanceBecomesEligibleOnlyAfterThirtyDays() {
+        let policy = MasteryMaintenancePolicy()
+        let reference = date("2026-06-30T01:00:00Z")
+
+        XCTAssertFalse(policy.needsRevalidation(
+            lastTestedAt: date("2026-06-15T01:00:00Z"),
+            asOf: reference
+        ))
+        XCTAssertTrue(policy.needsRevalidation(
+            lastTestedAt: date("2026-05-30T01:00:00Z"),
+            asOf: reference
+        ))
+        XCTAssertTrue(policy.needsRevalidation(
+            lastTestedAt: date("2026-05-30T15:00:00Z"),
+            asOf: reference
+        ))
     }
 
     func testMixedSessionSelectsTenFromEachPoolWithoutDuplicates() {
@@ -216,12 +244,9 @@ final class StudyPoliciesTests: XCTestCase {
         let wrongAttempts = (0..<3).map { index in
             attempt(word, .enToKo, .incorrect, "2026-05-01T00:0\(index):00Z")
         }
-        let successAttempts = (0..<3).flatMap { index in
+        let successAttempts = (0..<3).map { index in
             let day = 2 + index
-            return [
-                attempt(word, .enToKo, .correct, "2026-05-0\(day)T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-                attempt(word, .koToEn, .correct, "2026-05-0\(day)T00:01:00Z")
-            ]
+            return attempt(word, .enToKo, .correct, "2026-05-0\(day)T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id)
         }
         let progress = policy.progress(
             for: word,

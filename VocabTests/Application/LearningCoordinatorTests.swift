@@ -360,7 +360,7 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertTrue(try context.fetch(FetchDescriptor<TestSessionRecord>()).isEmpty)
     }
 
-    func testMultipleChoiceCorrectRelievesReviewButDoesNotAddMasterySuccessDays() throws {
+    func testMultipleChoiceCorrectRelievesReviewAndAddsMasterySuccessDay() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
@@ -380,10 +380,80 @@ final class LearningCoordinatorTests: XCTestCase {
         )
 
         XCTAssertEqual(question.word.reviewState?.enToKoStreak, 1)
-        XCTAssertTrue(question.word.activeMeanings.allSatisfy(\.successDays.isEmpty))
+        XCTAssertEqual(question.word.activeMeanings.flatMap(\.successDays), [SeoulCalendar.day(for: testDate)])
         let attempt = try XCTUnwrap(context.fetch(FetchDescriptor<AttemptRecord>()).first)
         XCTAssertEqual(attempt.questionFormatRaw, QuestionFormat.multipleChoice.rawValue)
         XCTAssertEqual(attempt.submittedAnswer, correct.label)
+    }
+
+    func testMultipleChoiceEnglishToKoreanOnlyCanReachMasteredAcrossThreeDays() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first)
+        let meaning = try XCTUnwrap(word.activeMeanings.first)
+
+        for dayOffset in 0..<3 {
+            let answeredAt = testDate.addingTimeInterval(TimeInterval(dayOffset) * 86_400)
+            let attempt = AttemptRecord(
+                directionRaw: PracticeDirection.enToKo.rawValue,
+                modeRaw: SessionMode.mixed.rawValue,
+                sessionID: UUID(),
+                questionIndex: 0,
+                seoulDay: SeoulCalendar.day(for: answeredAt),
+                prompt: word.term,
+                submittedAnswer: meaning.text,
+                automaticJudgementRaw: FinalResult.correct.rawValue,
+                finalJudgementRaw: FinalResult.correct.rawValue,
+                matchedMeaningID: meaning.id,
+                answeredAt: answeredAt,
+                questionFormatRaw: QuestionFormat.multipleChoice.rawValue
+            )
+            attempt.word = word
+            word.appendAttempt(attempt)
+            context.insert(attempt)
+        }
+
+        XCTAssertTrue(coordinator.recomputeReviewState(for: word).isEmpty)
+        XCTAssertEqual(word.statusRaw, "mastered")
+        XCTAssertEqual(Set(meaning.successDays).count, 3)
+        XCTAssertTrue(word.reviewState?.koToEnSuccessDays.isEmpty == true)
+    }
+
+    func testReviewSessionRevalidatesMasteredWordAndWrongAnswerReactivatesIt() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
+        let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first)
+        let meaning = try XCTUnwrap(word.activeMeanings.first)
+        let masteredAt = testDate.addingTimeInterval(-40 * 86_400)
+        meaning.successDays = [
+            SeoulCalendar.day(for: masteredAt.addingTimeInterval(-2 * 86_400)),
+            SeoulCalendar.day(for: masteredAt.addingTimeInterval(-86_400)),
+            SeoulCalendar.day(for: masteredAt)
+        ]
+        word.statusRaw = "mastered"
+        word.reviewState?.lastTestedAt = masteredAt
+
+        let generated = try coordinator.generateSession(
+            mode: .review,
+            direction: .enToKo,
+            date: testDate
+        )
+        let question = try XCTUnwrap(generated.1.first { $0.word.id == word.id })
+        try coordinator.commit(
+            answer: "오답",
+            result: .incorrect,
+            automatic: .incorrect,
+            matchedMeaningID: nil,
+            question: question,
+            session: generated.0,
+            date: testDate
+        )
+
+        XCTAssertEqual(word.statusRaw, "active")
+        XCTAssertGreaterThanOrEqual(word.reviewState?.activePriority ?? 0, 1)
+        XCTAssertEqual(word.reviewState?.latestWrongAt, testDate)
     }
 
     func testTodaySessionPrioritizesWordsNotPreviouslyPresentedThatDay() throws {
