@@ -21,6 +21,7 @@ struct TodayIntakeView: View {
     @State private var isError = false
     @State private var isImportingImage = false
     @State private var isRecognizingText = false
+    @State private var ocrSuspectedMissingNumbers: [String] = []
 
     private var filledCount: Int {
         drafts.filter { !$0.term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
@@ -68,11 +69,18 @@ struct TodayIntakeView: View {
                     pasteAnalysis = .empty
                     drafts = (0..<100).map { _ in WordDraft() }
                     message = nil
+                    ocrSuspectedMissingNumbers = []
                 }
                 .controlSize(.large)
             }
         }
         .onChange(of: pastedText) {
+            updatePasteAnalysis()
+        }
+        .onChange(of: mode) { _, newMode in
+            if newMode != .image {
+                ocrSuspectedMissingNumbers = []
+            }
             updatePasteAnalysis()
         }
     }
@@ -227,6 +235,7 @@ struct TodayIntakeView: View {
             pastedText = ""
             pasteAnalysis = .empty
             drafts = (0..<100).map { _ in WordDraft() }
+            ocrSuspectedMissingNumbers = []
         } catch {
             message = error.localizedDescription
             isError = true
@@ -271,17 +280,32 @@ struct TodayIntakeView: View {
     }
 
     private func updatePasteAnalysis() {
-        pasteAnalysis = analyzePaste(pastedText)
+        pasteAnalysis = analyzePaste(
+            pastedText,
+            additionalMissingNumbers: mode == .image ? ocrSuspectedMissingNumbers : []
+        )
     }
 
-    private func analyzePaste(_ text: String) -> PasteAnalysis {
+    private func analyzePaste(
+        _ text: String,
+        additionalMissingNumbers: [String] = []
+    ) -> PasteAnalysis {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return .empty
         }
+        let ocrResult = OCRVocabularyFormattingResult(
+            text: text,
+            suspectedMissingNumbers: additionalMissingNumbers
+        )
+        let missingNumbers = orderedUnique(
+            IntakeNumberSequenceAnalyzer.missingNumbers(in: text) +
+            ocrResult.unresolvedMissingNumbers(in: text)
+        )
+        let suffix = missingNumbers.isEmpty
+            ? ""
+            : " 누락 의심 번호: \(missingNumbers.joined(separator: ", "))"
         do {
             let drafts = try DailyIntakePasteParser.parse(text)
-            let missingNumbers = IntakeNumberSequenceAnalyzer.missingNumbers(in: text)
-            let suffix = missingNumbers.isEmpty ? "" : " 누락 의심 번호: \(missingNumbers.joined(separator: ", "))"
             if drafts.count <= 100 {
                 return PasteAnalysis(
                     drafts: drafts,
@@ -291,7 +315,11 @@ struct TodayIntakeView: View {
             }
             return PasteAnalysis(drafts: drafts, status: "\(drafts.count)개가 인식되었습니다. 한 번에 최대 100개까지 저장할 수 있습니다.\(suffix)", isReady: false)
         } catch {
-            return PasteAnalysis(drafts: [], status: error.localizedDescription, isReady: false)
+            return PasteAnalysis(
+                drafts: [],
+                status: "\(error.localizedDescription)\(suffix)",
+                isReady: false
+            )
         }
     }
 
@@ -300,12 +328,17 @@ struct TodayIntakeView: View {
             let urls = try result.get()
             guard !urls.isEmpty else { return }
             isRecognizingText = true
+            ocrSuspectedMissingNumbers = []
             Task {
                 do {
-                    let text = try await recognizeText(from: urls)
+                    let result = try await recognizeText(from: urls)
                     await MainActor.run {
-                        pastedText = text
-                        pasteAnalysis = analyzePaste(text)
+                        ocrSuspectedMissingNumbers = result.suspectedMissingNumbers
+                        pastedText = result.text
+                        pasteAnalysis = analyzePaste(
+                            result.text,
+                            additionalMissingNumbers: result.suspectedMissingNumbers
+                        )
                         message = "\(urls.count)장 이미지에서 OCR 텍스트를 추출했습니다. 저장 전 원본 캡쳐본과 대조하세요."
                         isError = false
                         isRecognizingText = false
@@ -324,7 +357,7 @@ struct TodayIntakeView: View {
         }
     }
 
-    private func recognizeText(from urls: [URL]) async throws -> String {
+    private func recognizeText(from urls: [URL]) async throws -> OCRVocabularyFormattingResult {
         try await Task.detached(priority: .userInitiated) {
             var pages: [[OCRTextToken]] = []
             for url in urls {
@@ -334,8 +367,17 @@ struct TodayIntakeView: View {
                 }
             }
             guard !pages.allSatisfy(\.isEmpty) else { throw OCRError.noText }
-            return try OCRVocabularyFormatter.formatPages(pages)
+            return try OCRVocabularyFormatter.formatPagesWithDiagnostics(pages)
         }.value
+    }
+
+    private func orderedUnique(_ values: [String]) -> [String] {
+        var seen: Set<String> = []
+        var result: [String] = []
+        for value in values where seen.insert(value).inserted {
+            result.append(value)
+        }
+        return result
     }
 }
 

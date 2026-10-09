@@ -121,6 +121,168 @@ final class OCRVocabularyFormatterTests: XCTestCase {
         )
     }
 
+    func testPrefersLeftmostHeadwordWhenPronunciationIsCloserToNumberLine() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760),
+            token("categorically", x: 0.150, y: 0.738),
+            token("kaetegorikeli", x: 0.320, y: 0.758),
+            token("절대적으로, 명확히", x: 0.150, y: 0.714)
+        ])
+
+        XCTAssertEqual(output, "0001-categorically-절대적으로, 명확히")
+    }
+
+    func testRemovesPronunciationMergedIntoSameUnbracketedToken() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760),
+            token("categorically kaetegorikeli", x: 0.150, y: 0.738),
+            token("절대적으로, 명확히", x: 0.150, y: 0.714)
+        ])
+
+        XCTAssertEqual(output, "0001-categorically-절대적으로, 명확히")
+    }
+
+    func testPreservesGenuineMultiwordHeadwordWithoutPronunciation() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760),
+            token("credit card", x: 0.150, y: 0.738),
+            token("신용 카드", x: 0.150, y: 0.714)
+        ])
+
+        XCTAssertEqual(output, "0001-credit card-신용 카드")
+    }
+
+    func testPreservesShortSimilarMultiwordHeadword() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760),
+            token("in line", x: 0.150, y: 0.738),
+            token("일렬로", x: 0.150, y: 0.714)
+        ])
+
+        XCTAssertEqual(output, "0001-in line-일렬로")
+    }
+
+    func testUsesNearestMeaningLineInsteadOfMixingAdjacentRows() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760),
+            token("categorically", x: 0.150, y: 0.738),
+            token("절대적으로, 명확히", x: 0.150, y: 0.714),
+            token("0002", x: 0.150, y: 0.680),
+            token("obsolete", x: 0.150, y: 0.658),
+            token("구식의, 한물 간", x: 0.150, y: 0.634)
+        ])
+
+        XCTAssertEqual(
+            output,
+            """
+            0001-categorically-절대적으로, 명확히
+            0002-obsolete-구식의, 한물 간
+            """
+        )
+    }
+
+    func testPreservesWrappedMeaningLinesWithinSameVocabularyRow() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760),
+            token("categorically", x: 0.150, y: 0.738),
+            token("절대적으로, 단정적으로", x: 0.150, y: 0.714),
+            token("명확히", x: 0.150, y: 0.694),
+            token("0002", x: 0.150, y: 0.660),
+            token("obsolete", x: 0.150, y: 0.638),
+            token("구식의", x: 0.150, y: 0.614)
+        ])
+
+        XCTAssertEqual(
+            output,
+            """
+            0001-categorically-절대적으로, 단정적으로 명확히
+            0002-obsolete-구식의
+            """
+        )
+    }
+
+    func testMissingMiddleNumberDoesNotMergeItsMeaningIntoPreviousRow() throws {
+        let result = try OCRVocabularyFormatter.formatPagesWithDiagnostics([[
+            token("0001", x: 0.150, y: 0.760),
+            token("first", x: 0.150, y: 0.738),
+            token("첫째", x: 0.150, y: 0.714),
+            token("second", x: 0.150, y: 0.658),
+            token("둘째", x: 0.150, y: 0.634),
+            token("0003", x: 0.150, y: 0.600),
+            token("third", x: 0.150, y: 0.578),
+            token("셋째", x: 0.150, y: 0.554),
+            token("0004", x: 0.150, y: 0.520),
+            token("fourth", x: 0.150, y: 0.498),
+            token("넷째", x: 0.150, y: 0.474)
+        ]])
+
+        XCTAssertEqual(
+            result.text,
+            """
+            0001-first-첫째
+            0003-third-셋째
+            0004-fourth-넷째
+            """
+        )
+        XCTAssertEqual(result.suspectedMissingNumbers, ["0002"])
+    }
+
+    func testReportsRecognizedNumberWhenItsVocabularyRowCannotBeCompleted() throws {
+        let result = try OCRVocabularyFormatter.formatPagesWithDiagnostics([[
+            token("0001", x: 0.150, y: 0.760),
+            token("categorically", x: 0.150, y: 0.738),
+            token("절대적으로, 명확히", x: 0.150, y: 0.714),
+            token("0002", x: 0.150, y: 0.680),
+            token("obsolete", x: 0.150, y: 0.658)
+        ]])
+
+        XCTAssertEqual(result.text, "0001-categorically-절대적으로, 명확히")
+        XCTAssertEqual(result.suspectedMissingNumbers, ["0002"])
+    }
+
+    func testReportsMissingFirstAndLastRowsOnCompleteDayPage() throws {
+        var tokens = vocabularyPage(start: 1, rowCount: 20)
+        tokens.append(token("DAY01", x: 0.500, y: 0.850))
+        tokens.removeAll { token in
+            (token.boundingBox.midX < 0.5 && token.boundingBox.midY > 0.71) ||
+            (token.boundingBox.midX > 0.5 && token.boundingBox.midY < 0.21)
+        }
+
+        let result = try OCRVocabularyFormatter.formatPagesWithDiagnostics([tokens])
+
+        XCTAssertEqual(result.suspectedMissingNumbers, ["0001", "0020"])
+    }
+
+    func testReportsThreeLeadingRowsMissingFromOneDayPageColumn() throws {
+        var tokens = vocabularyPage(start: 1, rowCount: 20)
+        tokens.append(token("DAY01", x: 0.500, y: 0.850))
+        tokens.removeAll { token in
+            token.boundingBox.midX < 0.5 && token.boundingBox.midY > 0.58
+        }
+
+        let result = try OCRVocabularyFormatter.formatPagesWithDiagnostics([tokens])
+
+        XCTAssertEqual(result.suspectedMissingNumbers, ["0001", "0002", "0003"])
+    }
+
+    func testManualCorrectionResolvesReportedOCRMissingNumber() throws {
+        let result = OCRVocabularyFormattingResult(
+            text: "0001-first-첫째",
+            suspectedMissingNumbers: ["0002"]
+        )
+
+        XCTAssertEqual(result.unresolvedMissingNumbers(in: result.text), ["0002"])
+        XCTAssertEqual(
+            result.unresolvedMissingNumbers(
+                in: """
+                0001-first-첫째
+                0002-second-둘째
+                """
+            ),
+            []
+        )
+    }
+
     func testRecognizesRestartedNumberingReferenceImage() throws {
         let fixtureURL = try XCTUnwrap(
             Bundle(for: Self.self).url(
@@ -133,14 +295,35 @@ final class OCRVocabularyFormatterTests: XCTestCase {
             )
         )
         let tokens = try OCRTextRecognizer.recognizeTokens(from: fixtureURL)
-        let output = try OCRVocabularyFormatter.format(tokens)
-        let rows = output.components(separatedBy: .newlines)
+        let result = try OCRVocabularyFormatter.formatPagesWithDiagnostics([tokens])
+        let output = result.text
 
-        XCTAssertEqual(rows.count, 20, output)
-        XCTAssertEqual(rows.first, "0001-categorically-절대적으로, 단정적으로, 명확히")
-        XCTAssertTrue(rows.contains("0006-general election-총선"), output)
-        XCTAssertTrue(rows.contains("0011-insinuate-암시하다, 돌려서 말하다"), output)
-        XCTAssertEqual(rows.last, "0020-embryonic-배에 관한, 태아의, 미발달의, 미숙한")
+        XCTAssertEqual(
+            output,
+            """
+            0001-categorically-절대적으로, 단정적으로, 명확히
+            0002-obsolete-구식의, 한물 간, 시대에 뒤떨어진
+            0003-evaporation-증발, 소멸, 소산
+            0004-impair-(힘·가치·건강 등을) 손상시키다, 악화시키다, 해치다
+            0005-prestige-명성, 위신, 위신[명망] 있는, 일류의, 고급의
+            0006-general election-총선
+            0007-crooked-구부러진, 부정직한
+            0008-detain-억류하다, 구류하다, 감금하다
+            0009-fair-minded-(판단 등이) 공평한, 공정한, 편견이 없는
+            0010-topmost-가장 높은, 최고의
+            0011-insinuate-암시하다, 돌려서 말하다
+            0012-tentative-잠정적인, 시험적인, 임시의, 머뭇거리는
+            0013-psychiatric-정신의학의, 정신과의
+            0014-sensual-관능적인, 육감적인, 육체적인
+            0015-ability-할수있음, 능력
+            0016-carnal-육체의, 세속적인
+            0017-inexperienced-경험이 없는, 미숙한, 서투른
+            0018-jealousy-질투(심)
+            0019-miserly-구두쇠의, 인색한, 욕심많은, (양·금액 등이) 매우 적은
+            0020-embryonic-배에 관한, 태아의, 미발달의, 미숙한
+            """
+        )
+        XCTAssertTrue(result.suspectedMissingNumbers.isEmpty)
     }
 
     func testMissingNumberAnalysisTreatsNumberRestartAsNewSequence() {
@@ -154,6 +337,18 @@ final class OCRVocabularyFormatterTests: XCTestCase {
         )
 
         XCTAssertEqual(missing, ["0099", "0002"])
+    }
+
+    func testNumberPrefixesSupportResolvingOCRMissingWarningsAfterManualCorrection() {
+        let prefixes = IntakeNumberSequenceAnalyzer.numberPrefixes(
+            in: """
+            0001-first-첫째
+            malformed
+            0002-second-둘째
+            """
+        )
+
+        XCTAssertEqual(prefixes, ["0001", "0002"])
     }
 
     func testRecoversNoisyNumbersAndLooserRowAlignment() throws {
@@ -273,4 +468,5 @@ final class OCRVocabularyFormatterTests: XCTestCase {
             ]
         }
     }
+
 }
