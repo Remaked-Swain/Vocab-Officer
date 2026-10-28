@@ -503,6 +503,7 @@ struct SettingsView: View {
         .contentMargins(24, for: .scrollContent)
         .frame(minWidth: 600, idealWidth: 820, minHeight: 480, idealHeight: 760)
         .task {
+            memoryAidModel = MemoryAidModel.resolve(storedRawValue: memoryAidModel).rawValue
             await loadAPIKey()
             await refreshHydrationStatus(runFullAudit: false)
             refreshRecoveryReplicaDescription()

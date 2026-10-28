@@ -2,20 +2,20 @@ import XCTest
 @testable import Vocab
 
 final class MemoryAidServiceTests: XCTestCase {
-    func testGenerateContentResponseConcatenatesCandidateTextParts() throws {
+    func testInteractionResponseConcatenatesModelOutputTextParts() throws {
         let response = try JSONDecoder().decode(
-            GeminiGenerateContentResponse.self,
+            GeminiInteractionResponse.self,
             from: Data(
                 """
                 {
-                  "candidates": [
+                  "status": "completed",
+                  "steps": [
                     {
-                      "content": {
-                        "parts": [
-                          { "text": "## 한줄 기억\\n핵심" },
-                          { "text": "## 예문\\nExample" }
-                        ]
-                      }
+                      "type": "model_output",
+                      "content": [
+                        { "type": "text", "text": "## 한줄 기억\\n핵심" },
+                        { "type": "text", "text": "## 예문\\nExample" }
+                      ]
                     }
                   ]
                 }
@@ -24,29 +24,59 @@ final class MemoryAidServiceTests: XCTestCase {
         )
 
         XCTAssertEqual(response.outputText, "## 한줄 기억\n핵심\n## 예문\nExample")
+        XCTAssertEqual(response.status, "completed")
     }
 
-    func testGenerateContentRequestUsesContentsPartsShape() throws {
-        let request = GeminiGenerateContentRequest(
-            contents: [
-                .init(role: "user", parts: [.init(text: "prompt")])
-            ],
+    func testInteractionResponsePreservesIncompleteStatus() throws {
+        let response = try JSONDecoder().decode(
+            GeminiInteractionResponse.self,
+            from: Data(
+                """
+                {
+                  "status": "incomplete",
+                  "steps": [
+                    {
+                      "type": "model_output",
+                      "content": [
+                        { "type": "text", "text": "partial" }
+                      ]
+                    }
+                  ]
+                }
+                """.utf8
+            )
+        )
+
+        XCTAssertEqual(response.status, "incomplete")
+        XCTAssertEqual(response.outputText, "partial")
+    }
+
+    func testInteractionRequestUsesCurrentAPIShape() throws {
+        let request = GeminiInteractionRequest(
+            model: MemoryAidModel.gemini35FlashLite.rawValue,
+            input: "prompt",
             generationConfig: .init(temperature: 0.35, maxOutputTokens: MemoryAidRequestPolicy.maxOutputTokens)
         )
 
         let json = String(data: try JSONEncoder().encode(request), encoding: .utf8) ?? ""
 
-        XCTAssertTrue(json.contains("\"contents\""))
-        XCTAssertTrue(json.contains("\"parts\""))
-        XCTAssertTrue(json.contains("\"text\":\"prompt\""))
-        XCTAssertTrue(json.contains("\"generationConfig\""))
-        XCTAssertFalse(json.contains("\"input\""))
+        XCTAssertTrue(json.contains("\"model\":\"gemini-3.5-flash-lite\""))
+        XCTAssertTrue(json.contains("\"input\":\"prompt\""))
+        XCTAssertTrue(json.contains("\"generation_config\""))
+        XCTAssertTrue(json.contains("\"max_output_tokens\":850"))
+        XCTAssertFalse(json.contains("\"contents\""))
     }
 
-    func testDefaultModelUsesLowerQuotaPressureModel() {
-        XCTAssertEqual(MemoryAidModel.defaultModel, .gemini31FlashLite)
-        XCTAssertEqual(MemoryAidModel.gemini35Flash.fallbackModels, [.gemini31FlashLite])
-        XCTAssertTrue(MemoryAidModel.gemini31FlashLite.fallbackModels.isEmpty)
+    func testDefaultModelUsesCurrentLowQuotaModelAndFallbacks() {
+        XCTAssertEqual(MemoryAidModel.defaultModel, .gemini35FlashLite)
+        XCTAssertEqual(MemoryAidModel.gemini38Flash.fallbackModels, [.gemini35FlashLite, .gemini31FlashLite])
+        XCTAssertEqual(MemoryAidModel.gemini35FlashLite.fallbackModels, [.gemini31FlashLite])
+        XCTAssertEqual(MemoryAidModel.gemini31FlashLite.fallbackModels, [.gemini35FlashLite])
+    }
+
+    func testLegacyModelSelectionMigratesToCurrentQualityModel() {
+        XCTAssertEqual(MemoryAidModel.resolve(storedRawValue: "gemini-3.5-flash"), .gemini38Flash)
+        XCTAssertEqual(MemoryAidModel.resolve(storedRawValue: "unknown-model"), .defaultModel)
     }
 
     func testPromptBuilderIncludesHeadwordAndMeanings() {
@@ -204,7 +234,8 @@ final class MemoryAidServiceTests: XCTestCase {
 
     func testRequestPolicyRetriesTransientHTTPStatus() {
         XCTAssertTrue(MemoryAidRequestPolicy.shouldRetryHTTPStatus(408))
-        XCTAssertTrue(MemoryAidRequestPolicy.shouldRetryHTTPStatus(503))
+        XCTAssertTrue(MemoryAidRequestPolicy.shouldRetryHTTPStatus(500))
+        XCTAssertFalse(MemoryAidRequestPolicy.shouldRetryHTTPStatus(503))
         XCTAssertFalse(MemoryAidRequestPolicy.shouldRetryHTTPStatus(400))
         XCTAssertFalse(MemoryAidRequestPolicy.shouldRetryHTTPStatus(429))
     }
@@ -239,10 +270,36 @@ final class MemoryAidServiceTests: XCTestCase {
     }
 
     func testRateLimitErrorMentionsModelAndLighterModel() {
-        let message = MemoryAidError.userFacingMessage(for: MemoryAidError.rateLimited(model: .gemini35Flash, retryAfter: nil))
+        let message = MemoryAidError.userFacingMessage(
+            for: MemoryAidError.rateLimited(model: .gemini38Flash, retryAfter: nil)
+        )
 
-        XCTAssertTrue(message.contains("Gemini 3.5 Flash"))
+        XCTAssertTrue(message.contains("Gemini 3.8 Flash"))
         XCTAssertTrue(message.contains("가벼운 모델"))
+    }
+
+    func testFallbackPolicyAcceptsModelSpecificProviderFailuresOnly() {
+        XCTAssertTrue(
+            MemoryAidRequestPolicy.shouldTryFallbackModel(
+                after: MemoryAidError.rateLimited(model: .gemini38Flash, retryAfter: nil)
+            )
+        )
+        XCTAssertTrue(
+            MemoryAidRequestPolicy.shouldTryFallbackModel(
+                after: MemoryAidError.modelUnavailable(model: .gemini35FlashLite)
+            )
+        )
+        XCTAssertTrue(
+            MemoryAidRequestPolicy.shouldTryFallbackModel(
+                after: MemoryAidError.temporarilyUnavailable(model: .gemini31FlashLite)
+            )
+        )
+        XCTAssertTrue(
+            MemoryAidRequestPolicy.shouldTryFallbackModel(
+                after: MemoryAidError.requestTimedOut
+            )
+        )
+        XCTAssertFalse(MemoryAidRequestPolicy.shouldTryFallbackModel(after: URLError(.notConnectedToInternet)))
     }
 
     func testRateLimitCooldownStoreUsesRetryAfterSeconds() {
@@ -256,11 +313,11 @@ final class MemoryAidServiceTests: XCTestCase {
             headerFields: ["Retry-After": "120"]
         )!
 
-        let retryAfter = store.recordRateLimit(for: .gemini35Flash, response: response, now: now)
+        let retryAfter = store.recordRateLimit(for: .gemini38Flash, response: response, now: now)
 
         XCTAssertEqual(retryAfter.timeIntervalSince(now), 120, accuracy: 0.001)
-        XCTAssertEqual(store.retryAfter(for: .gemini35Flash, now: now.addingTimeInterval(60)), retryAfter)
-        XCTAssertNil(store.retryAfter(for: .gemini35Flash, now: now.addingTimeInterval(121)))
+        XCTAssertEqual(store.retryAfter(for: .gemini38Flash, now: now.addingTimeInterval(60)), retryAfter)
+        XCTAssertNil(store.retryAfter(for: .gemini38Flash, now: now.addingTimeInterval(121)))
     }
 
     func testRateLimitCooldownStoreFallsBackWhenRetryAfterHeaderIsMissing() {

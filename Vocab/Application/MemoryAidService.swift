@@ -3,17 +3,21 @@ import Security
 import SwiftData
 
 enum MemoryAidModel: String, CaseIterable, Identifiable {
-    case gemini35Flash = "gemini-3.5-flash"
+    case gemini38Flash = "gemini-3.8-flash"
+    case gemini35FlashLite = "gemini-3.5-flash-lite"
     case gemini31FlashLite = "gemini-3.1-flash-lite"
 
-    static let defaultModel: MemoryAidModel = .gemini31FlashLite
+    static let defaultModel: MemoryAidModel = .gemini35FlashLite
+    private static let legacyGemini35Flash = "gemini-3.5-flash"
 
     var id: String { rawValue }
 
     var displayName: String {
         switch self {
-        case .gemini35Flash:
-            "Gemini 3.5 Flash"
+        case .gemini38Flash:
+            "Gemini 3.8 Flash"
+        case .gemini35FlashLite:
+            "Gemini 3.5 Flash-Lite"
         case .gemini31FlashLite:
             "Gemini 3.1 Flash-Lite"
         }
@@ -21,20 +25,31 @@ enum MemoryAidModel: String, CaseIterable, Identifiable {
 
     var summary: String {
         switch self {
-        case .gemini35Flash:
-            "속도와 품질 균형"
+        case .gemini38Flash:
+            "높은 품질 · 호출 한도 주의"
+        case .gemini35FlashLite:
+            "빠른 응답 · 기본 권장"
         case .gemini31FlashLite:
-            "더 가볍고 저렴한 호출"
+            "장애 시 경량 대체 모델"
         }
     }
 
     var fallbackModels: [MemoryAidModel] {
         switch self {
-        case .gemini35Flash:
+        case .gemini38Flash:
+            [.gemini35FlashLite, .gemini31FlashLite]
+        case .gemini35FlashLite:
             [.gemini31FlashLite]
         case .gemini31FlashLite:
-            []
+            [.gemini35FlashLite]
         }
+    }
+
+    static func resolve(storedRawValue: String) -> MemoryAidModel {
+        if storedRawValue == legacyGemini35Flash {
+            return .gemini38Flash
+        }
+        return MemoryAidModel(rawValue: storedRawValue) ?? defaultModel
     }
 }
 
@@ -108,7 +123,7 @@ enum MemoryAidProgressStage: Equatable {
         case .waitingToRetry:
             return "네트워크 또는 서버 응답이 불안정해 잠시 후 다시 시도합니다."
         case .switchingModel(let from, let to):
-            return "\(from.displayName)의 API 한도가 일시적으로 막혀 \(to.displayName)로 다시 시도합니다."
+            return "\(from.displayName)을 사용할 수 없어 \(to.displayName)로 다시 시도합니다."
         case .validating(let attempt):
             return attempt == 1 ? "응답 형식과 가독성 기준을 검사합니다." : "\(attempt)번째 응답의 품질을 검사합니다."
         case .improvingQuality(let attempt):
@@ -131,6 +146,8 @@ enum MemoryAidError: LocalizedError {
     case emptyResponse
     case requestTimedOut
     case rateLimited(model: MemoryAidModel, retryAfter: Date?)
+    case modelUnavailable(model: MemoryAidModel)
+    case temporarilyUnavailable(model: MemoryAidModel)
     case providerError(String)
 
     var errorDescription: String? {
@@ -149,6 +166,10 @@ enum MemoryAidError: LocalizedError {
             } else {
                 "\(model.displayName)의 API 호출 한도에 일시적으로 걸렸습니다. 잠시 후 다시 시도하거나 설정에서 더 가벼운 모델을 선택하세요."
             }
+        case .modelUnavailable(let model):
+            "\(model.displayName)을 현재 사용할 수 없습니다. 다른 Gemini 모델로 자동 전환하지 못했습니다."
+        case .temporarilyUnavailable(let model):
+            "\(model.displayName)의 응답이 일시적으로 불안정합니다. 잠시 후 다시 시도하세요."
         case .providerError(let message):
             message
         }
@@ -190,7 +211,7 @@ enum MemoryAidRequestPolicy {
     ]
 
     static func shouldRetryHTTPStatus(_ statusCode: Int) -> Bool {
-        statusCode == 408 || (500...599).contains(statusCode)
+        statusCode == 408 || ((500...599).contains(statusCode) && statusCode != 503)
     }
 
     static func shouldRetry(error: Error) -> Bool {
@@ -202,6 +223,16 @@ enum MemoryAidRequestPolicy {
         guard let urlError = error as? URLError else { return false }
         switch urlError.code {
         case .timedOut, .networkConnectionLost, .cannotConnectToHost, .notConnectedToInternet, .dnsLookupFailed, .badServerResponse:
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func shouldTryFallbackModel(after error: Error) -> Bool {
+        guard let memoryAidError = error as? MemoryAidError else { return false }
+        switch memoryAidError {
+        case .requestTimedOut, .rateLimited, .modelUnavailable, .temporarilyUnavailable:
             return true
         default:
             return false
@@ -476,7 +507,7 @@ final class MemoryAidService {
         do {
             let signature = MemoryAidQualityGate.contentSignature(for: word)
             let modelsToTry = [model] + model.fallbackModels
-            var lastRateLimit: MemoryAidError?
+            var lastFallbackError: MemoryAidError?
 
             for candidateModel in modelsToTry {
                 onProgress?(.checkingCache)
@@ -492,7 +523,7 @@ final class MemoryAidService {
                 onProgress?(.checkingQuota(model: candidateModel))
                 if let retryAfter = quotaCooldownStore.retryAfter(for: candidateModel) {
                     onProgress?(.quotaCoolingDown(model: candidateModel, retryAfter: retryAfter))
-                    lastRateLimit = .rateLimited(model: candidateModel, retryAfter: retryAfter)
+                    lastFallbackError = .rateLimited(model: candidateModel, retryAfter: retryAfter)
                     continue
                 }
 
@@ -517,16 +548,16 @@ final class MemoryAidService {
                     onProgress?(.completedGenerated)
                     return WordMemoryAid(markdown: cache.markdown, generatedAt: cache.generatedAt, source: .generated, model: candidateModel)
                 } catch let error as MemoryAidError {
-                    if case .rateLimited = error {
-                        lastRateLimit = error
+                    if MemoryAidRequestPolicy.shouldTryFallbackModel(after: error) {
+                        lastFallbackError = error
                         continue
                     }
                     throw error
                 }
             }
 
-            if let lastRateLimit {
-                throw lastRateLimit
+            if let lastFallbackError {
+                throw lastFallbackError
             }
             throw MemoryAidError.providerError("Gemini API 호출에 실패했습니다. 잠시 후 다시 시도하세요.")
         } catch {
@@ -612,6 +643,9 @@ final class MemoryAidService {
         if let urlError = lastError as? URLError, urlError.code == .timedOut {
             throw MemoryAidError.requestTimedOut
         }
+        if let urlError = lastError as? URLError, urlError.code == .badServerResponse {
+            throw MemoryAidError.temporarilyUnavailable(model: model)
+        }
         if let lastError {
             throw lastError
         }
@@ -619,22 +653,16 @@ final class MemoryAidService {
     }
 
     private func requestMarkdown(using apiKey: String, model: MemoryAidModel, prompt: String) async throws -> String {
-        let requestBody = GeminiGenerateContentRequest(
-            contents: [
-                .init(
-                    role: "user",
-                    parts: [
-                        .init(text: prompt)
-                    ]
-                )
-            ],
+        let requestBody = GeminiInteractionRequest(
+            model: model.rawValue,
+            input: prompt,
             generationConfig: .init(
                 temperature: 0.35,
                 maxOutputTokens: MemoryAidRequestPolicy.maxOutputTokens
             )
         )
 
-        let endpoint = "https://generativelanguage.googleapis.com/v1beta/models/\(model.rawValue):generateContent"
+        let endpoint = "https://generativelanguage.googleapis.com/v1beta/interactions"
         var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
         request.timeoutInterval = MemoryAidRequestPolicy.requestTimeout
@@ -675,7 +703,10 @@ final class MemoryAidService {
             )
         }
 
-        let decoded = try JSONDecoder().decode(GeminiGenerateContentResponse.self, from: data)
+        let decoded = try JSONDecoder().decode(GeminiInteractionResponse.self, from: data)
+        guard decoded.status == "completed" else {
+            throw MemoryAidError.temporarilyUnavailable(model: model)
+        }
         guard let output = decoded.outputText?.trimmingCharacters(in: .whitespacesAndNewlines), !output.isEmpty else {
             throw MemoryAidError.emptyResponse
         }
@@ -693,6 +724,12 @@ final class MemoryAidService {
             let retryAfter = quotaCooldownStore.recordRateLimit(for: model, response: response)
             return .rateLimited(model: model, retryAfter: retryAfter)
         }
+        if statusCode == 404 {
+            return .modelUnavailable(model: model)
+        }
+        if statusCode == 503 {
+            return .temporarilyUnavailable(model: model)
+        }
         return .providerError(providerStatusMessage(statusCode: statusCode, providerMessage: providerMessage))
     }
 
@@ -702,8 +739,6 @@ final class MemoryAidService {
             return "Gemini 요청 형식이 올바르지 않습니다. 앱을 최신 상태로 다시 설치한 뒤 재시도하세요."
         case 401, 403:
             return "Gemini API 키가 유효하지 않거나 권한이 없습니다. 설정에서 API 키를 다시 확인하세요."
-        case 404:
-            return "선택한 Gemini 모델을 사용할 수 없습니다. 설정에서 다른 모델을 선택한 뒤 재시도하세요."
         default:
             if let providerMessage, !providerMessage.isEmpty {
                 return "Gemini API 호출에 실패했습니다. \(providerMessage)"
@@ -768,46 +803,52 @@ private extension Array where Element == Duration {
     }
 }
 
-struct GeminiGenerateContentRequest: Encodable {
-    struct Content: Encodable {
-        let role: String
-        let parts: [Part]
-    }
-
-    struct Part: Encodable {
-        let text: String
-    }
-
+struct GeminiInteractionRequest: Encodable {
     struct GenerationConfig: Encodable {
         let temperature: Double
         let maxOutputTokens: Int
+
+        enum CodingKeys: String, CodingKey {
+            case temperature
+            case maxOutputTokens = "max_output_tokens"
+        }
     }
 
-    let contents: [Content]
+    let model: String
+    let input: String
     let generationConfig: GenerationConfig
+
+    enum CodingKeys: String, CodingKey {
+        case model
+        case input
+        case generationConfig = "generation_config"
+    }
 }
 
-struct GeminiGenerateContentResponse: Decodable {
-    struct Candidate: Decodable {
+struct GeminiInteractionResponse: Decodable {
+    struct Step: Decodable {
         struct Content: Decodable {
-            struct Part: Decodable {
-                let text: String?
-            }
-
-            let parts: [Part]?
+            let type: String?
+            let text: String?
         }
 
-        let content: Content?
+        let type: String?
+        let content: [Content]?
     }
 
-    let candidates: [Candidate]?
+    let status: String?
+    let steps: [Step]?
 
     var outputText: String? {
-        candidates?
-            .compactMap(\.content)
-            .flatMap { $0.parts ?? [] }
-            .compactMap(\.text)
-            .joined(separator: "\n")
+        guard let steps else { return nil }
+        var outputParts: [String] = []
+        for step in steps where step.type == "model_output" {
+            for content in step.content ?? [] where content.type == nil || content.type == "text" {
+                guard let text = content.text else { continue }
+                outputParts.append(text)
+            }
+        }
+        return outputParts.joined(separator: "\n")
     }
 }
 

@@ -39,7 +39,7 @@ private struct WordMemoryAidSheet: View {
     }
 
     private var selectedModel: MemoryAidModel {
-        MemoryAidModel(rawValue: modelRawValue) ?? .defaultModel
+        MemoryAidModel.resolve(storedRawValue: modelRawValue)
     }
 
     private var renderedMarkdown: AttributedString? {
