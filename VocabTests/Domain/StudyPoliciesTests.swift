@@ -94,6 +94,24 @@ final class StudyPoliciesTests: XCTestCase {
         XCTAssertEqual(state.koToEnStreak, 0)
     }
 
+    func testRepeatedCorrectAnswersOnOneDayDoNotReachMastered() {
+        let word = makeWord()
+        let attempts = (0..<6).map { minute in
+            attempt(
+                word,
+                .enToKo,
+                .correct,
+                String(format: "2026-05-25T00:%02d:00Z", minute),
+                matchedMeaningID: word.coreMeanings[0].id
+            )
+        }
+
+        let state = policy.state(for: word, attempts: attempts)
+
+        XCTAssertFalse(state.isMastered)
+        XCTAssertEqual(state.coreMeaningSuccessDays[word.coreMeanings[0].id], ["2026-05-25"])
+    }
+
     func testMasteryAcceptsEnglishToKoreanOnlySuccessOnThreeDistinctSeoulDays() {
         let word = makeWord()
         let attempts = [
@@ -126,42 +144,77 @@ final class StudyPoliciesTests: XCTestCase {
         XCTAssertEqual(state.koToEnSuccessDays.count, 3)
     }
 
-    func testRecentFailureBlocksMasteryAndRaisesActivePriority() {
+    func testMasteryRequiresThreeNewSuccessDaysAfterLatestFailure() {
         let word = makeWord()
-        let attempts = [
+        let historicalSuccesses = [
             attempt(word, .enToKo, .correct, "2026-05-22T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
             attempt(word, .enToKo, .correct, "2026-05-23T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
             attempt(word, .enToKo, .correct, "2026-05-24T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
             attempt(word, .enToKo, .incorrect, "2026-05-25T00:00:00Z")
         ]
+        let firstTwoRelearningDays = [
+            attempt(word, .enToKo, .correct, "2026-05-26T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
+            attempt(word, .enToKo, .correct, "2026-05-27T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id)
+        ]
+        let thirdRelearningDay = attempt(
+            word,
+            .enToKo,
+            .correct,
+            "2026-05-28T00:00:00Z",
+            matchedMeaningID: word.coreMeanings[0].id
+        )
 
-        let state = policy.state(for: word, attempts: attempts, asOf: date("2026-05-25T01:00:00Z"))
+        let recovering = policy.state(
+            for: word,
+            attempts: historicalSuccesses + firstTwoRelearningDays,
+            asOf: date("2026-05-27T01:00:00Z")
+        )
+        let relearned = policy.state(
+            for: word,
+            attempts: historicalSuccesses + firstTwoRelearningDays + [thirdRelearningDay],
+            asOf: date("2026-05-28T01:00:00Z")
+        )
 
-        XCTAssertFalse(state.isMastered)
-        XCTAssertNil(state.masteredOn)
-        XCTAssertEqual(state.failureCheck, 1)
-        XCTAssertEqual(state.activePriority, 1)
+        XCTAssertFalse(recovering.isMastered)
+        XCTAssertNil(recovering.masteredOn)
+        XCTAssertTrue(relearned.isMastered)
+        XCTAssertEqual(seoul.dayKey(for: relearned.masteredOn!), "2026-05-28")
+        XCTAssertEqual(relearned.failureCheck, 1)
     }
 
-    func testMasteryMaintenanceBecomesEligibleOnlyAfterThirtyDays() {
+    func testMasteryMaintenanceUsesExpandingIntervalsAndModeCaps() {
         let policy = MasteryMaintenancePolicy()
-        let reference = date("2026-06-30T01:00:00Z")
+        let lastTestedAt = date("2026-06-01T01:00:00Z")
 
         XCTAssertFalse(policy.needsRevalidation(
-            lastTestedAt: date("2026-06-15T01:00:00Z"),
-            asOf: reference
+            lastTestedAt: lastTestedAt,
+            verifiedSuccessDayCount: 3,
+            asOf: date("2026-06-14T01:00:00Z")
         ))
         XCTAssertTrue(policy.needsRevalidation(
-            lastTestedAt: date("2026-05-30T01:00:00Z"),
-            asOf: reference
+            lastTestedAt: lastTestedAt,
+            verifiedSuccessDayCount: 3,
+            asOf: date("2026-06-15T01:00:00Z")
         ))
-        XCTAssertTrue(policy.needsRevalidation(
-            lastTestedAt: date("2026-05-30T15:00:00Z"),
-            asOf: reference
-        ))
+        XCTAssertEqual(policy.intervalDays(verifiedSuccessDayCount: 3), 14)
+        XCTAssertEqual(policy.intervalDays(verifiedSuccessDayCount: 4), 30)
+        XCTAssertEqual(policy.intervalDays(verifiedSuccessDayCount: 5), 60)
+        XCTAssertEqual(policy.intervalDays(verifiedSuccessDayCount: 6), 120)
+        XCTAssertEqual(policy.reviewMaximumQuestionsPerSession, 4)
+        XCTAssertEqual(policy.mixedMaximumQuestionsPerSession, 2)
     }
 
-    func testMixedSessionSelectsTenFromEachPoolWithoutDuplicates() {
+    func testMixedSessionCompositionPrioritizesBroadRotation() {
+        let policy = MixedSessionCompositionPolicy()
+
+        XCTAssertEqual(policy.questionLimit, 20)
+        XCTAssertEqual(policy.referenceSetQuota, 6)
+        XCTAssertEqual(policy.activeReviewQuota, 4)
+        XCTAssertEqual(policy.masteryMaintenanceQuota, 2)
+        XCTAssertEqual(policy.broadRotationTarget, 8)
+    }
+
+    func testMixedSessionUsesSixReferenceFourReviewAndBroadRemainder() {
         let targetDate = date("2026-05-25T01:00:00Z")
         let oldDate = date("2026-05-23T01:00:00Z")
         let today = (0..<12).map {
@@ -174,20 +227,24 @@ final class StudyPoliciesTests: XCTestCase {
                 attempts: [attempt(word, .enToKo, .incorrect, "2026-05-24T01:00:00Z")]
             )
         }
+        let broad = (0..<12).map {
+            WordProgress(word: makeWord(spelling: "broad-\($0)", createdAt: oldDate))
+        }
 
         let selected = SessionPolicy().select(
-            from: today + review,
+            from: today + review + broad,
             mode: .mixed,
             on: targetDate
         )
 
         XCTAssertEqual(selected.count, 20)
         XCTAssertEqual(Set(selected.map(\.id)).count, 20)
-        XCTAssertEqual(selected.filter { seoul.isSameDay($0.word.createdAt, targetDate) }.count, 10)
-        XCTAssertEqual(selected.filter { $0.reviewState.activePriority > 0 }.count, 10)
+        XCTAssertEqual(selected.filter { seoul.isSameDay($0.word.createdAt, targetDate) }.count, 6)
+        XCTAssertEqual(selected.filter { $0.reviewState.activePriority > 0 }.count, 4)
+        XCTAssertEqual(selected.filter { $0.word.spelling.hasPrefix("broad-") }.count, 10)
     }
 
-    func testMixedSessionBackfillsMissingReviewSlotsWithTodayWords() {
+    func testMixedSessionDoesNotBackfillMissingBroadPoolFromCappedCategories() {
         let targetDate = date("2026-05-25T01:00:00Z")
         let oldDate = date("2026-05-23T01:00:00Z")
         let today = (0..<18).map {
@@ -205,12 +262,13 @@ final class StudyPoliciesTests: XCTestCase {
             on: targetDate
         )
 
-        XCTAssertEqual(selected.count, 19)
-        XCTAssertEqual(Set(selected.map(\.id)).count, 19)
+        XCTAssertEqual(selected.count, 7)
+        XCTAssertEqual(Set(selected.map(\.id)).count, 7)
         XCTAssertEqual(selected.filter { $0.id == review.id }.count, 1)
+        XCTAssertEqual(selected.filter { seoul.isSameDay($0.word.createdAt, targetDate) }.count, 6)
     }
 
-    func testMixedSessionReplacesOverlappingTodayReviewCandidatesBeforeBackfill() {
+    func testMixedSessionCountsOverlappingReferenceReviewAgainstBothCaps() {
         let targetDate = date("2026-05-25T01:00:00Z")
         let oldDate = date("2026-05-23T01:00:00Z")
         let priorityToday = (0..<10).map { index -> WordProgress in
@@ -227,16 +285,21 @@ final class StudyPoliciesTests: XCTestCase {
                 attempts: [attempt(word, .enToKo, .incorrect, "2026-05-24T00:00:00Z")]
             )
         }
+        let broad = (0..<20).map {
+            WordProgress(word: makeWord(spelling: "broad-\($0)", createdAt: oldDate))
+        }
 
         let selected = SessionPolicy().select(
-            from: priorityToday + oldReview,
+            from: priorityToday + oldReview + broad,
             mode: .mixed,
             on: targetDate
         )
 
         XCTAssertEqual(selected.count, 20)
         XCTAssertEqual(Set(selected.map(\.id)).count, 20)
-        XCTAssertTrue(Set(oldReview.map(\.id)).isSubset(of: Set(selected.map(\.id))))
+        XCTAssertEqual(selected.filter { seoul.isSameDay($0.word.createdAt, targetDate) }.count, 4)
+        XCTAssertEqual(selected.filter { $0.reviewState.activePriority > 0 }.count, 4)
+        XCTAssertEqual(selected.filter { $0.word.spelling.hasPrefix("broad-") }.count, 16)
     }
 
     func testReviewSessionExcludesMasteredWordEvenWhenHistoricalPriorityRemains() {
