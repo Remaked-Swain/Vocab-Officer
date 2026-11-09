@@ -1,19 +1,100 @@
 import Foundation
 
+public struct MixedSessionCompositionPolicy: Sendable {
+    public let questionLimit: Int
+    public let referenceSetQuota: Int
+    public let activeReviewQuota: Int
+    public let masteryMaintenanceQuota: Int
+    public let broadRotationTarget: Int
+
+    public init(
+        questionLimit: Int = 20,
+        referenceSetQuota: Int = 6,
+        activeReviewQuota: Int = 4,
+        masteryMaintenanceQuota: Int = 2,
+        broadRotationTarget: Int = 8
+    ) {
+        precondition(questionLimit > 0)
+        precondition(referenceSetQuota >= 0)
+        precondition(activeReviewQuota >= 0)
+        precondition(masteryMaintenanceQuota >= 0)
+        precondition(broadRotationTarget >= 0)
+        precondition(
+            referenceSetQuota + activeReviewQuota + masteryMaintenanceQuota + broadRotationTarget
+                <= questionLimit
+        )
+        self.questionLimit = questionLimit
+        self.referenceSetQuota = referenceSetQuota
+        self.activeReviewQuota = activeReviewQuota
+        self.masteryMaintenanceQuota = masteryMaintenanceQuota
+        self.broadRotationTarget = broadRotationTarget
+    }
+
+    public func select<ID: Hashable & Sendable>(
+        reference: [ID],
+        referenceCategoryIDs: Set<ID>,
+        activeReview: [ID],
+        activeReviewCategoryIDs: Set<ID>,
+        masteryMaintenance: [ID],
+        broadRotation: [ID],
+        presentedToday: Set<ID>
+    ) -> [ID] {
+        let maintenanceIDs = Set(masteryMaintenance)
+        let excludedFromBroad = referenceCategoryIDs
+            .union(activeReviewCategoryIDs)
+            .union(maintenanceIDs)
+        let broad = broadRotation.filter { !excludedFromBroad.contains($0) }
+        var selected: [ID] = []
+        var selectedIDs = Set<ID>()
+        var referenceCount = 0
+        var reviewCount = 0
+        var maintenanceCount = 0
+
+        func append(_ candidates: [ID]) {
+            for candidate in candidates where selected.count < questionLimit {
+                guard !selectedIDs.contains(candidate) else { continue }
+                let isReference = referenceCategoryIDs.contains(candidate)
+                let isReview = activeReviewCategoryIDs.contains(candidate)
+                let isMaintenance = maintenanceIDs.contains(candidate)
+                guard !isReference || referenceCount < referenceSetQuota else { continue }
+                guard !isReview || reviewCount < activeReviewQuota else { continue }
+                guard !isMaintenance || maintenanceCount < masteryMaintenanceQuota else { continue }
+                selectedIDs.insert(candidate)
+                selected.append(candidate)
+                if isReference { referenceCount += 1 }
+                if isReview { reviewCount += 1 }
+                if isMaintenance { maintenanceCount += 1 }
+            }
+        }
+
+        append(masteryMaintenance.filter { !presentedToday.contains($0) })
+        append(reference.filter { !presentedToday.contains($0) })
+        append(activeReview.filter { !presentedToday.contains($0) })
+        append(broad.filter { !presentedToday.contains($0) })
+
+        guard selected.count < questionLimit else { return selected }
+        append(masteryMaintenance.filter(presentedToday.contains))
+        append(reference.filter(presentedToday.contains))
+        append(activeReview.filter(presentedToday.contains))
+        append(broad.filter(presentedToday.contains))
+        return selected
+    }
+}
+
 public struct SessionPolicy: Sendable {
     public let maximumCount: Int
-    public let mixedTodayCount: Int
+    public let mixedComposition: MixedSessionCompositionPolicy
     public let studyCalendar: StudyCalendar
 
     public init(
         maximumCount: Int = 20,
-        mixedTodayCount: Int = 10,
+        mixedComposition: MixedSessionCompositionPolicy = MixedSessionCompositionPolicy(),
         studyCalendar: StudyCalendar = StudyCalendar()
     ) {
         precondition(maximumCount > 0)
-        precondition(mixedTodayCount >= 0 && mixedTodayCount <= maximumCount)
+        precondition(maximumCount == mixedComposition.questionLimit)
         self.maximumCount = maximumCount
-        self.mixedTodayCount = mixedTodayCount
+        self.mixedComposition = mixedComposition
         self.studyCalendar = studyCalendar
     }
 
@@ -36,40 +117,28 @@ public struct SessionPolicy: Sendable {
         case .review:
             return Array(review.prefix(maximumCount))
         case .mixed:
-            return mixedSelection(today: today, review: review)
+            return mixedSelection(all: unique, today: today, review: review)
         }
     }
 
     private func mixedSelection(
+        all: [WordProgress],
         today: [WordProgress],
         review: [WordProgress]
     ) -> [WordProgress] {
-        let reviewCount = maximumCount - mixedTodayCount
-        var selected: [WordProgress] = []
-        var selectedIDs = Set<UUID>()
-
-        append(Array(review.prefix(reviewCount)), to: &selected, ids: &selectedIDs)
-        let uniqueToday = today.filter { !selectedIDs.contains($0.id) }
-        append(Array(uniqueToday.prefix(mixedTodayCount)), to: &selected, ids: &selectedIDs)
-
-        let unselectedReview = review.filter { !selectedIDs.contains($0.id) }
-        append(unselectedReview, to: &selected, ids: &selectedIDs)
-        let unselectedToday = today.filter { !selectedIDs.contains($0.id) }
-        append(unselectedToday, to: &selected, ids: &selectedIDs)
-
-        return Array(selected.prefix(maximumCount))
-    }
-
-    private func append(
-        _ candidates: [WordProgress],
-        to selected: inout [WordProgress],
-        ids selectedIDs: inout Set<UUID>
-    ) {
-        for candidate in candidates where selected.count < maximumCount {
-            if selectedIDs.insert(candidate.id).inserted {
-                selected.append(candidate)
-            }
-        }
+        let progressByID = Dictionary(uniqueKeysWithValues: all.map { ($0.id, $0) })
+        let todayIDs = today.map(\.id)
+        let reviewIDs = review.map(\.id)
+        let broadIDs = all.map(\.id)
+        return mixedComposition.select(
+            reference: todayIDs,
+            referenceCategoryIDs: Set(todayIDs),
+            activeReview: reviewIDs,
+            activeReviewCategoryIDs: Set(reviewIDs),
+            masteryMaintenance: [],
+            broadRotation: broadIDs,
+            presentedToday: []
+        ).compactMap { progressByID[$0] }
     }
 
     private func uniqueProgresses(_ progresses: [WordProgress]) -> [WordProgress] {

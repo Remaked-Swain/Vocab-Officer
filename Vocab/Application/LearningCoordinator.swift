@@ -625,6 +625,7 @@ final class LearningCoordinator {
     private var activeWordByIDCache: [UUID: WordRecord]?
     private var masteredWordCache: [WordRecord]?
     private var dailySetCache: [DailySetRecord]?
+    private var dailySetMembershipIndexCache: DailySetMembershipIndex?
 
     init(
         context: ModelContext,
@@ -798,44 +799,48 @@ final class LearningCoordinator {
         let exposure = presentation.exposure
         let alreadyPresentedTodayIDs = presentation.alreadyPresentedTodayIDs
         let allPresentedIDs = presentation.allPresentedIDs
+        let setMembership = dailySetMembershipIndex(for: sets)
         var selected: [WordRecord] = []
-        func setWords(for items: [DailySetItemRecord]) -> [WordRecord] {
-            uniqueWords(items
-                .filter { $0.deletedAt == nil }
-                .sorted { $0.orderIndex < $1.orderIndex }
-                .compactMap { wordsByID[$0.wordID] })
+        func setWords(for set: DailySetRecord?) -> [WordRecord] {
+            guard let set else { return [] }
+            return setMembership.wordIDsBySetID[set.id, default: []].compactMap { wordsByID[$0] }
         }
         func referenceCandidates() -> [WordRecord] {
-            let referenceWords = setWords(for: referenceSet?.items ?? [])
+            let referenceWords = setWords(for: referenceSet)
             return uniqueWords(
                 fairOrder(referenceWords.filter { !alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
                     + fairOrder(referenceWords.filter { alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
             )
         }
-        func orderedReviewCandidates() -> [WordRecord] {
+        func orderedReviewCandidates(preferUnseenToday: Bool = false) -> [WordRecord] {
             let review = words.filter { record in
                 guard let state = record.reviewState else { return false }
                 return state.activePriority > 0
             }
-            return reviewOrder(review, exposure: exposure)
+            guard preferUnseenToday else {
+                return reviewOrder(review, exposure: exposure)
+            }
+            let unseenToday = review.filter { !alreadyPresentedTodayIDs.contains($0.id) }
+            let seenToday = review.filter { alreadyPresentedTodayIDs.contains($0.id) }
+            return reviewOrder(unseenToday, exposure: exposure)
+                + reviewOrder(seenToday, exposure: exposure)
         }
-        let linkedWordIDs = Set(sets.flatMap(\.allItems).filter { $0.deletedAt == nil }.map(\.wordID))
+        let linkedWordIDs = setMembership.linkedWordIDs
+        let eligibleSetWordIDs = Set(setsByRecency.flatMap {
+            setMembership.wordIDsBySetID[$0.id, default: []]
+        })
         let looseCandidates = fairOrder(
             words.filter { !linkedWordIDs.contains($0.id) },
             exposure: exposure
         )
         let maintenancePolicy = MasteryMaintenancePolicy()
-        let masteryMaintenanceCandidates = fairOrder(
-            maintenanceWords.filter {
-                maintenancePolicy.needsRevalidation(
-                    lastTestedAt: $0.reviewState?.lastTestedAt ?? $0.updatedAt,
-                    asOf: date
-                )
-            },
-            exposure: exposure
-        )
-        let masteryMaintenance = Array(
-            masteryMaintenanceCandidates.prefix(maintenancePolicy.maximumQuestionsPerSession)
+        let masteryMaintenanceCandidates = orderedMasteryMaintenanceCandidates(
+            maintenanceWords,
+            policy: maintenancePolicy,
+            asOf: date,
+            exposure: exposure,
+            alreadyPresentedTodayIDs: alreadyPresentedTodayIDs,
+            preferUnseenToday: false
         )
         switch mode {
         case .today:
@@ -847,7 +852,7 @@ final class LearningCoordinator {
             guard let setID, let selectedSet = sets.first(where: { $0.id == setID }) else {
                 throw LearningError.setRequired
             }
-            let selectedSetWords = setWords(for: selectedSet.allItems)
+            let selectedSetWords = setWords(for: selectedSet)
             let prioritized = fairOrder(selectedSetWords.filter { !allPresentedIDs.contains($0.id) }, exposure: exposure)
                 + fairOrder(selectedSetWords.filter { allPresentedIDs.contains($0.id) }, exposure: exposure)
             selected = Array(prioritized.prefix(20))
@@ -855,8 +860,11 @@ final class LearningCoordinator {
             selected = Array(looseCandidates.prefix(20))
         case .review:
             let orderedReview = orderedReviewCandidates()
-            let previousSetCandidates = fairOrder(setWords(for: previousSet?.items ?? []), exposure: exposure)
+            let previousSetCandidates = fairOrder(setWords(for: previousSet), exposure: exposure)
             let reference = referenceCandidates()
+            let masteryMaintenance = Array(
+                masteryMaintenanceCandidates.prefix(maintenancePolicy.reviewMaximumQuestionsPerSession)
+            )
             let activeCapacity = 20 - masteryMaintenance.count
             selected = Array(orderedReview.prefix(14))
             appendUnique(
@@ -868,21 +876,53 @@ final class LearningCoordinator {
             appendUnique(from: orderedReview, to: &selected, limit: 20)
             appendUnique(from: reference, to: &selected, limit: 20)
         case .mixed:
-            let reference = referenceCandidates()
-            let orderedReview = orderedReviewCandidates()
-            let historicalSetIDs = Set(setsByRecency.filter { $0.id != referenceSet?.id }.flatMap(\.allItems).map(\.wordID))
-            let unverifiedBacklog = fairOrder(
-                historicalSetIDs.compactMap { wordsByID[$0] }.filter { !allPresentedIDs.contains($0.id) },
-                exposure: exposure
+            let composition = MixedSessionCompositionPolicy()
+            let orderedReview = orderedReviewCandidates(preferUnseenToday: true)
+            let mixedMaintenanceCandidates = orderedMasteryMaintenanceCandidates(
+                maintenanceWords,
+                policy: maintenancePolicy,
+                asOf: date,
+                exposure: exposure,
+                alreadyPresentedTodayIDs: alreadyPresentedTodayIDs,
+                preferUnseenToday: true
             )
-            selected = Array(reference.prefix(12))
-            appendUnique(from: orderedReview, to: &selected, limit: 17)
-            appendUnique(from: masteryMaintenance, to: &selected, limit: 19)
-            appendUnique(from: looseCandidates, to: &selected, limit: 20)
-            appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
-            appendUnique(from: reference, to: &selected, limit: 20)
-            appendUnique(from: orderedReview, to: &selected, limit: 20)
-            appendUnique(from: unverifiedBacklog, to: &selected, limit: 20)
+            let referenceWordIDs: Set<UUID>
+            if let referenceSet {
+                referenceWordIDs = Set(setMembership.wordIDsBySetID[referenceSet.id, default: []])
+            } else {
+                referenceWordIDs = []
+            }
+            let eligibleActiveWords = words.filter {
+                eligibleSetWordIDs.contains($0.id) || !linkedWordIDs.contains($0.id)
+            }
+            let allActiveRotation = fairOrderPreferUnseenToday(
+                eligibleActiveWords,
+                exposure: exposure,
+                alreadyPresentedTodayIDs: alreadyPresentedTodayIDs
+            )
+            let rotationFloor = eligibleActiveWords.map {
+                exposure[$0.id]?.count ?? 0
+            }.min() ?? 0
+            let reference = allActiveRotation.filter {
+                referenceWordIDs.contains($0.id) && (exposure[$0.id]?.count ?? 0) == rotationFloor
+            }
+            let reviewWordIDs = Set(orderedReview.map(\.id))
+            let reviewAtRotationFloor = orderedReview.filter {
+                (exposure[$0.id]?.count ?? 0) == rotationFloor
+            }
+            let selectedIDs = composition.select(
+                reference: reference.map(\.id),
+                referenceCategoryIDs: referenceWordIDs,
+                activeReview: reviewAtRotationFloor.map(\.id),
+                activeReviewCategoryIDs: reviewWordIDs,
+                masteryMaintenance: mixedMaintenanceCandidates.map(\.id),
+                broadRotation: allActiveRotation.map(\.id),
+                presentedToday: alreadyPresentedTodayIDs
+            )
+            let maintenanceWordsByID = Dictionary(
+                uniqueKeysWithValues: maintenanceWords.map { ($0.id, $0) }
+            )
+            selected = selectedIDs.compactMap { wordsByID[$0] ?? maintenanceWordsByID[$0] }
         }
         let sessionID = UUID()
         let questions = makeQuestions(
@@ -952,13 +992,9 @@ final class LearningCoordinator {
         attempt.word = question.word
         question.word.appendAttempt(attempt)
         context.insert(attempt)
-        let previousStatus = question.word.statusRaw
         recomputeReviewState(for: question.word)
         compactAttempts(for: question.word, now: date)
         try saveAndNotifyChange()
-        if previousStatus != question.word.statusRaw {
-            invalidateSessionCandidateCache()
-        }
     }
 
     func completeSession(_ session: TestSessionRecord, date: Date = .now) throws {
@@ -1022,6 +1058,7 @@ final class LearningCoordinator {
             word.statusRaw = "active"
         }
         try saveAndNotifyChange()
+        invalidateWordCandidateCaches()
     }
 
     func compactLearningHistory(now: Date = .now) throws {
@@ -1080,41 +1117,6 @@ final class LearningCoordinator {
         invalidateSessionCandidateCache()
     }
 
-    private func apply(result: FinalResult, matchedMeaningID: UUID?, direction: PracticeDirection, to word: WordRecord, date: Date) {
-        let state = word.reviewState ?? ReviewStateRecord()
-        word.reviewState = state
-        state.lastTestedAt = date
-        let day = SeoulCalendar.day(for: date)
-        switch result {
-        case .incorrect, .unknown:
-            word.statusRaw = "active"
-            state.failureCheck = min(state.failureCheck + 1, 3)
-            state.activePriority = max(state.activePriority, state.failureCheck)
-            state.latestWrongDirection = direction.rawValue
-            state.latestWrongAt = date
-            if direction == .enToKo { state.enToKoStreak = 0 } else { state.koToEnStreak = 0 }
-        case .correct:
-            if direction == .enToKo {
-                state.enToKoStreak += 1
-                if let matchedMeaningID, let meaning = word.activeMeanings.first(where: { $0.id == matchedMeaningID && $0.isTrackableCoreMeaning }), !meaning.successDays.contains(day) {
-                    meaning.successDays.append(day)
-                }
-            } else {
-                state.koToEnStreak += 1
-                if !state.koToEnSuccessDays.contains(day) { state.koToEnSuccessDays.append(day) }
-            }
-            if state.enToKoStreak >= 2 && state.koToEnStreak >= 2 {
-                state.activePriority = max(state.activePriority - 1, 0)
-                state.enToKoStreak = 0
-                state.koToEnStreak = 0
-            } else if state.enToKoStreak >= 2 {
-                state.activePriority = max(state.activePriority - 1, 0)
-                state.enToKoStreak = 0
-            }
-        }
-        if masterySatisfied(for: word, at: date) { word.statusRaw = "mastered" }
-    }
-
     @discardableResult
     func recomputeReviewState(for word: WordRecord) -> [VocabAttemptReplayConflict] {
         recomputeReviewState(for: word, attempts: word.allAttempts)
@@ -1129,7 +1131,9 @@ final class LearningCoordinator {
         guard calculation.conflicts.isEmpty, let expected = calculation.expected else {
             return calculation.conflicts
         }
-        _ = applyExpectedReviewState(expected, to: word)
+        if applyExpectedReviewState(expected, to: word) {
+            invalidateWordCandidateCaches()
+        }
         return []
     }
 
@@ -1218,8 +1222,7 @@ final class LearningCoordinator {
             }
             if MasteryPolicy().isSatisfied(
                 verifiedSuccessDays: verifiedSuccessDays,
-                latestWrongAt: expected.latestWrongAt,
-                asOf: attempt.answeredAt
+                latestWrongAt: expected.latestWrongAt
             ) {
                 expected.statusRaw = "mastered"
             }
@@ -1299,16 +1302,12 @@ final class LearningCoordinator {
         VocabAttemptCanonicalPayload(lhs) == VocabAttemptCanonicalPayload(rhs)
     }
 
-    private func masterySatisfied(for word: WordRecord, at date: Date) -> Bool {
-        var verifiedSuccessDays = Set(word.reviewState?.koToEnSuccessDays ?? [])
+    private func verifiedSuccessDays(for word: WordRecord) -> Set<String> {
+        var successDays = Set(word.reviewState?.koToEnSuccessDays ?? [])
         for meaning in word.activeMeanings {
-            verifiedSuccessDays.formUnion(meaning.successDays)
+            successDays.formUnion(meaning.successDays)
         }
-        return MasteryPolicy().isSatisfied(
-            verifiedSuccessDays: verifiedSuccessDays,
-            latestWrongAt: word.reviewState?.latestWrongAt,
-            asOf: date
-        )
+        return successDays
     }
 
     private struct PresentationStats {
@@ -1320,6 +1319,37 @@ final class LearningCoordinator {
         let exposure: [UUID: PresentationStats]
         let alreadyPresentedTodayIDs: Set<UUID>
         let allPresentedIDs: Set<UUID>
+    }
+
+    private struct DailySetMembershipIndex {
+        let linkedWordIDs: Set<UUID>
+        let wordIDsBySetID: [UUID: [UUID]]
+    }
+
+    private struct MasteryMaintenanceCandidate {
+        let word: WordRecord
+        let dueAt: Date
+        let wasPresentedToday: Bool
+        let presentationCount: Int
+        let lastPresentedAt: Date?
+        let randomRank: Int
+    }
+
+    private struct FairCandidate {
+        let word: WordRecord
+        let presentationCount: Int
+        let lastPresentedAt: Date?
+        let randomRank: Int
+    }
+
+    private struct ReviewCandidate {
+        let word: WordRecord
+        let activePriority: Int
+        let failureCheck: Int
+        let latestWrongAt: Date?
+        let presentationCount: Int
+        let lastPresentedAt: Date?
+        let randomRank: Int
     }
 
     private func activeWords() throws -> [WordRecord] {
@@ -1507,10 +1537,38 @@ final class LearningCoordinator {
     }
 
     private func invalidateSessionCandidateCache() {
+        invalidateWordCandidateCaches()
+        dailySetCache = nil
+        dailySetMembershipIndexCache = nil
+    }
+
+    private func invalidateWordCandidateCaches() {
         activeWordCache = nil
         activeWordByIDCache = nil
         masteredWordCache = nil
-        dailySetCache = nil
+    }
+
+    private func dailySetMembershipIndex(for sets: [DailySetRecord]) -> DailySetMembershipIndex {
+        if let dailySetMembershipIndexCache { return dailySetMembershipIndexCache }
+        var linkedWordIDs = Set<UUID>()
+        var wordIDsBySetID: [UUID: [UUID]] = [:]
+        wordIDsBySetID.reserveCapacity(sets.count)
+        for set in sets {
+            let orderedWordIDs = set.allItems
+                .filter { $0.deletedAt == nil }
+                .sorted { $0.orderIndex < $1.orderIndex }
+                .map(\.wordID)
+            var seenWordIDs = Set<UUID>()
+            let wordIDs = orderedWordIDs.filter { seenWordIDs.insert($0).inserted }
+            wordIDsBySetID[set.id] = wordIDs
+            linkedWordIDs.formUnion(wordIDs)
+        }
+        let index = DailySetMembershipIndex(
+            linkedWordIDs: linkedWordIDs,
+            wordIDsBySetID: wordIDsBySetID
+        )
+        dailySetMembershipIndexCache = index
+        return index
     }
 
     private func presentationContext(for words: [WordRecord], day: String, now: Date) throws -> PresentationContext {
@@ -1578,40 +1636,111 @@ final class LearningCoordinator {
     }
 
     private func fairOrder(_ candidates: [WordRecord], exposure: [UUID: PresentationStats]) -> [WordRecord] {
-        let randomRank = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, Int.random(in: Int.min...Int.max)) })
-        return candidates.sorted { lhs, rhs in
-            let l = exposure[lhs.id] ?? PresentationStats()
-            let r = exposure[rhs.id] ?? PresentationStats()
-            if l.count != r.count { return l.count < r.count }
-            if l.lastPresentedAt != r.lastPresentedAt {
-                return (l.lastPresentedAt ?? .distantPast) < (r.lastPresentedAt ?? .distantPast)
-            }
-            return (randomRank[lhs.id] ?? 0) < (randomRank[rhs.id] ?? 0)
+        let ranked = candidates.map { word in
+            let presentation = exposure[word.id] ?? PresentationStats()
+            return FairCandidate(
+                word: word,
+                presentationCount: presentation.count,
+                lastPresentedAt: presentation.lastPresentedAt,
+                randomRank: Int.random(in: Int.min...Int.max)
+            )
         }
+        return ranked.sorted { lhs, rhs in
+            if lhs.presentationCount != rhs.presentationCount {
+                return lhs.presentationCount < rhs.presentationCount
+            }
+            if lhs.lastPresentedAt != rhs.lastPresentedAt {
+                return (lhs.lastPresentedAt ?? .distantPast) < (rhs.lastPresentedAt ?? .distantPast)
+            }
+            return lhs.randomRank < rhs.randomRank
+        }.map(\.word)
+    }
+
+    private func orderedMasteryMaintenanceCandidates(
+        _ words: [WordRecord],
+        policy: MasteryMaintenancePolicy,
+        asOf date: Date,
+        exposure: [UUID: PresentationStats],
+        alreadyPresentedTodayIDs: Set<UUID>,
+        preferUnseenToday: Bool
+    ) -> [WordRecord] {
+        let candidates = words.compactMap { word -> MasteryMaintenanceCandidate? in
+            let successDayCount = verifiedSuccessDays(for: word).count
+            let lastTestedAt = word.reviewState?.lastTestedAt ?? word.updatedAt
+            guard policy.needsRevalidation(
+                lastTestedAt: lastTestedAt,
+                verifiedSuccessDayCount: successDayCount,
+                asOf: date
+            ), let dueAt = policy.nextRevalidationDate(
+                lastTestedAt: lastTestedAt,
+                verifiedSuccessDayCount: successDayCount
+            ) else { return nil }
+            return MasteryMaintenanceCandidate(
+                word: word,
+                dueAt: dueAt,
+                wasPresentedToday: alreadyPresentedTodayIDs.contains(word.id),
+                presentationCount: exposure[word.id]?.count ?? 0,
+                lastPresentedAt: exposure[word.id]?.lastPresentedAt,
+                randomRank: Int.random(in: Int.min...Int.max)
+            )
+        }
+        return candidates.sorted { lhs, rhs in
+            if preferUnseenToday, lhs.wasPresentedToday != rhs.wasPresentedToday {
+                return !lhs.wasPresentedToday
+            }
+            if lhs.dueAt != rhs.dueAt { return lhs.dueAt < rhs.dueAt }
+            if lhs.presentationCount != rhs.presentationCount {
+                return lhs.presentationCount < rhs.presentationCount
+            }
+            if lhs.lastPresentedAt != rhs.lastPresentedAt {
+                return (lhs.lastPresentedAt ?? .distantPast) < (rhs.lastPresentedAt ?? .distantPast)
+            }
+            return lhs.randomRank < rhs.randomRank
+        }.map(\.word)
+    }
+
+    private func fairOrderPreferUnseenToday(
+        _ candidates: [WordRecord],
+        exposure: [UUID: PresentationStats],
+        alreadyPresentedTodayIDs: Set<UUID>
+    ) -> [WordRecord] {
+        let unseenToday = candidates.filter { !alreadyPresentedTodayIDs.contains($0.id) }
+        let seenToday = candidates.filter { alreadyPresentedTodayIDs.contains($0.id) }
+        return fairOrder(unseenToday, exposure: exposure) + fairOrder(seenToday, exposure: exposure)
     }
 
     private func reviewOrder(_ candidates: [WordRecord], exposure: [UUID: PresentationStats]) -> [WordRecord] {
-        let randomRank = Dictionary(uniqueKeysWithValues: candidates.map { ($0.id, Int.random(in: Int.min...Int.max)) })
-        return candidates.sorted { lhs, rhs in
-            let l = lhs.reviewState
-            let r = rhs.reviewState
-            if (l?.activePriority ?? 0) != (r?.activePriority ?? 0) {
-                return (l?.activePriority ?? 0) > (r?.activePriority ?? 0)
-            }
-            if (l?.failureCheck ?? 0) != (r?.failureCheck ?? 0) {
-                return (l?.failureCheck ?? 0) > (r?.failureCheck ?? 0)
-            }
-            let le = exposure[lhs.id] ?? PresentationStats()
-            let re = exposure[rhs.id] ?? PresentationStats()
-            if le.count != re.count { return le.count < re.count }
-            if le.lastPresentedAt != re.lastPresentedAt {
-                return (le.lastPresentedAt ?? .distantPast) < (re.lastPresentedAt ?? .distantPast)
-            }
-            if (l?.latestWrongAt ?? .distantPast) != (r?.latestWrongAt ?? .distantPast) {
-                return (l?.latestWrongAt ?? .distantPast) > (r?.latestWrongAt ?? .distantPast)
-            }
-            return (randomRank[lhs.id] ?? 0) < (randomRank[rhs.id] ?? 0)
+        let ranked = candidates.map { word in
+            let state = word.reviewState
+            let presentation = exposure[word.id] ?? PresentationStats()
+            return ReviewCandidate(
+                word: word,
+                activePriority: state?.activePriority ?? 0,
+                failureCheck: state?.failureCheck ?? 0,
+                latestWrongAt: state?.latestWrongAt,
+                presentationCount: presentation.count,
+                lastPresentedAt: presentation.lastPresentedAt,
+                randomRank: Int.random(in: Int.min...Int.max)
+            )
         }
+        return ranked.sorted { lhs, rhs in
+            if lhs.activePriority != rhs.activePriority {
+                return lhs.activePriority > rhs.activePriority
+            }
+            if lhs.failureCheck != rhs.failureCheck {
+                return lhs.failureCheck > rhs.failureCheck
+            }
+            if lhs.presentationCount != rhs.presentationCount {
+                return lhs.presentationCount < rhs.presentationCount
+            }
+            if lhs.lastPresentedAt != rhs.lastPresentedAt {
+                return (lhs.lastPresentedAt ?? .distantPast) < (rhs.lastPresentedAt ?? .distantPast)
+            }
+            if lhs.latestWrongAt != rhs.latestWrongAt {
+                return (lhs.latestWrongAt ?? .distantPast) > (rhs.latestWrongAt ?? .distantPast)
+            }
+            return lhs.randomRank < rhs.randomRank
+        }.map(\.word)
     }
 
     private func appendUnique(from candidates: [WordRecord], to selected: inout [WordRecord], limit: Int) {

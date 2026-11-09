@@ -105,7 +105,6 @@ public struct AnswerJudge: Sendable {
         return previous[right.count]
     }
 }
-
 public struct StudyCalendar: Sendable {
     public let timeZone: TimeZone
 
@@ -131,6 +130,10 @@ public struct StudyCalendar: Sendable {
         )
     }
 
+    public func date(byAddingDays days: Int, to date: Date) -> Date? {
+        calendar.date(byAdding: .day, value: days, to: startOfDay(for: date))
+    }
+
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US_POSIX")
@@ -142,21 +145,17 @@ public struct StudyCalendar: Sendable {
 public struct ProgressPolicy: Sendable {
     public let studyCalendar: StudyCalendar
     public let successDayRequirement: Int
-    public let recentFailureWindow: Int
     public let maximumFailureCheck: Int
 
     public init(
         studyCalendar: StudyCalendar = StudyCalendar(),
         successDayRequirement: Int = 3,
-        recentFailureWindow: Int = 14,
         maximumFailureCheck: Int = 3
     ) {
         precondition(successDayRequirement > 0)
-        precondition(recentFailureWindow >= 0)
         precondition(maximumFailureCheck > 0)
         self.studyCalendar = studyCalendar
         self.successDayRequirement = successDayRequirement
-        self.recentFailureWindow = recentFailureWindow
         self.maximumFailureCheck = maximumFailureCheck
     }
 
@@ -212,7 +211,7 @@ public struct ProgressPolicy: Sendable {
         }
 
         let evaluationDate = date ?? chronologicalAttempts.last?.occurredAt ?? word.createdAt
-        if masterySatisfied(state: state, asOf: evaluationDate) {
+        if masterySatisfied(state: state) {
             state.masteredOn = studyCalendar.startOfDay(for: evaluationDate)
         }
 
@@ -241,22 +240,17 @@ public struct ProgressPolicy: Sendable {
         progress.reviewState.isMastered
     }
 
-    private func masterySatisfied(
-        state: ReviewState,
-        asOf date: Date
-    ) -> Bool {
+    private func masterySatisfied(state: ReviewState) -> Bool {
         var verifiedSuccessDays = state.koToEnSuccessDays
         for successDays in state.coreMeaningSuccessDays.values {
             verifiedSuccessDays.formUnion(successDays)
         }
         return MasteryPolicy(
             studyCalendar: studyCalendar,
-            successDayRequirement: successDayRequirement,
-            recentFailureWindow: recentFailureWindow
+            successDayRequirement: successDayRequirement
         ).isSatisfied(
             verifiedSuccessDays: verifiedSuccessDays,
-            latestWrongAt: state.latestWrongAt,
-            asOf: date
+            latestWrongAt: state.latestWrongAt
         )
     }
 }
@@ -264,66 +258,79 @@ public struct ProgressPolicy: Sendable {
 public struct MasteryPolicy: Sendable {
     public let studyCalendar: StudyCalendar
     public let successDayRequirement: Int
-    public let recentFailureWindow: Int
 
     public init(
         studyCalendar: StudyCalendar = StudyCalendar(),
-        successDayRequirement: Int = 3,
-        recentFailureWindow: Int = 14
+        successDayRequirement: Int = 3
     ) {
         precondition(successDayRequirement > 0)
-        precondition(recentFailureWindow >= 0)
         self.studyCalendar = studyCalendar
         self.successDayRequirement = successDayRequirement
-        self.recentFailureWindow = recentFailureWindow
     }
 
     public func isSatisfied(
         verifiedSuccessDays: Set<String>,
-        latestWrongAt: Date?,
-        asOf date: Date
+        latestWrongAt: Date?
     ) -> Bool {
-        guard verifiedSuccessDays.count >= successDayRequirement else { return false }
-        guard let latestWrongAt else { return true }
-        var components = DateComponents()
-        components.day = -recentFailureWindow
-        guard let failureThreshold = Calendar(identifier: .gregorian).date(
-            byAdding: components,
-            to: studyCalendar.startOfDay(for: date)
-        ) else {
-            return false
+        guard let latestWrongAt else {
+            return verifiedSuccessDays.count >= successDayRequirement
         }
-        return latestWrongAt < failureThreshold
+        let latestWrongDay = studyCalendar.dayKey(for: latestWrongAt)
+        let relearnedDays = verifiedSuccessDays.filter { $0 > latestWrongDay }
+        return relearnedDays.count >= successDayRequirement
     }
 }
 
 public struct MasteryMaintenancePolicy: Sendable {
-    public let revalidationIntervalDays: Int
-    public let maximumQuestionsPerSession: Int
+    public let reviewMaximumQuestionsPerSession: Int
+    public let mixedMaximumQuestionsPerSession: Int
     public let studyCalendar: StudyCalendar
 
     public init(
-        revalidationIntervalDays: Int = 30,
-        maximumQuestionsPerSession: Int = 2,
+        reviewMaximumQuestionsPerSession: Int = 4,
+        mixedMaximumQuestionsPerSession: Int = 2,
         studyCalendar: StudyCalendar = StudyCalendar()
     ) {
-        precondition(revalidationIntervalDays > 0)
-        precondition(maximumQuestionsPerSession > 0)
-        self.revalidationIntervalDays = revalidationIntervalDays
-        self.maximumQuestionsPerSession = maximumQuestionsPerSession
+        precondition(reviewMaximumQuestionsPerSession > 0)
+        precondition(mixedMaximumQuestionsPerSession > 0)
+        self.reviewMaximumQuestionsPerSession = reviewMaximumQuestionsPerSession
+        self.mixedMaximumQuestionsPerSession = mixedMaximumQuestionsPerSession
         self.studyCalendar = studyCalendar
     }
 
-    public func needsRevalidation(lastTestedAt: Date?, asOf date: Date) -> Bool {
-        guard let lastTestedAt else { return true }
-        var components = DateComponents()
-        components.day = -revalidationIntervalDays
-        guard let threshold = Calendar(identifier: .gregorian).date(
-            byAdding: components,
-            to: studyCalendar.startOfDay(for: date)
-        ) else {
-            return false
+    public func intervalDays(verifiedSuccessDayCount: Int) -> Int {
+        switch verifiedSuccessDayCount {
+        case ...3:
+            14
+        case 4:
+            30
+        case 5:
+            60
+        default:
+            120
         }
-        return lastTestedAt <= threshold
+    }
+
+    public func nextRevalidationDate(
+        lastTestedAt: Date?,
+        verifiedSuccessDayCount: Int
+    ) -> Date? {
+        guard let lastTestedAt else { return .distantPast }
+        return studyCalendar.date(
+            byAddingDays: intervalDays(verifiedSuccessDayCount: verifiedSuccessDayCount),
+            to: lastTestedAt
+        )
+    }
+
+    public func needsRevalidation(
+        lastTestedAt: Date?,
+        verifiedSuccessDayCount: Int,
+        asOf date: Date
+    ) -> Bool {
+        guard let nextDate = nextRevalidationDate(
+            lastTestedAt: lastTestedAt,
+            verifiedSuccessDayCount: verifiedSuccessDayCount
+        ) else { return false }
+        return nextDate <= studyCalendar.startOfDay(for: date)
     }
 }
