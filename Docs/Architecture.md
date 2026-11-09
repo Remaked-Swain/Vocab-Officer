@@ -27,8 +27,11 @@ grading, mastery or deletion policy.
 - A test session contains no duplicate word and requests at most 20 words.
   Modes are Today, Selected Set, Review and Mixed. Selected Set allows an
   older completed intake set with untested words to be studied after later
-  sets are registered. Mixed selects up to 10 review words plus up to 10
-  untested today words, then uses remaining words from either pool.
+  sets are registered. Mixed uses bounded quotas for the latest reference set,
+  active review, due Mastered maintenance and broad historical rotation, then
+  fills from the least-exposed eligible vocabulary. Category quotas apply only
+  at the library's current minimum lifetime presentation count, so they cannot
+  restart merely because the Seoul date changed.
 - The learning-card screen groups vocabulary by completed intake set and lets
   each card toggle between headword and all registered meanings without
   changing progress.
@@ -44,13 +47,27 @@ grading, mastery or deletion policy.
 - `failureCheck` is historical: each final wrong/unknown outcome increments it
   to a maximum of three. It is not reduced by correct answers or mastery.
   A corrected automatic mistake never commits the invalid failure event.
-- `activePriority` is separate and can be reduced only after both directions
-  reach two consecutive correct outcomes.
+- `activePriority` is separate. Two consecutive English-to-Korean correct
+  outcomes can reduce it by one; reaching two consecutive correct outcomes in
+  both directions also reduces it and resets both streaks.
 - A word becomes `Mastered` after correct outcomes on three distinct Seoul
-  dates regardless of mode, direction or question format, provided no
-  wrong/unknown answer occurred in the last 14 Seoul days. Mastered words become
-  eligible for at most two maintenance questions in Review and Mixed sessions
-  after 30 days without a test; a wrong/unknown result restores Active status.
+  dates regardless of mode, direction or question format. After a wrong or
+  unknown outcome, only success days later than that failure count toward
+  Mastered. Same-day repetitions can reduce active review priority but add at
+  most one mastery day. Mastered maintenance expands from 14 to 30, 60 and 120
+  days as verified success days accumulate. Review reserves at most four due
+  maintenance questions and Mixed at most two; a wrong/unknown result restores
+  Active status.
+- Mixed caps the current reference set at six questions, active review at four
+  and due Mastered maintenance at two. A word belonging to multiple categories
+  counts against every applicable cap. Historical-set and loose words fill the
+  remaining capacity, normally at least eight questions; capped categories do
+  not backfill a missing broad pool. Candidates are ordered by lower lifetime
+  exposure and older presentation time. No word already
+  presented on the current Seoul day is reused while any eligible unseen word
+  remains. Across dates, a higher presentation-count word cannot consume a
+  category quota while a lower-count eligible word remains; equal counts prefer
+  the oldest presentation time.
 - The intake screen supports a local paste flow for either
   `number-headword-meanings` lines or tab-separated `headword<TAB>meanings`
   lines. Printed numbers are transient source locators and may restart without

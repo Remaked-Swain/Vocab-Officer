@@ -224,6 +224,7 @@
       "references": ["CL-0001", "CL-0002", "CL-0005", "CL-0006", "CL-0007", "CL-0008"],
       "supersedes": [],
       "supersededBy": null,
+      "partiallySupersededBy": [{"id": "CL-0031", "scope": ["previous-set capacity when Mastered maintenance is due"]}],
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["long-term recurrence across all historical sets is intentionally excluded"]
@@ -601,6 +602,28 @@
       "references": ["CL-0001", "CL-0006", "CL-0009", "CL-0024", "CL-0028"],
       "supersedes": [],
       "supersededBy": null,
+      "partiallySupersededBy": [{"id": "CL-0031", "scope": ["fixed 30-day maintenance interval", "14-day failure blocking", "Mixed maintenance rotation"]}],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": []
+    },
+    {
+      "id": "CL-0031",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Spaced relearning and Mixed rotation",
+      "date": "2026-11-09",
+      "tags": ["mastery", "review", "mixed", "spacing", "relearning", "maintenance"],
+      "affectedPaths": ["Vocab/Domain/StudyPolicies.swift", "Vocab/Application/LearningCoordinator.swift", "Vocab/Presentation/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0031-spaced-relearning-and-mixed-rotation.md",
+      "references": ["CL-0006", "CL-0009", "CL-0024", "CL-0028", "CL-0030"],
+      "supersedes": [],
+      "supersededBy": null,
+      "partiallySupersedes": [
+        {"id": "CL-0009", "scope": ["previous-set capacity when Mastered maintenance is due"]},
+        {"id": "CL-0030", "scope": ["fixed 30-day maintenance interval", "14-day failure blocking", "Mixed maintenance rotation"]}
+      ],
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": []

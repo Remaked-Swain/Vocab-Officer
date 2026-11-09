@@ -39,6 +39,7 @@ only when its scope applies to the current change.
 | CL-0028 | active | 2026-09-04 | Swift conventions, objective style checks, and contextual audit | [Swift coding conventions](records/CL-0028-swift-coding-conventions.md) | retain while Swift code is maintained |
 | CL-0029 | active | 2026-10-08 | restarted printed numbering, adaptive OCR layout and reset-aware gap diagnostics | [Restarted source numbering and adaptive OCR](records/CL-0029-restarted-source-numbering-and-adaptive-ocr.md) | retain while numbered paste or image OCR intake exists |
 | CL-0030 | active | 2026-10-08 | direction-agnostic mastery, multiple-choice credit and periodic revalidation | [Direction-agnostic mastery and revalidation](records/CL-0030-direction-agnostic-mastery-revalidation.md) | retain while Mastered lifecycle exists |
+| CL-0031 | active | 2026-11-09 | spaced relearning, adaptive Mastered maintenance and same-day Mixed rotation | [Spaced relearning and Mixed rotation](records/CL-0031-spaced-relearning-and-mixed-rotation.md) | retain while test scheduling or Mastered lifecycle exists |
 
 ## Load Rules
 

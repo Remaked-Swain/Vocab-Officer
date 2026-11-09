@@ -10,6 +10,12 @@ This file is the repository entry point for Codex and review agents.
   substitute for source editing.
 - Load `Docs/SwiftStyleGuide.md` before editing or reviewing Swift. Run
   `script/swift_style_check.sh` for every Swift change.
+- Before running unit tests or platform builds, review the changed logic for
+  time and space complexity, cache lifetime, architecture direction, SOLID,
+  Clean Code and readability. Resolve avoidable regressions first and record
+  any accepted tradeoff or residual risk in the relevant decision evidence.
+- Performance and readability are acceptance criteria for every code change,
+  even when the user does not call them out explicitly.
 - Select verification with `script/verify_changed.sh`; expand it only when
   persistence, shared contracts, project settings, or release acceptance
   require broader coverage.
