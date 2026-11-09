@@ -68,11 +68,11 @@ struct TestSetupView: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if mode == .review {
-                Text("복습은 미암기 단어, 직전 세트, 낱개 단어를 조합합니다. 자리가 남으면 나머지 복습 대상과 기준 세트로 채웁니다.")
+                Text("복습은 미암기 단어를 우선하고 직전 세트와 기한이 지난 Mastered 단어를 함께 점검합니다. 같은 날 반복 정답은 복습 강도를 낮추지만 Mastered 근거는 하루 한 번만 쌓입니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if mode == .mixed {
-                Text("혼합은 최근 기준 세트 12개를 우선하고 복습·낱개·미검증 과거 세트로 보충합니다. 오늘 세트가 없으면 가장 최근 세트를 기준으로 삼습니다.")
+                Text("혼합은 최근 기준 세트·활성 복습·Mastered 유지 점검을 일부 포함하고, 과거 세트와 낱개 단어를 넓게 순환합니다. 단어장에 오늘 아직 출제되지 않은 후보가 남아 있으면 같은 단어를 다시 출제하지 않습니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             } else {
