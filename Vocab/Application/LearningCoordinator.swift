@@ -198,6 +198,8 @@ enum SessionMode: String, CaseIterable, Identifiable {
     case loose = "낱개"
     case review = "복습"
     case mixed = "혼합"
+
+    static var allCases: [SessionMode] { [.today, .review, .mixed] }
     var id: String { rawValue }
 }
 
@@ -602,6 +604,10 @@ extension MeaningRecord {
 }
 
 extension WordRecord {
+    var registrationDay: String {
+        SeoulCalendar.day(for: createdAt)
+    }
+
     var activeMeanings: [MeaningRecord] {
         allMeanings.filter { $0.deletedAt == nil }
     }
@@ -716,15 +722,24 @@ final class LearningCoordinator {
         return set
     }
 
+    @available(*, deprecated, message: "Use registerWords(_:date:) for the unified vocabulary.")
     @discardableResult
     func addLooseWord(term: String, meaningsText: String, date: Date = .now) throws -> WordRecord {
-        let words = try addLooseWords([WordDraft(term: term, meanings: meaningsText)], date: date)
+        let words = try registerWords([WordDraft(term: term, meanings: meaningsText)], date: date)
         guard let word = words.first else { throw LearningError.termRequired }
         return word
     }
 
+    @available(*, deprecated, message: "Use registerWords(_:date:) for the unified vocabulary.")
     @discardableResult
     func addLooseWords(_ drafts: [WordDraft], date: Date = .now) throws -> [WordRecord] {
+        try registerWords(drafts, date: date)
+    }
+
+    /// Registers vocabulary without creating a set. Existing headwords retain their
+    /// first registration date and receive only previously unknown meanings.
+    @discardableResult
+    func registerWords(_ drafts: [WordDraft], date: Date = .now) throws -> [WordRecord] {
         try requireLearningFactWriting()
         try requireVocabularyAuthoring()
         guard !drafts.isEmpty else { throw LearningError.termRequired }
@@ -735,12 +750,19 @@ final class LearningCoordinator {
             guard !meanings.isEmpty else { throw LearningError.meaningRequired }
             return (term, TextNormalizer.normalizeEnglish(term), meanings)
         }
+        let matchingWords = try context.fetch(FetchDescriptor<WordRecord>(predicate: #Predicate { word in
+            word.deletedAt == nil
+        }))
         var wordsByNormalizedTerm: [String: WordRecord] = [:]
-        for word in try activeWords() {
+        wordsByNormalizedTerm.reserveCapacity(matchingWords.count + prepared.count)
+        for word in matchingWords {
             wordsByNormalizedTerm[word.normalizedTerm] = word
         }
         var savedWords: [WordRecord] = []
         savedWords.reserveCapacity(prepared.count)
+        var savedWordIDs = Set<UUID>()
+        var newlyCreatedWordIDs = Set<UUID>()
+        let mutationRecordedAt = Date.now
 
         for value in prepared {
             let word: WordRecord
@@ -754,9 +776,11 @@ final class LearningCoordinator {
                 newWord.reviewState = ReviewStateRecord()
                 context.insert(newWord)
                 wordsByNormalizedTerm[value.normalizedTerm] = newWord
+                newlyCreatedWordIDs.insert(newWord.id)
                 word = newWord
             }
 
+            var didMutate = false
             var existingMeanings = Set(word.activeMeanings.map(\.normalizedText))
             for meaningText in value.meanings {
                 let normalizedMeaning = TextNormalizer.normalizeKorean(meaningText)
@@ -765,9 +789,19 @@ final class LearningCoordinator {
                 meaning.word = word
                 word.appendMeaning(meaning)
                 context.insert(meaning)
+                didMutate = true
             }
-            word.updatedAt = date
-            savedWords.append(word)
+            if didMutate && !newlyCreatedWordIDs.contains(word.id) {
+                let monotonicBoundary = word.updatedAt.addingTimeInterval(0.001)
+                word.updatedAt = max(max(monotonicBoundary, date), mutationRecordedAt)
+                if word.statusRaw == "mastered" {
+                    word.statusRaw = "active"
+                }
+                resetMasteryEvidence(for: word)
+            }
+            if savedWordIDs.insert(word.id).inserted {
+                savedWords.append(word)
+            }
         }
         try saveAndNotifyChange()
         invalidateSessionCandidateCache()
@@ -786,15 +820,13 @@ final class LearningCoordinator {
             maintenanceWords = []
         }
         let wordsByID = try activeWordsByID()
-        let sets = try dailySets()
-        let setsByRecency = sets.filter { $0.seoulDay <= day }.sorted {
-            if $0.seoulDay != $1.seoulDay { return $0.seoulDay > $1.seoulDay }
-            if $0.createdAt != $1.createdAt { return $0.createdAt > $1.createdAt }
-            return $0.id.uuidString < $1.id.uuidString
-        }
-        let todaySet = setsByRecency.first(where: { $0.seoulDay == day })
-        let referenceSet = todaySet ?? setsByRecency.first
-        let previousSet = setsByRecency.first(where: { $0.seoulDay < day })
+        let usesLegacySetMembership = mode == .set || mode == .loose
+        let sets = usesLegacySetMembership ? try dailySets() : []
+        let wordsByRegistrationDay = Dictionary(grouping: words, by: \.registrationDay)
+        let registrationDays = wordsByRegistrationDay.keys.filter { $0 <= day }.sorted(by: >)
+        let eligibleActiveWords = words.filter { $0.registrationDay <= day }
+        let referenceDay = registrationDays.first
+        let previousDay = registrationDays.dropFirst().first
         let presentation = try presentationContext(for: words + maintenanceWords, day: day, now: date)
         let exposure = presentation.exposure
         let alreadyPresentedTodayIDs = presentation.alreadyPresentedTodayIDs
@@ -805,15 +837,19 @@ final class LearningCoordinator {
             guard let set else { return [] }
             return setMembership.wordIDsBySetID[set.id, default: []].compactMap { wordsByID[$0] }
         }
+        func registeredWords(on registrationDay: String?) -> [WordRecord] {
+            guard let registrationDay else { return [] }
+            return wordsByRegistrationDay[registrationDay, default: []]
+        }
         func referenceCandidates() -> [WordRecord] {
-            let referenceWords = setWords(for: referenceSet)
+            let referenceWords = registeredWords(on: referenceDay)
             return uniqueWords(
                 fairOrder(referenceWords.filter { !alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
                     + fairOrder(referenceWords.filter { alreadyPresentedTodayIDs.contains($0.id) }, exposure: exposure)
             )
         }
         func orderedReviewCandidates(preferUnseenToday: Bool = false) -> [WordRecord] {
-            let review = words.filter { record in
+            let review = eligibleActiveWords.filter { record in
                 guard let state = record.reviewState else { return false }
                 return state.activePriority > 0
             }
@@ -826,17 +862,14 @@ final class LearningCoordinator {
                 + reviewOrder(seenToday, exposure: exposure)
         }
         let linkedWordIDs = setMembership.linkedWordIDs
-        let eligibleSetWordIDs = Set(setsByRecency.flatMap {
-            setMembership.wordIDsBySetID[$0.id, default: []]
-        })
-        let looseCandidates = fairOrder(
+        let legacyLooseCandidates = fairOrder(
             words.filter { !linkedWordIDs.contains($0.id) },
             exposure: exposure
         )
         let maintenancePolicy = MasteryMaintenancePolicy()
         let promotionPolicy = MasteryPromotionPolicy()
         let promotionCandidates = fairOrderPreferUnseenToday(
-            words.filter { word in
+            eligibleActiveWords.filter { word in
                 promotionPolicy.isDue(
                     verifiedSuccessDays: verifiedSuccessDays(for: word),
                     latestWrongAt: word.reviewState?.latestWrongAt,
@@ -857,9 +890,7 @@ final class LearningCoordinator {
         switch mode {
         case .today:
             let reference = referenceCandidates()
-            selected = Array(reference.prefix(looseCandidates.isEmpty ? 20 : 16))
-            appendUnique(from: looseCandidates, to: &selected, limit: 20)
-            appendUnique(from: reference, to: &selected, limit: 20)
+            selected = Array(reference.prefix(20))
         case .set:
             guard let setID, let selectedSet = sets.first(where: { $0.id == setID }) else {
                 throw LearningError.setRequired
@@ -869,10 +900,10 @@ final class LearningCoordinator {
                 + fairOrder(selectedSetWords.filter { allPresentedIDs.contains($0.id) }, exposure: exposure)
             selected = Array(prioritized.prefix(20))
         case .loose:
-            selected = Array(looseCandidates.prefix(20))
+            selected = Array(legacyLooseCandidates.prefix(20))
         case .review:
             let orderedReview = orderedReviewCandidates()
-            let previousSetCandidates = fairOrder(setWords(for: previousSet), exposure: exposure)
+            let previousRegistrationCandidates = fairOrder(registeredWords(on: previousDay), exposure: exposure)
             let reference = referenceCandidates()
             let masteryMaintenance = Array(
                 masteryMaintenanceCandidates.prefix(maintenancePolicy.reviewMaximumQuestionsPerSession)
@@ -881,7 +912,7 @@ final class LearningCoordinator {
             selected = Array(orderedReview.prefix(14))
             appendUnique(from: promotionCandidates, to: &selected, limit: activeCapacity)
             appendUnique(
-                from: previousSetCandidates,
+                from: previousRegistrationCandidates,
                 to: &selected,
                 limit: min(activeCapacity, selected.count + 6)
             )
@@ -899,9 +930,6 @@ final class LearningCoordinator {
                 alreadyPresentedTodayIDs: alreadyPresentedTodayIDs,
                 preferUnseenToday: true
             )
-            let eligibleActiveWords = words.filter {
-                eligibleSetWordIDs.contains($0.id) || !linkedWordIDs.contains($0.id)
-            }
             let allActiveRotation = fairOrderPreferUnseenToday(
                 eligibleActiveWords,
                 exposure: exposure,
@@ -1198,6 +1226,7 @@ final class LearningCoordinator {
                     expected.koToEnStreak = 0
                 }
             case .correct:
+                guard attempt.answeredAt >= word.updatedAt else { continue }
                 if direction == .enToKo {
                     expected.enToKoStreak += 1
                     if let meaningID = attempt.matchedMeaningID,
@@ -1313,6 +1342,15 @@ final class LearningCoordinator {
             successDays.formUnion(meaning.successDays)
         }
         return successDays
+    }
+
+    private func resetMasteryEvidence(for word: WordRecord) {
+        word.reviewState?.koToEnSuccessDays = []
+        word.reviewState?.enToKoStreak = 0
+        word.reviewState?.koToEnStreak = 0
+        for meaning in word.activeMeanings {
+            meaning.successDays = []
+        }
     }
 
     private func eligibleMasterySuccessDays(for word: WordRecord) -> Set<String> {
@@ -3344,7 +3382,7 @@ enum LearningError: LocalizedError {
         case .onlyMasteredCanBeDeleted: "Mastered 단어만 삭제할 수 있습니다."
         case .setRequired: "테스트할 입력 세트를 선택하세요."
         case .noSessionCandidates: "선택한 범위에 출제 가능한 단어가 없습니다."
-        case .vocabularyAuthoringRequiresMac: "단어와 학습세트의 추가, 수정, 삭제는 Mac Vocab에서만 할 수 있습니다."
+        case .vocabularyAuthoringRequiresMac: "단어장의 추가, 수정, 삭제는 Mac Vocab에서만 할 수 있습니다."
         case .mutationsBlockedForIntegrity: "동기화 데이터 무결성 확인이 필요하여 변경 작업을 중단했습니다. 조회는 계속할 수 있습니다."
         }
     }
