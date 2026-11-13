@@ -149,7 +149,7 @@ public struct ProgressPolicy: Sendable {
 
     public init(
         studyCalendar: StudyCalendar = StudyCalendar(),
-        successDayRequirement: Int = 3,
+        successDayRequirement: Int = 2,
         maximumFailureCheck: Int = 3
     ) {
         precondition(successDayRequirement > 0)
@@ -261,7 +261,7 @@ public struct MasteryPolicy: Sendable {
 
     public init(
         studyCalendar: StudyCalendar = StudyCalendar(),
-        successDayRequirement: Int = 3
+        successDayRequirement: Int = 2
     ) {
         precondition(successDayRequirement > 0)
         self.studyCalendar = studyCalendar
@@ -278,6 +278,42 @@ public struct MasteryPolicy: Sendable {
         let latestWrongDay = studyCalendar.dayKey(for: latestWrongAt)
         let relearnedDays = verifiedSuccessDays.filter { $0 > latestWrongDay }
         return relearnedDays.count >= successDayRequirement
+    }
+}
+
+public struct MasteryPromotionPolicy: Sendable {
+    public let studyCalendar: StudyCalendar
+    public let masteryPolicy: MasteryPolicy
+
+    public init(
+        studyCalendar: StudyCalendar = StudyCalendar(),
+        masteryPolicy: MasteryPolicy = MasteryPolicy()
+    ) {
+        self.studyCalendar = studyCalendar
+        self.masteryPolicy = masteryPolicy
+    }
+
+    public func isDue(
+        verifiedSuccessDays: Set<String>,
+        latestWrongAt: Date?,
+        asOf date: Date
+    ) -> Bool {
+        let eligibleDays = successDaysAfterLatestFailure(
+            verifiedSuccessDays,
+            latestWrongAt: latestWrongAt
+        )
+        guard eligibleDays.count == masteryPolicy.successDayRequirement - 1,
+              let latestSuccessDay = eligibleDays.max() else { return false }
+        return latestSuccessDay < studyCalendar.dayKey(for: date)
+    }
+
+    private func successDaysAfterLatestFailure(
+        _ successDays: Set<String>,
+        latestWrongAt: Date?
+    ) -> Set<String> {
+        guard let latestWrongAt else { return successDays }
+        let latestWrongDay = studyCalendar.dayKey(for: latestWrongAt)
+        return successDays.filter { $0 > latestWrongDay }
     }
 }
 
@@ -300,14 +336,14 @@ public struct MasteryMaintenancePolicy: Sendable {
 
     public func intervalDays(verifiedSuccessDayCount: Int) -> Int {
         switch verifiedSuccessDayCount {
-        case ...3:
+        case ...2:
+            7
+        case 3:
             14
         case 4:
             30
-        case 5:
-            60
         default:
-            120
+            45
         }
     }
 

@@ -834,6 +834,18 @@ final class LearningCoordinator {
             exposure: exposure
         )
         let maintenancePolicy = MasteryMaintenancePolicy()
+        let promotionPolicy = MasteryPromotionPolicy()
+        let promotionCandidates = fairOrderPreferUnseenToday(
+            words.filter { word in
+                promotionPolicy.isDue(
+                    verifiedSuccessDays: verifiedSuccessDays(for: word),
+                    latestWrongAt: word.reviewState?.latestWrongAt,
+                    asOf: date
+                )
+            },
+            exposure: exposure,
+            alreadyPresentedTodayIDs: alreadyPresentedTodayIDs
+        )
         let masteryMaintenanceCandidates = orderedMasteryMaintenanceCandidates(
             maintenanceWords,
             policy: maintenancePolicy,
@@ -867,6 +879,7 @@ final class LearningCoordinator {
             )
             let activeCapacity = 20 - masteryMaintenance.count
             selected = Array(orderedReview.prefix(14))
+            appendUnique(from: promotionCandidates, to: &selected, limit: activeCapacity)
             appendUnique(
                 from: previousSetCandidates,
                 to: &selected,
@@ -886,12 +899,6 @@ final class LearningCoordinator {
                 alreadyPresentedTodayIDs: alreadyPresentedTodayIDs,
                 preferUnseenToday: true
             )
-            let referenceWordIDs: Set<UUID>
-            if let referenceSet {
-                referenceWordIDs = Set(setMembership.wordIDsBySetID[referenceSet.id, default: []])
-            } else {
-                referenceWordIDs = []
-            }
             let eligibleActiveWords = words.filter {
                 eligibleSetWordIDs.contains($0.id) || !linkedWordIDs.contains($0.id)
             }
@@ -903,16 +910,14 @@ final class LearningCoordinator {
             let rotationFloor = eligibleActiveWords.map {
                 exposure[$0.id]?.count ?? 0
             }.min() ?? 0
-            let reference = allActiveRotation.filter {
-                referenceWordIDs.contains($0.id) && (exposure[$0.id]?.count ?? 0) == rotationFloor
-            }
+            let promotionWordIDs = Set(promotionCandidates.map(\.id))
             let reviewWordIDs = Set(orderedReview.map(\.id))
             let reviewAtRotationFloor = orderedReview.filter {
                 (exposure[$0.id]?.count ?? 0) == rotationFloor
             }
             let selectedIDs = composition.select(
-                reference: reference.map(\.id),
-                referenceCategoryIDs: referenceWordIDs,
+                promotionDue: promotionCandidates.map(\.id),
+                promotionDueCategoryIDs: promotionWordIDs,
                 activeReview: reviewAtRotationFloor.map(\.id),
                 activeReviewCategoryIDs: reviewWordIDs,
                 masteryMaintenance: mixedMaintenanceCandidates.map(\.id),
@@ -1310,6 +1315,13 @@ final class LearningCoordinator {
         return successDays
     }
 
+    private func eligibleMasterySuccessDays(for word: WordRecord) -> Set<String> {
+        let successDays = verifiedSuccessDays(for: word)
+        guard let latestWrongAt = word.reviewState?.latestWrongAt else { return successDays }
+        let latestWrongDay = SeoulCalendar.day(for: latestWrongAt)
+        return successDays.filter { $0 > latestWrongDay }
+    }
+
     private struct PresentationStats {
         var count = 0
         var lastPresentedAt: Date?
@@ -1665,7 +1677,7 @@ final class LearningCoordinator {
         preferUnseenToday: Bool
     ) -> [WordRecord] {
         let candidates = words.compactMap { word -> MasteryMaintenanceCandidate? in
-            let successDayCount = verifiedSuccessDays(for: word).count
+            let successDayCount = eligibleMasterySuccessDays(for: word).count
             let lastTestedAt = word.reviewState?.lastTestedAt ?? word.updatedAt
             guard policy.needsRevalidation(
                 lastTestedAt: lastTestedAt,
