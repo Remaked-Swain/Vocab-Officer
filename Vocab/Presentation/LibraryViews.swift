@@ -3,30 +3,45 @@ import SwiftData
 import SwiftUI
 
 struct StudyCardsView: View {
-    @Environment(\.modelContext) private var context
-    @Query(filter: #Predicate<DailySetRecord> { $0.deletedAt == nil }) private var sets: [DailySetRecord]
+    @Query(
+        filter: #Predicate<WordRecord> { $0.deletedAt == nil },
+        sort: \WordRecord.createdAt,
+        order: .reverse
+    ) private var words: [WordRecord]
     @Binding var faceStates: [UUID: Bool]
-    @State private var selectedSetID: UUID?
-    @State private var selectedEntries: [StudyCardEntry] = []
-    @State private var showingDiscardConfirmation = false
+    @State private var selectedDay: String?
     @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
-    @State private var isLoadingCards = false
-
-    private var orderedSets: [DailySetRecord] {
-        sets.sorted(by: Self.newestSetFirst)
+    private var registrationGroups: [RegistrationDayGroup] {
+        Dictionary(grouping: words, by: \.registrationDay)
+            .map { day, words in RegistrationDayGroup(day: day, words: words) }
+            .sorted { $0.day > $1.day }
     }
 
-    private var selectedSet: DailySetRecord? {
-        orderedSets.first { $0.id == selectedSetID } ?? orderedSets.first
+    private func effectiveSelectedDay(in groups: [RegistrationDayGroup]) -> String? {
+        selectedDay.flatMap { day in
+            groups.contains { $0.day == day } ? day : nil
+        } ?? groups.first?.day
+    }
+
+    private func selectedCards(in groups: [RegistrationDayGroup], day: String?) -> [StudyCardEntry] {
+        guard let day else { return [] }
+        return (groups.first { $0.day == day }?.words ?? [])
+            .sorted {
+                if $0.word.createdAt != $1.word.createdAt { return $0.word.createdAt < $1.word.createdAt }
+                return $0.word.normalizedTerm < $1.word.normalizedTerm
+            }
     }
 
     var body: some View {
+        let groups = registrationGroups
+        let day = effectiveSelectedDay(in: groups)
+        let cards = selectedCards(in: groups, day: day)
         VStack(alignment: .leading, spacing: 18) {
             Text("학습 카드")
                 .font(.largeTitle.weight(.semibold))
-            Text("입력한 세트별로 카드를 클릭하거나 Return 키를 눌러 원문과 의미를 뒤집어 확인하세요.")
+            Text("같은 날 등록한 단어를 모아 봅니다. 카드를 클릭하거나 Return 키를 눌러 원문과 의미를 뒤집으세요.")
                 .font(.body)
                 .foregroundStyle(.secondary)
 
@@ -41,33 +56,30 @@ struct StudyCardsView: View {
                 .accessibilityLabel("학습 카드 상태 안내")
             }
 
-            Picker("학습 세트", selection: Binding(
-                get: { selectedSet?.id },
-                set: { selectedSetID = $0 }
+            Picker("등록일", selection: Binding(
+                get: { day },
+                set: { selectedDay = $0 }
             )) {
-                ForEach(orderedSets) { set in
-                    Text("\(set.seoulDay) 세트  (\(set.allItems.filter { $0.deletedAt == nil }.count)개)")
-                        .tag(Optional(set.id))
+                ForEach(groups) { group in
+                    Text("\(group.day)  (\(group.words.count)개)")
+                        .tag(Optional(group.day))
                 }
             }
             .pickerStyle(.menu)
             .controlSize(.large)
             .frame(maxWidth: 360, alignment: .leading)
 
-            Text("보관된 학습 세트: \(orderedSets.count)개")
+            Text("등록일 그룹: \(groups.count)개 · 전체 단어: \(words.count)개")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-                .accessibilityLabel("현재 보관된 학습 세트는 \(orderedSets.count)개입니다.")
+                .accessibilityLabel("등록일 그룹은 \(groups.count)개이며 전체 단어는 \(words.count)개입니다.")
 
-            if isLoadingCards {
-                ProgressView("카드를 불러오는 중...")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if selectedEntries.isEmpty {
-                ContentUnavailableView("학습할 세트가 없습니다", systemImage: "rectangle.stack")
+            if cards.isEmpty {
+                ContentUnavailableView("학습할 단어가 없습니다", systemImage: "rectangle.stack")
             } else {
                 ScrollView {
                     LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
-                        ForEach(selectedEntries) { entry in
+                        ForEach(cards) { entry in
                             FlipWordCard(
                                 word: entry.word,
                                 showsMeaning: Binding(
@@ -87,29 +99,6 @@ struct StudyCardsView: View {
         }
         .padding(28)
         .navigationTitle("학습 카드")
-        .task(id: selectedSet?.id) {
-            loadSelectedEntries()
-        }
-        .toolbar {
-            ToolbarItem {
-                Button("선택 세트 폐기", role: .destructive) {
-                    showingDiscardConfirmation = true
-                }
-                .disabled(selectedSet == nil)
-            }
-        }
-        .confirmationDialog(
-            "선택한 단어 세트를 폐기할까요?",
-            isPresented: $showingDiscardConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("세트 폐기", role: .destructive) {
-                discardSelectedSet()
-            }
-            Button("취소", role: .cancel) {}
-        } message: {
-            Text("이 세트에만 포함된 단어는 단어장과 기록에서 삭제됩니다. 다른 세트에도 포함된 단어는 해당 세트 연결만 제거됩니다.")
-        }
         .sheet(item: $editingWord) { word in
             WordEditSheet(word: word) { message, isError in
                 self.message = message
@@ -118,72 +107,27 @@ struct StudyCardsView: View {
         }
     }
 
-    private func discardSelectedSet() {
-        guard let selectedSet else { return }
-        do {
-            try LearningCoordinator(context: context).discardDailySet(selectedSet)
-            selectedSetID = orderedSets.first { $0.id != selectedSet.id }?.id
-            message = "\(selectedSet.seoulDay) 세트를 폐기했습니다."
-            isError = false
-        } catch {
-            message = error.localizedDescription
-            isError = true
-        }
-    }
-
-    private func loadSelectedEntries() {
-        guard let selectedSet else {
-            selectedEntries = []
-            return
-        }
-        isLoadingCards = true
-        defer { isLoadingCards = false }
-
-        let sortedItems = selectedSet.allItems.filter { $0.deletedAt == nil }.sorted { $0.orderIndex < $1.orderIndex }
-        let ids = Array(Set(sortedItems.map(\.wordID)))
-        guard !ids.isEmpty else {
-            selectedEntries = []
-            return
-        }
-
-        do {
-            let descriptor = FetchDescriptor<WordRecord>(
-                predicate: #Predicate { word in
-                    ids.contains(word.id) && word.deletedAt == nil
-                }
-            )
-            let fetchedWords = try context.fetch(descriptor)
-            let wordsByID = Dictionary(uniqueKeysWithValues: fetchedWords.map { ($0.id, $0) })
-            selectedEntries = sortedItems.compactMap { item in
-                wordsByID[item.wordID].map { StudyCardEntry(item: item, word: $0) }
-            }
-            let validIDs = Set(selectedEntries.map(\.id))
-            faceStates = faceStates.filter { validIDs.contains($0.key) || $0.value }
-        } catch {
-            selectedEntries = []
-            message = error.localizedDescription
-            isError = true
-        }
-    }
-
-    private static func newestSetFirst(_ lhs: DailySetRecord, _ rhs: DailySetRecord) -> Bool {
-        if lhs.seoulDay != rhs.seoulDay {
-            return lhs.seoulDay > rhs.seoulDay
-        }
-        if lhs.createdAt != rhs.createdAt {
-            return lhs.createdAt > rhs.createdAt
-        }
-        return lhs.id.uuidString > rhs.id.uuidString
-    }
 }
 
 private struct StudyCardEntry: Identifiable {
     let id: UUID
     let word: WordRecord
 
-    init(item: DailySetItemRecord, word: WordRecord) {
-        id = item.id
+    init(word: WordRecord) {
+        id = word.id
         self.word = word
+    }
+}
+
+private struct RegistrationDayGroup: Identifiable {
+    let day: String
+    let words: [StudyCardEntry]
+
+    var id: String { day }
+
+    init(day: String, words: [WordRecord]) {
+        self.day = day
+        self.words = words.map { StudyCardEntry(word: $0) }
     }
 }
 
@@ -410,7 +354,6 @@ struct LibraryView: View {
     @Environment(\.modelContext) private var context
     @State private var searchText = ""
     @State private var displayedWords: [WordRecord] = []
-    @State private var linkedWordIDs = Set<UUID>()
     @State private var selection = Set<UUID>()
     @State private var showingDeleteConfirmation = false
     @State private var showingAddWord = false
@@ -446,19 +389,9 @@ struct LibraryView: View {
                             Text(word.activeMeanings.map(\.text).joined(separator: ", "))
                                 .font(.body)
                                 .foregroundStyle(.secondary)
-                            HStack(spacing: 8) {
-                                Text(word.statusRaw.capitalized)
-                                    .font(.caption)
-                                    .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
-                                if !linkedWordIDs.contains(word.id) {
-                                    Text("낱개")
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(.blue)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 2)
-                                        .background(.blue.opacity(0.12), in: Capsule())
-                                }
-                            }
+                            Text(word.statusRaw.capitalized)
+                                .font(.caption)
+                                .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
                         }
                         Spacer()
                         WordMemoryAidButton(word: word)
@@ -482,7 +415,7 @@ struct LibraryView: View {
         }
         .toolbar {
             ToolbarItemGroup {
-                Button("낱개 단어 추가") {
+                Button("단어 등록") {
                     showingAddWord = true
                 }
                 .controlSize(.large)
@@ -502,7 +435,7 @@ struct LibraryView: View {
             }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("선택한 단어와 뜻, 시도 기록, 세트 및 테스트 세션 연결이 삭제됩니다. 이 작업은 앱 안에서 되돌릴 수 없습니다.")
+            Text("선택한 단어와 뜻, 시도 기록 및 테스트 세션 연결이 삭제됩니다. 이 작업은 앱 안에서 되돌릴 수 없습니다.")
         }
         .sheet(item: $editingWord) { word in
             WordEditSheet(word: word) { message, isError in
@@ -512,7 +445,7 @@ struct LibraryView: View {
             }
         }
         .sheet(isPresented: $showingAddWord) {
-            LooseWordAddSheet { message, isError in
+            VocabularyRegistrationSheet { message, isError in
                 self.message = message
                 self.isError = isError
                 reloadWordList()
@@ -576,7 +509,6 @@ struct LibraryView: View {
         canLoadMore = true
         selection.removeAll()
         displayedWords = []
-        linkedWordIDs = []
         do {
             matchedSearchWordIDs = try WordLibrarySearch(context: context).resolveWordIDs(for: searchText)
             loadNextWordBatch()
@@ -600,7 +532,6 @@ struct LibraryView: View {
             }
             batch += 1
             displayedWords.append(contentsOf: fetched)
-            refreshLinkedWordIDs(for: displayedWords)
         } catch {
             message = error.localizedDescription
             isError = true
@@ -644,23 +575,6 @@ struct LibraryView: View {
         return try context.fetch(descriptor)
     }
 
-    private func refreshLinkedWordIDs(for words: [WordRecord]) {
-        let ids = Array(Set(words.map(\.id)))
-        guard !ids.isEmpty else {
-            linkedWordIDs = []
-            return
-        }
-        do {
-            let descriptor = FetchDescriptor<DailySetItemRecord>(
-                predicate: #Predicate { item in
-                    ids.contains(item.wordID)
-                }
-            )
-            linkedWordIDs = Set(try context.fetch(descriptor).map(\.wordID))
-        } catch {
-            linkedWordIDs = []
-        }
-    }
 }
 
 struct HistoryView: View {
@@ -745,7 +659,7 @@ private struct WordEditSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("단어 직접 수정")
                 .font(.title.weight(.semibold))
-            Text("OCR 오인식이나 오입력된 낱개 카드를 수정합니다. 이 값은 단어장의 단일 진실 공급원(SOT)을 직접 바꾸며, Mastered 단어를 수정하면 다시 활성 단어가 됩니다.")
+            Text("OCR 오인식이나 오입력된 단어를 수정합니다. 이 값은 단어장의 단일 진실 공급원(SOT)을 직접 바꾸며, Mastered 단어를 수정하면 다시 활성 단어가 됩니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             TextField("영단어", text: $term)
@@ -791,7 +705,7 @@ private struct WordEditSheet: View {
     }
 }
 
-private struct LooseWordAddSheet: View {
+private struct VocabularyRegistrationSheet: View {
     private enum AddMode: String, CaseIterable, Identifiable {
         case single = "한 개"
         case batch = "여러 개"
@@ -810,9 +724,9 @@ private struct LooseWordAddSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("낱개 단어 추가")
+            Text("단어 등록")
                 .font(.title.weight(.semibold))
-            Text("일일 세트에 포함하지 않고 단어장 SOT에 저장합니다. 기존 표제어에는 새 뜻만 병합합니다.")
+            Text("단어장 SOT에 저장합니다. 기존 표제어에는 아직 없는 뜻만 병합합니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Picker("추가 방식", selection: $mode) {
@@ -853,7 +767,7 @@ private struct LooseWordAddSheet: View {
                 Spacer()
                 Button("취소") { dismiss() }
                     .controlSize(.large)
-                Button(mode == .single ? "낱개 단어 저장" : "낱개 단어 일괄 저장") { save() }
+                Button(mode == .single ? "단어 저장" : "단어 일괄 저장") { save() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.return, modifiers: .command)
@@ -873,10 +787,10 @@ private struct LooseWordAddSheet: View {
             case .batch:
                 drafts = try DailyIntakePasteParser.parse(batchInput)
             }
-            let words = try LearningCoordinator(context: context).addLooseWords(drafts)
+            let words = try LearningCoordinator(context: context).registerWords(drafts)
             let message = mode == .single
-                ? "\(words[0].term)을 낱개 단어로 저장했습니다."
-                : "낱개 단어 \(words.count)개를 저장했습니다. 중복 표제어는 기존 SOT에 병합했습니다."
+                ? "\(words[0].term)을 단어장에 저장했습니다."
+                : "단어 \(words.count)개를 저장했습니다. 중복 표제어는 기존 SOT에 병합했습니다."
             onComplete(message, false)
             dismiss()
         } catch {

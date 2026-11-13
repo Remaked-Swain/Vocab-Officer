@@ -16,7 +16,7 @@ struct TodayIntakeView: View {
     @State private var mode: IntakeMode = .paste
     @State private var pastedText = ""
     @State private var pasteAnalysis = PasteAnalysis.empty
-    @State private var drafts = (0..<100).map { _ in WordDraft() }
+    @State private var drafts = (0..<20).map { _ in WordDraft() }
     @State private var message: String?
     @State private var isError = false
     @State private var isImportingImage = false
@@ -33,7 +33,7 @@ struct TodayIntakeView: View {
                 VStack(alignment: .leading) {
                     Text("오늘 입력")
                         .font(.largeTitle.weight(.semibold))
-                    Text("오늘 학습할 단어를 최대 100개까지 등록하세요. 모자란 분량은 같은 날짜 세트에 나중에 이어서 저장할 수 있습니다.")
+                    Text("필요한 만큼 등록하세요. 같은 표제어는 새 뜻만 합쳐지고 최초 등록일은 유지됩니다.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
@@ -67,7 +67,7 @@ struct TodayIntakeView: View {
                 Button("입력 내용 비우기") {
                     pastedText = ""
                     pasteAnalysis = .empty
-                    drafts = (0..<100).map { _ in WordDraft() }
+                    drafts = (0..<20).map { _ in WordDraft() }
                     message = nil
                     ocrSuspectedMissingNumbers = []
                 }
@@ -119,7 +119,7 @@ struct TodayIntakeView: View {
             }
 
             HStack {
-                Text("\(pasteAnalysis.drafts.count) / 100")
+                Text("\(pasteAnalysis.drafts.count)개")
                     .font(.title2.monospacedDigit().weight(.semibold))
                     .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
                 Spacer()
@@ -158,13 +158,13 @@ struct TodayIntakeView: View {
                             RoundedRectangle(cornerRadius: 10)
                                 .stroke(.quaternary, lineWidth: 1)
                         }
-                        .accessibilityLabel("단어 100개 붙여넣기 입력창")
+                        .accessibilityLabel("단어 일괄 붙여넣기 입력창")
                 }
                 .padding(10)
             }
 
             HStack {
-                Text("\(pasteAnalysis.drafts.count) / 100")
+                Text("\(pasteAnalysis.drafts.count)개")
                     .font(.title2.monospacedDigit().weight(.semibold))
                     .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
                 Spacer()
@@ -186,7 +186,7 @@ struct TodayIntakeView: View {
                     .font(.body)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text("\(filledCount) / 100")
+                Text("\(filledCount)개")
                     .font(.title2.monospacedDigit().weight(.semibold))
             }
             Table($drafts) {
@@ -215,6 +215,10 @@ struct TodayIntakeView: View {
             .accessibilityLabel("오늘 신규 단어 직접 입력 표")
 
             HStack {
+                Button("입력 행 20개 추가") {
+                    drafts.append(contentsOf: (0..<20).map { _ in WordDraft() })
+                }
+                .controlSize(.large)
                 Spacer()
                 Button("입력한 단어 저장") {
                     save(drafts)
@@ -228,13 +232,12 @@ struct TodayIntakeView: View {
 
     private func save(_ values: [WordDraft]) {
         do {
-            let set = try LearningCoordinator(context: context).saveDailySet(values)
-            let count = set.allItems.filter { $0.deletedAt == nil }.count
-            message = "Asia/Seoul 기준 오늘 세트에 저장했습니다. 현재 \(count) / 100개입니다."
+            let words = try LearningCoordinator(context: context).registerWords(values)
+            message = "\(words.count)개 표제어를 단어장에 반영했습니다. 중복 표제어는 새 의미만 합쳤습니다."
             isError = false
             pastedText = ""
             pasteAnalysis = .empty
-            drafts = (0..<100).map { _ in WordDraft() }
+            drafts = (0..<20).map { _ in WordDraft() }
             ocrSuspectedMissingNumbers = []
         } catch {
             message = error.localizedDescription
@@ -268,7 +271,7 @@ struct TodayIntakeView: View {
             items.append(
                 FeedbackItem(
                     text: filledCount > 0
-                        ? "\(filledCount)개를 오늘 세트에 저장할 수 있습니다."
+                        ? "\(filledCount)개를 단어장에 반영할 수 있습니다."
                         : "단어를 1개 이상 입력하세요.",
                     systemImage: filledCount > 0 ? "checkmark.circle.fill" : "info.circle",
                     color: filledCount > 0 ? .green : .secondary
@@ -306,14 +309,11 @@ struct TodayIntakeView: View {
             : " 누락 의심 번호: \(missingNumbers.joined(separator: ", "))"
         do {
             let drafts = try DailyIntakePasteParser.parse(text)
-            if drafts.count <= 100 {
-                return PasteAnalysis(
-                    drafts: drafts,
-                    status: "\(drafts.count)개가 확인되었습니다. 오늘 세트에 저장할 수 있습니다.\(suffix)",
-                    isReady: true
-                )
-            }
-            return PasteAnalysis(drafts: drafts, status: "\(drafts.count)개가 인식되었습니다. 한 번에 최대 100개까지 저장할 수 있습니다.\(suffix)", isReady: false)
+            return PasteAnalysis(
+                drafts: drafts,
+                status: "\(drafts.count)개가 확인되었습니다. 단어장에 저장할 수 있습니다.\(suffix)",
+                isReady: true
+            )
         } catch {
             return PasteAnalysis(
                 drafts: [],
@@ -382,7 +382,7 @@ struct TodayIntakeView: View {
 }
 
 private struct PasteAnalysis {
-    static let empty = PasteAnalysis(drafts: [], status: "1~100개 단어를 붙여넣으세요.", isReady: false)
+    static let empty = PasteAnalysis(drafts: [], status: "단어를 한 개 이상 붙여넣으세요.", isReady: false)
 
     let drafts: [WordDraft]
     let status: String

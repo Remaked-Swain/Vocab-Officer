@@ -676,7 +676,7 @@ struct SettingsView: View {
                 .uploadExplicitRecoverySnapshot(context: modelContext)
             syncMessage = result.disposition == .unchanged
                 ? "서버 복구 snapshot과 canonical fingerprint가 같습니다. 변경 없음. asset 업로드를 건너뛰었습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
-                : "\(result.wordCount)개 단어와 \(result.dailySetCount)개 학습세트를 iCloud에 업로드했습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
+                : "\(result.wordCount)개 단어와 호환 메타데이터를 iCloud에 업로드했습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
         } catch {
             syncMessage = userFacingSyncError(error)
             syncMessageIsError = true

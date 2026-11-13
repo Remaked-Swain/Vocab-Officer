@@ -6,24 +6,18 @@ import AppKit
 
 struct TestSetupView: View {
     @Environment(\.modelContext) private var context
-    @Query(filter: #Predicate<DailySetRecord> { $0.deletedAt == nil }) private var sets: [DailySetRecord]
     @State private var mode: SessionMode = .mixed
     @State private var direction: PracticeDirection = .enToKo
     @State private var format: QuestionFormat = .typed
-    @State private var selectedSetID: UUID?
     @State private var activeRun: TestRun?
     @State private var isStarting = false
     @State private var error: String?
-
-    private var orderedSets: [DailySetRecord] {
-        sets.sorted(by: newestSetFirst)
-    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 24) {
             Text("테스트")
                 .font(.largeTitle.weight(.semibold))
-            Text("한 회차는 최대 20개의 고유 단어로 구성됩니다. 오늘 입력 세트가 없으면 가장 최근 세트를 오늘 기준 풀처럼 사용합니다.")
+            Text("한 회차는 최대 20개의 고유 단어로 구성됩니다. 오늘 등록 단어가 없으면 가장 최근 등록일의 단어를 사용합니다.")
                 .font(.body)
                 .foregroundStyle(.secondary)
 
@@ -46,37 +40,21 @@ struct TestSetupView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-                if mode == .set {
-                    Picker("테스트 대상 세트", selection: $selectedSetID) {
-                        ForEach(Array(orderedSets.enumerated()), id: \.element.id) { offset, set in
-                            Text("\(set.seoulDay) 세트")
-                                .tag(Optional(set.id))
-                        }
-                    }
-                }
             }
             .formStyle(.grouped)
             .controlSize(.large)
             .frame(maxWidth: 620)
 
-            if mode == .set {
-                Text("아직 시험하지 않은 과거 세트도 선택하여 20문항씩 학습할 수 있습니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else if mode == .loose {
-                Text("일일 세트에 속하지 않은 낱개 단어만 최대 20개 출제합니다. 덜 출제된 단어를 우선하여 반복 테스트에서도 빈도를 고르게 유지합니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else if mode == .review {
-                Text("복습은 미암기 단어를 우선하고 직전 세트와 기한이 지난 Mastered 단어를 함께 점검합니다. 같은 날 반복 정답은 복습 강도를 낮추지만 Mastered 근거는 하루 한 번만 쌓입니다.")
+            if mode == .review {
+                Text("복습은 미암기 단어를 우선하고 직전 등록일 단어와 기한이 지난 Mastered 단어를 함께 점검합니다. 같은 날 반복 정답은 복습 강도를 낮추지만 Mastered 근거는 하루 한 번만 쌓입니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             } else if mode == .mixed {
-                Text("혼합은 최근 기준 세트·활성 복습·Mastered 유지 점검을 일부 포함하고, 과거 세트와 낱개 단어를 넓게 순환합니다. 단어장에 오늘 아직 출제되지 않은 후보가 남아 있으면 같은 단어를 다시 출제하지 않습니다.")
+                Text("혼합은 활성 복습과 Mastered 유지 점검을 제한적으로 포함하고, 단어장 전체를 넓게 순환합니다. 오늘 아직 출제되지 않은 후보가 남아 있으면 같은 단어를 다시 출제하지 않습니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             } else {
-                Text("최근 기준 세트 단어를 우선하고 낱개 단어도 일부 포함합니다.")
+                Text("오늘 등록 단어를 우선하며, 없으면 가장 최근 등록일 단어를 사용합니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -102,11 +80,6 @@ struct TestSetupView: View {
             Spacer()
         }
         .padding(32)
-        .onAppear {
-            if selectedSetID == nil {
-                selectedSetID = orderedSets.first?.id
-            }
-        }
         #if os(macOS)
         .background(TestRunnerWindowPresenter(run: $activeRun, context: context))
         #else
@@ -124,12 +97,11 @@ struct TestSetupView: View {
 
         let mode = mode
         let direction = direction
-        let selectedSetID = selectedSetID
         let format = format
         Task { @MainActor in
             await Task.yield()
             do {
-                let result = try LearningCoordinator(context: context).generateSession(mode: mode, direction: direction, setID: selectedSetID, format: format)
+                let result = try LearningCoordinator(context: context).generateSession(mode: mode, direction: direction, format: format)
                 activeRun = TestRun(session: result.0, questions: result.1)
             } catch let caughtError {
                 activeRun = nil
@@ -139,15 +111,6 @@ struct TestSetupView: View {
         }
     }
 
-    private func newestSetFirst(_ lhs: DailySetRecord, _ rhs: DailySetRecord) -> Bool {
-        if lhs.seoulDay != rhs.seoulDay {
-            return lhs.seoulDay > rhs.seoulDay
-        }
-        if lhs.createdAt != rhs.createdAt {
-            return lhs.createdAt > rhs.createdAt
-        }
-        return lhs.id.uuidString > rhs.id.uuidString
-    }
 }
 
 struct TestRun: Identifiable {
