@@ -18,5 +18,6 @@ VOCAB_PERFORMANCE_TESTS=1 /usr/bin/time -lp xcodebuild \
   -only-testing:VocabTests/LearningCoordinatorTests/testPasteParserHandlesLargePastedTextWithHyphenatedTerms \
   -only-testing:VocabTests/LearningCoordinatorTests/testPasteParserHundredLineP95MeetsTarget \
   -only-testing:VocabTests/LearningCoordinatorTests/testGenerateSessionLargeFixtureP95MeetsTarget \
+  -only-testing:VocabTests/LearningCoordinatorTests/testVocabularyRegistrationScalingAtProductionMultiples \
   -only-testing:VocabTests/OCRVocabularyFormatterTests/testRecoversNoisyNumbersAndLooserRowAlignment \
   -only-testing:VocabTests/OCRVocabularyFormatterTests/testHundredRowFixtureRecoversAtLeastNinetyEightRows
