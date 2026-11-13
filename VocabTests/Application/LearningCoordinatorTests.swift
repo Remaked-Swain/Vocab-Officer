@@ -138,6 +138,28 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertLessThanOrEqual(p95, 0.300)
     }
 
+    func testVocabularyRegistrationScalingAtProductionMultiples() throws {
+        try requirePerformanceTests()
+        for wordCount in [3_379, 6_758, 13_516] {
+            let context = try makeContext()
+            for index in 0..<wordCount {
+                context.insert(WordRecord(term: "fixture-\(index)", createdAt: testDate))
+            }
+            try context.save()
+            let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+            let startedAt = CFAbsoluteTimeGetCurrent()
+
+            try coordinator.registerWords([
+                WordDraft(term: "fixture-\(wordCount / 2)", meanings: "검증 뜻"),
+                WordDraft(term: "new-at-\(wordCount)", meanings: "신규 뜻")
+            ], date: testDate)
+
+            let elapsed = CFAbsoluteTimeGetCurrent() - startedAt
+            print("PERF register_words_library_\(wordCount)_ms=\(elapsed * 1_000)")
+            XCTAssertLessThan(elapsed, 1.0)
+        }
+    }
+
     func testPasteParserRejectsMalformedRow() {
         XCTAssertThrowsError(try DailyIntakePasteParser.parse("형식이 없는 단어 행"))
     }
@@ -247,6 +269,163 @@ final class LearningCoordinatorTests: XCTestCase {
         let alpha = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.normalizedTerm == "alpha" })
         XCTAssertEqual(Set(alpha.activeMeanings.map(\.text)), ["기존뜻", "새뜻"])
         XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetItemRecord>()).isEmpty)
+    }
+
+    func testVocabularyRegistrationAcceptsMoreThanOneHundredWithoutCreatingSetRecords() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+
+        let saved = try coordinator.registerWords(drafts(count: 137), date: testDate)
+
+        XCTAssertEqual(saved.count, 137)
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<WordRecord>()), 137)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetRecord>()).isEmpty)
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetItemRecord>()).isEmpty)
+    }
+
+    func testDuplicateRegistrationPreservesFirstDateAndReactivatesMasteredOnlyForNewMeaning() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        let original = try coordinator.registerWords([
+            WordDraft(term: "formula", meanings: "공식")
+        ], date: testDate)[0]
+        original.statusRaw = "mastered"
+        try context.save()
+        let laterDate = testDate.addingTimeInterval(86_400 * 10)
+
+        _ = try coordinator.registerWords([
+            WordDraft(term: "FORMULA", meanings: "공식")
+        ], date: laterDate)
+
+        XCTAssertEqual(original.statusRaw, "mastered")
+        XCTAssertEqual(original.createdAt, testDate)
+
+        _ = try coordinator.registerWords([
+            WordDraft(term: "formula", meanings: "공식, 방식")
+        ], date: laterDate)
+
+        XCTAssertEqual(original.statusRaw, "active")
+        XCTAssertEqual(original.createdAt, testDate)
+        XCTAssertEqual(Set(original.activeMeanings.map(\.text)), ["공식", "방식"])
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<WordRecord>()), 1)
+    }
+
+    func testTodaySessionUsesMostRecentRegistrationDayWithoutLegacySet() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.registerWords(drafts(count: 20, prefix: "older"), date: testDate)
+        let latestDate = testDate.addingTimeInterval(86_400)
+        try coordinator.registerWords(drafts(count: 20, prefix: "latest"), date: latestDate)
+
+        let result = try coordinator.generateSession(
+            mode: .today,
+            direction: .enToKo,
+            date: latestDate
+        )
+
+        XCTAssertEqual(result.1.count, 20)
+        XCTAssertTrue(result.1.allSatisfy { $0.word.term.hasPrefix("latest-") })
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetRecord>()).isEmpty)
+    }
+
+    func testMeaningExpansionRemainsActiveAfterAttemptReplay() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        let word = try coordinator.registerWords([
+            WordDraft(term: "durable", meanings: "지속적인")
+        ], date: testDate)[0]
+        let meaningID = try XCTUnwrap(word.activeMeanings.first?.id)
+        for dayOffset in 1...2 {
+            let answeredAt = testDate.addingTimeInterval(86_400 * Double(dayOffset))
+            let attempt = AttemptRecord(
+                directionRaw: PracticeDirection.enToKo.rawValue,
+                modeRaw: SessionMode.mixed.rawValue,
+                sessionID: UUID(),
+                questionIndex: 0,
+                seoulDay: SeoulCalendar.day(for: answeredAt),
+                prompt: word.term,
+                submittedAnswer: "지속적인",
+                automaticJudgementRaw: FinalResult.correct.rawValue,
+                finalJudgementRaw: FinalResult.correct.rawValue,
+                matchedMeaningID: meaningID,
+                answeredAt: answeredAt
+            )
+            attempt.word = word
+            word.appendAttempt(attempt)
+            context.insert(attempt)
+        }
+        XCTAssertTrue(coordinator.recomputeReviewState(for: word).isEmpty)
+        XCTAssertEqual(word.statusRaw, "mastered")
+
+        let revisionDate = testDate.addingTimeInterval(86_400 * 3)
+        try coordinator.registerWords([
+            WordDraft(term: "durable", meanings: "지속적인, 내구성 있는")
+        ], date: revisionDate)
+        XCTAssertTrue(coordinator.recomputeReviewState(for: word).isEmpty)
+
+        XCTAssertEqual(word.statusRaw, "active")
+        XCTAssertTrue(word.activeMeanings.allSatisfy(\.successDays.isEmpty))
+        XCTAssertTrue(word.reviewState?.koToEnSuccessDays.isEmpty == true)
+    }
+
+    func testBackdatedMeaningExpansionAdvancesRevisionBoundary() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        let word = try coordinator.registerWords([
+            WordDraft(term: "revision", meanings: "개정")
+        ], date: testDate)[0]
+        let meaningID = try XCTUnwrap(word.activeMeanings.first?.id)
+        let answeredAt = testDate.addingTimeInterval(86_400)
+        let attempt = AttemptRecord(
+            directionRaw: PracticeDirection.enToKo.rawValue,
+            modeRaw: SessionMode.mixed.rawValue,
+            sessionID: UUID(),
+            questionIndex: 0,
+            seoulDay: SeoulCalendar.day(for: answeredAt),
+            prompt: word.term,
+            submittedAnswer: "개정",
+            automaticJudgementRaw: FinalResult.correct.rawValue,
+            finalJudgementRaw: FinalResult.correct.rawValue,
+            matchedMeaningID: meaningID,
+            answeredAt: answeredAt
+        )
+        attempt.word = word
+        word.appendAttempt(attempt)
+        context.insert(attempt)
+        word.statusRaw = "mastered"
+        let previousBoundary = word.updatedAt
+
+        try coordinator.registerWords([
+            WordDraft(term: "revision", meanings: "개정, 수정판")
+        ], date: testDate.addingTimeInterval(-86_400))
+        XCTAssertTrue(coordinator.recomputeReviewState(for: word).isEmpty)
+
+        XCTAssertGreaterThan(word.updatedAt, previousBoundary)
+        XCTAssertGreaterThan(word.updatedAt, answeredAt)
+        XCTAssertEqual(word.statusRaw, "active")
+        XCTAssertTrue(word.activeMeanings.allSatisfy(\.successDays.isEmpty))
+    }
+
+    func testMixedSessionExcludesFutureRegisteredWordsWithoutLegacySets() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.registerWords(drafts(count: 30, prefix: "eligible"), date: testDate)
+        let futureDate = testDate.addingTimeInterval(86_400 * 10)
+        let futureWords = try coordinator.registerWords(drafts(count: 30, prefix: "future"), date: futureDate)
+        for word in futureWords {
+            word.reviewState?.failureCheck = 3
+            word.reviewState?.activePriority = 3
+        }
+        try context.save()
+
+        let result = try coordinator.generateSession(
+            mode: .mixed,
+            direction: .enToKo,
+            date: testDate
+        )
+
+        XCTAssertEqual(result.1.count, 20)
+        XCTAssertTrue(result.1.allSatisfy { $0.word.term.hasPrefix("eligible-") })
     }
 
     func testLooseWordBatchValidationIsAtomic() throws {
