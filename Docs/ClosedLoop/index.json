@@ -624,9 +624,32 @@
         {"id": "CL-0009", "scope": ["previous-set capacity when Mastered maintenance is due"]},
         {"id": "CL-0030", "scope": ["fixed 30-day maintenance interval", "14-day failure blocking", "Mixed maintenance rotation"]}
       ],
+      "partiallySupersededBy": [
+        {"id": "CL-0032", "scope": ["three-date Mastered promotion", "14/30/60/120 maintenance ladder", "latest-reference-set Mixed quota"]}
+      ],
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": []
+    },
+    {
+      "id": "CL-0032",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Exam-horizon Mastery promotion",
+      "date": "2026-11-13",
+      "tags": ["mastery", "promotion", "maintenance", "mixed", "exam-horizon", "performance"],
+      "affectedPaths": ["Vocab/Domain/StudyPolicies.swift", "Vocab/Domain/SessionPolicy.swift", "Vocab/Application/LearningCoordinator.swift", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0032-exam-horizon-mastery-promotion.md",
+      "references": ["CL-0006", "CL-0024", "CL-0028", "CL-0030", "CL-0031"],
+      "supersedes": [],
+      "supersededBy": null,
+      "partiallySupersedes": [
+        {"id": "CL-0031", "scope": ["three-date Mastered promotion", "14/30/60/120 maintenance ladder", "latest-reference-set Mixed quota"]}
+      ],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["the interval ladder is an explicit product policy, not an individually calibrated recall probability model"]
     }
   ]
 }

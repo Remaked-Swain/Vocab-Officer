@@ -50,16 +50,17 @@ grading, mastery or deletion policy.
 - `activePriority` is separate. Two consecutive English-to-Korean correct
   outcomes can reduce it by one; reaching two consecutive correct outcomes in
   both directions also reduces it and resets both streaks.
-- A word becomes `Mastered` after correct outcomes on three distinct Seoul
+- A word becomes `Mastered` after correct outcomes on two distinct Seoul
   dates regardless of mode, direction or question format. After a wrong or
   unknown outcome, only success days later than that failure count toward
   Mastered. Same-day repetitions can reduce active review priority but add at
-  most one mastery day. Mastered maintenance expands from 14 to 30, 60 and 120
-  days as verified success days accumulate. Review reserves at most four due
-  maintenance questions and Mixed at most two; a wrong/unknown result restores
-  Active status.
-- Mixed caps the current reference set at six questions, active review at four
-  and due Mastered maintenance at two. A word belonging to multiple categories
+  most one mastery day. A word with one eligible success day becomes
+  promotion-due on the next Seoul date. Mastered maintenance expands through
+  7, 14, 30 and at most 45 days as post-failure success evidence accumulates.
+  Review reserves at most four due maintenance questions and Mixed at most two;
+  a wrong/unknown result restores Active status.
+- Mixed caps promotion-due words at six questions, active review at four and
+  due Mastered maintenance at two. A word belonging to multiple categories
   counts against every applicable cap. Historical-set and loose words fill the
   remaining capacity, normally at least eight questions; capped categories do
   not backfill a missing broad pool. Candidates are ordered by lower lifetime

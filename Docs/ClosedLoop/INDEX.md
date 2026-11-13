@@ -40,6 +40,7 @@ only when its scope applies to the current change.
 | CL-0029 | active | 2026-10-08 | restarted printed numbering, adaptive OCR layout and reset-aware gap diagnostics | [Restarted source numbering and adaptive OCR](records/CL-0029-restarted-source-numbering-and-adaptive-ocr.md) | retain while numbered paste or image OCR intake exists |
 | CL-0030 | active | 2026-10-08 | direction-agnostic mastery, multiple-choice credit and periodic revalidation | [Direction-agnostic mastery and revalidation](records/CL-0030-direction-agnostic-mastery-revalidation.md) | retain while Mastered lifecycle exists |
 | CL-0031 | active | 2026-11-09 | spaced relearning, adaptive Mastered maintenance and same-day Mixed rotation | [Spaced relearning and Mixed rotation](records/CL-0031-spaced-relearning-and-mixed-rotation.md) | retain while test scheduling or Mastered lifecycle exists |
+| CL-0032 | active | 2026-11-13 | two-date Mastered promotion, exam-horizon maintenance and promotion-due Mixed quota | [Exam-horizon Mastery promotion](records/CL-0032-exam-horizon-mastery-promotion.md) | retain while test scheduling or Mastered lifecycle exists |
 
 ## Load Rules
 
@@ -97,7 +98,7 @@ only when its scope applies to the current change.
 - Printed source-number restarts, OCR page ordering, OCR layout inference or
   missing-number diagnostics must also load `CL-0029`.
 - Mastery evidence, Mastered exclusion, maintenance revalidation or demotion
-  must also load `CL-0030`.
+  must also load `CL-0030`, `CL-0031` and `CL-0032`.
 - Superseded or archived records are read only when investigating regression,
   migration history or a stated dependency.
 - `index.json` is the machine-readable companion for validation tooling only.
