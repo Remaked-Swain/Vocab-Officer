@@ -2,9 +2,9 @@
 
 ## Purpose
 
-`Vocab` is a local-only macOS vocabulary training app for a daily set of
-exactly 100 new headwords and repeatable sessions of up to 20 distinct words.
-It targets macOS 14 or newer using SwiftUI and SwiftData.
+`Vocab` is a macOS and iOS vocabulary trainer for an open-ended vocabulary
+library and repeatable sessions of up to 20 distinct words. Both platforms
+target OS 26 or newer using SwiftUI and SwiftData.
 
 ## Boundaries
 
@@ -21,18 +21,20 @@ grading, mastery or deletion policy.
 
 ## Fixed Policies
 
-- A completed daily intake contains exactly 100 newly learned headwords on an
-  `Asia/Seoul` calendar day. Adding meanings to an existing headword is an
-  edit, not a new intake item. Re-registering a deleted word counts as new.
+- Intake accepts any positive number of words. Normalized headword is the SOT
+  merge key across Active and Mastered records; duplicate meanings are ignored,
+  new meanings are unioned, and the original registration date is preserved.
+  Adding a new meaning to a Mastered word returns it to Active. Re-registering
+  a deleted word creates a new identity.
 - A test session contains no duplicate word and requests at most 20 words.
-  Modes are Today, Selected Set, Review and Mixed. Selected Set allows an
-  older completed intake set with untested words to be studied after later
-  sets are registered. Mixed uses bounded quotas for the latest reference set,
+  User-facing modes are Today, Review and Mixed. Today uses the most recent
+  `Asia/Seoul` registration day when nothing was registered today. Mixed uses
+  bounded quotas for promotion due words,
   active review, due Mastered maintenance and broad historical rotation, then
   fills from the least-exposed eligible vocabulary. Category quotas apply only
   at the library's current minimum lifetime presentation count, so they cannot
   restart merely because the Seoul date changed.
-- The learning-card screen groups vocabulary by completed intake set and lets
+- The learning-card screen groups vocabulary by first registration day and lets
   each card toggle between headword and all registered meanings without
   changing progress.
 - English-to-Korean accepts one stored meaning or explicitly approved alias per
@@ -72,9 +74,12 @@ grading, mastery or deletion policy.
 - The intake screen supports a local paste flow for either
   `number-headword-meanings` lines or tab-separated `headword<TAB>meanings`
   lines. Printed numbers are transient source locators and may restart without
-  affecting UUID identity or normalized-headword SOT. Parsed drafts still pass
-  through the same atomic daily-set policy; pasted vocabulary is never written
+  affecting UUID identity or normalized-headword SOT. Parsed drafts pass
+  through the same atomic vocabulary registration policy; pasted vocabulary is never written
   to repository files by the app.
+- `DailySetRecord` and `DailySetItemRecord` remain in the persistence graph only
+  for legacy store and CloudKit compatibility. Current product flows do not
+  create or display new set records.
 - Image OCR infers columns and vocabulary-card blocks from number positions,
   removes pronunciation text merged with a headword, and preserves selected
   page order. Vision recognition and image downsampling run off the main actor.

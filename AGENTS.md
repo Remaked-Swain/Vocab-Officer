@@ -62,7 +62,9 @@ registration/hash chain remains under `.git/closed-loop-pipeline/completed/`.
 
 ## Product Decisions
 
-- Loose words remain outside daily-set membership.
-- Today and Mixed test candidate pools include loose words while retaining the
-  recent daily set as the majority source.
-- Explicit selected-set tests contain only that selected set.
+- The product has one normalized-headword vocabulary, not daily or loose sets.
+- Intake accepts any positive count and merges meanings into the existing SOT.
+- Today uses the latest registration day when today has no intake; Review and
+  Mixed retain spaced review and fair whole-library rotation.
+- Legacy set entities remain persistence-only until a separately verified
+  SwiftData and CloudKit migration removes them.
