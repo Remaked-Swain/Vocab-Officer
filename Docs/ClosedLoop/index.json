@@ -650,6 +650,25 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["the interval ladder is an explicit product policy, not an individually calibrated recall probability model"]
+    },
+    {
+      "id": "CL-0033",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Setless vocabulary registration",
+      "date": "2026-11-13",
+      "tags": ["vocabulary", "intake", "registration-day", "legacy", "performance"],
+      "affectedPaths": ["Vocab/Application/LearningCoordinator.swift", "Vocab/Presentation/", "VocabIOS/Presentation/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0033-setless-vocabulary-registration.md",
+      "references": ["CL-0001", "CL-0004", "CL-0005", "CL-0016", "CL-0032"],
+      "supersedes": [],
+      "supersededBy": null,
+      "partiallySupersedes": [],
+      "partiallySupersededBy": [],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["legacy DailySet entities remain until a separately verified CloudKit migration boundary"]
     }
   ]
 }

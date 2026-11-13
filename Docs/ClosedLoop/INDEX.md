@@ -41,6 +41,7 @@ only when its scope applies to the current change.
 | CL-0030 | active | 2026-10-08 | direction-agnostic mastery, multiple-choice credit and periodic revalidation | [Direction-agnostic mastery and revalidation](records/CL-0030-direction-agnostic-mastery-revalidation.md) | retain while Mastered lifecycle exists |
 | CL-0031 | active | 2026-11-09 | spaced relearning, adaptive Mastered maintenance and same-day Mixed rotation | [Spaced relearning and Mixed rotation](records/CL-0031-spaced-relearning-and-mixed-rotation.md) | retain while test scheduling or Mastered lifecycle exists |
 | CL-0032 | active | 2026-11-13 | two-date Mastered promotion, exam-horizon maintenance and promotion-due Mixed quota | [Exam-horizon Mastery promotion](records/CL-0032-exam-horizon-mastery-promotion.md) | retain while test scheduling or Mastered lifecycle exists |
+| CL-0033 | active | 2026-11-13 | setless vocabulary registration, registration-day grouping and legacy compatibility | [Setless vocabulary registration](records/CL-0033-setless-vocabulary-registration.md) | retain while vocabulary persistence or intake exists |
 
 ## Load Rules
 
