@@ -227,19 +227,29 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(Set(generated.1.map(\.word.id)).count, generated.1.count)
     }
 
-    func testLooseWordIsSavedOutsideDailySetOnSameDay() throws {
+    func testSameDayRegistrationJoinsUnifiedTodayRotation() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
-        try coordinator.saveDailySet(drafts(count: 100), date: testDate)
-        let set = try XCTUnwrap(context.fetch(FetchDescriptor<DailySetRecord>()).first)
+        try coordinator.registerWords(drafts(count: 100), date: testDate)
 
-        let loose = try coordinator.addLooseWord(term: "bonus", meaningsText: "보충뜻", date: testDate)
+        let bonus = try coordinator.registerWords([
+            WordDraft(term: "bonus", meanings: "보충뜻")
+        ], date: testDate)[0]
 
         XCTAssertEqual(try context.fetch(FetchDescriptor<WordRecord>()).count, 101)
-        XCTAssertEqual(set.allItems.count, 100)
-        XCTAssertFalse(try context.fetch(FetchDescriptor<DailySetItemRecord>()).contains { $0.wordID == loose.id })
-        let generated = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate)
-        XCTAssertTrue(generated.1.contains { $0.word.id == loose.id })
+        XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetRecord>()).isEmpty)
+        XCTAssertEqual(bonus.registrationDay, SeoulCalendar.day(for: testDate))
+
+        var presentedIDs = Set<UUID>()
+        for _ in 0..<6 {
+            let generated = try coordinator.generateSession(
+                mode: .today,
+                direction: .enToKo,
+                date: testDate
+            )
+            presentedIDs.formUnion(generated.1.map(\.word.id))
+        }
+        XCTAssertTrue(presentedIDs.contains(bonus.id))
     }
 
     func testLooseWordCanBeTestedWithoutDailySet() throws {
@@ -281,6 +291,61 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<WordRecord>()), 137)
         XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetRecord>()).isEmpty)
         XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetItemRecord>()).isEmpty)
+    }
+
+    func testVocabularyRegistrationSummaryExplainsWhyOneHundredRowsCreateNinetyEightWords() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        try coordinator.registerWords([
+            WordDraft(term: "lot", meanings: "많음"),
+            WordDraft(term: "perspiration", meanings: "땀")
+        ], date: testDate)
+        let laterDate = testDate.addingTimeInterval(86_400)
+        var intake = drafts(count: 98, prefix: "new")
+        intake.append(WordDraft(term: "LOT", meanings: "많음, 몫, 운명"))
+        intake.append(WordDraft(term: "perspiration", meanings: "땀, 노력"))
+
+        let result = try coordinator.registerWordsWithSummary(intake, date: laterDate)
+
+        XCTAssertEqual(result.inputRowCount, 100)
+        XCTAssertEqual(result.words.count, 100)
+        XCTAssertEqual(result.createdHeadwordCount, 98)
+        XCTAssertEqual(result.matchedExistingHeadwordCount, 2)
+        XCTAssertEqual(result.duplicateInputRowCount, 0)
+        XCTAssertEqual(result.meaningsAddedToExistingHeadwords, 3)
+        XCTAssertEqual(
+            VocabularyRegistrationFeedback.successMessage(for: result),
+            "입력 100개를 모두 처리했습니다. 신규 표제어 98개 · 기존 표제어와 통합 2개 · 기존 표제어에 새 뜻 추가 3개. 기존 표제어는 최초 등록일에 유지되며, 이번 저장으로 현재 등록일 그룹에 신규 98개가 추가됩니다."
+        )
+        XCTAssertEqual(try context.fetchCount(FetchDescriptor<WordRecord>()), 100)
+        XCTAssertEqual(
+            try context.fetch(FetchDescriptor<WordRecord>()).filter {
+                $0.registrationDay == SeoulCalendar.day(for: laterDate)
+            }.count,
+            98
+        )
+    }
+
+    func testVocabularyRegistrationSummaryCountsRepeatedInputRows() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+
+        let result = try coordinator.registerWordsWithSummary([
+            WordDraft(term: "alpha", meanings: "첫 뜻"),
+            WordDraft(term: "ALPHA", meanings: "둘째 뜻"),
+            WordDraft(term: "beta", meanings: "세번째 뜻")
+        ], date: testDate)
+
+        XCTAssertEqual(result.inputRowCount, 3)
+        XCTAssertEqual(result.words.count, 2)
+        XCTAssertEqual(result.createdHeadwordCount, 2)
+        XCTAssertEqual(result.matchedExistingHeadwordCount, 0)
+        XCTAssertEqual(result.duplicateInputRowCount, 1)
+        XCTAssertEqual(result.meaningsAddedToExistingHeadwords, 0)
+        XCTAssertEqual(
+            VocabularyRegistrationFeedback.successMessage(for: result),
+            "입력 3개를 모두 처리했습니다. 신규 표제어 2개 · 입력 내 중복 행 통합 1개. 기존 표제어는 최초 등록일에 유지되며, 이번 저장으로 현재 등록일 그룹에 신규 2개가 추가됩니다."
+        )
     }
 
     func testDuplicateRegistrationPreservesFirstDateAndReactivatesMasteredOnlyForNewMeaning() throws {
@@ -1011,17 +1076,19 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertTrue(Set(generated.1.map(\.word.id)).isDisjoint(with: Set(second.1.map(\.word.id))))
     }
 
-    func testEmptyReviewPoolFallsBackToLatestDailySet() throws {
+    func testEmptyReviewPoolCombinesPreviousAndLatestRegistrationDays() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let olderDate = ISO8601DateFormatter().date(from: "2026-05-24T01:00:00Z")!
-        try coordinator.saveDailySet(drafts(count: 100, prefix: "older"), date: olderDate)
-        try coordinator.saveDailySet(drafts(count: 100, prefix: "latest"), date: testDate)
+        try coordinator.registerWords(drafts(count: 100, prefix: "older"), date: olderDate)
+        try coordinator.registerWords(drafts(count: 100, prefix: "latest"), date: testDate)
 
         let generated = try coordinator.generateSession(mode: .review, direction: .enToKo, date: testDate.addingTimeInterval(86_400))
+        let terms = generated.1.map(\.word.term)
 
-        XCTAssertEqual(generated.1.count, 20)
-        XCTAssertTrue(generated.1.allSatisfy { $0.word.term.hasPrefix("latest-") })
+        XCTAssertEqual(terms.count, 20)
+        XCTAssertTrue(terms.prefix(6).allSatisfy { $0.hasPrefix("older-") })
+        XCTAssertTrue(terms.suffix(14).allSatisfy { $0.hasPrefix("latest-") })
         XCTAssertEqual(try context.fetch(FetchDescriptor<TestSessionRecord>()).count, 1)
     }
 

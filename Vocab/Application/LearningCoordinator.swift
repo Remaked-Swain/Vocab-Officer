@@ -13,6 +13,15 @@ struct WordDraft: Identifiable {
     var meanings = ""
 }
 
+struct VocabularyRegistrationResult {
+    let words: [WordRecord]
+    let inputRowCount: Int
+    let createdHeadwordCount: Int
+    let matchedExistingHeadwordCount: Int
+    let duplicateInputRowCount: Int
+    let meaningsAddedToExistingHeadwords: Int
+}
+
 enum MeaningTextSplitter {
     static func split(_ text: String) -> [String] {
         var values: [String] = []
@@ -740,6 +749,13 @@ final class LearningCoordinator {
     /// first registration date and receive only previously unknown meanings.
     @discardableResult
     func registerWords(_ drafts: [WordDraft], date: Date = .now) throws -> [WordRecord] {
+        try registerWordsWithSummary(drafts, date: date).words
+    }
+
+    func registerWordsWithSummary(
+        _ drafts: [WordDraft],
+        date: Date = .now
+    ) throws -> VocabularyRegistrationResult {
         try requireLearningFactWriting()
         try requireVocabularyAuthoring()
         guard !drafts.isEmpty else { throw LearningError.termRequired }
@@ -758,10 +774,13 @@ final class LearningCoordinator {
         for word in matchingWords {
             wordsByNormalizedTerm[word.normalizedTerm] = word
         }
+        let existingNormalizedTerms = Set(wordsByNormalizedTerm.keys)
+        let uniqueInputHeadwords = Set(prepared.map(\.normalizedTerm))
         var savedWords: [WordRecord] = []
         savedWords.reserveCapacity(prepared.count)
         var savedWordIDs = Set<UUID>()
         var newlyCreatedWordIDs = Set<UUID>()
+        var meaningsAddedToExistingHeadwords = 0
         let mutationRecordedAt = Date.now
 
         for value in prepared {
@@ -790,6 +809,9 @@ final class LearningCoordinator {
                 word.appendMeaning(meaning)
                 context.insert(meaning)
                 didMutate = true
+                if existingNormalizedTerms.contains(value.normalizedTerm) {
+                    meaningsAddedToExistingHeadwords += 1
+                }
             }
             if didMutate && !newlyCreatedWordIDs.contains(word.id) {
                 let monotonicBoundary = word.updatedAt.addingTimeInterval(0.001)
@@ -805,7 +827,15 @@ final class LearningCoordinator {
         }
         try saveAndNotifyChange()
         invalidateSessionCandidateCache()
-        return savedWords
+        let matchedExistingHeadwordCount = uniqueInputHeadwords.intersection(existingNormalizedTerms).count
+        return VocabularyRegistrationResult(
+            words: savedWords,
+            inputRowCount: prepared.count,
+            createdHeadwordCount: uniqueInputHeadwords.count - matchedExistingHeadwordCount,
+            matchedExistingHeadwordCount: matchedExistingHeadwordCount,
+            duplicateInputRowCount: prepared.count - uniqueInputHeadwords.count,
+            meaningsAddedToExistingHeadwords: meaningsAddedToExistingHeadwords
+        )
     }
 
     func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now, format: QuestionFormat = .typed) throws -> (TestSessionRecord, [SessionQuestion]) {
