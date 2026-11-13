@@ -3,7 +3,7 @@ import SwiftData
 import SwiftUI
 
 private enum VocabIOSTab: String, CaseIterable, Identifiable {
-    case sets = "학습세트"
+    case sets = "단어장"
     case review = "복습"
     case test = "테스트"
     case settings = "설정"
@@ -350,32 +350,38 @@ private struct CompactEmptyState: View {
 
 private struct VocabIOSSetListView: View {
     @Query(
-        filter: #Predicate<DailySetRecord> { $0.deletedAt == nil },
-        sort: \DailySetRecord.createdAt,
-        order: .reverse
-    ) private var sets: [DailySetRecord]
-    @Query(
         filter: #Predicate<WordRecord> { $0.deletedAt == nil },
-        sort: \WordRecord.normalizedTerm
+        sort: \WordRecord.createdAt,
+        order: .reverse
     ) private var words: [WordRecord]
 
+    private var registrationGroups: [VocabIOSRegistrationGroup] {
+        Dictionary(grouping: words, by: \.registrationDay)
+            .map { day, words in VocabIOSRegistrationGroup(day: day, words: words) }
+            .sorted { $0.day > $1.day }
+    }
+
     var body: some View {
+        let groups = registrationGroups
         List {
-            if sets.isEmpty {
+            if groups.isEmpty {
                 CompactEmptyState(
-                    title: "학습세트 없음",
+                    title: "등록된 단어 없음",
                     systemImage: "rectangle.stack",
                     description: "macOS 단어장이 iCloud로 동기화되면 여기서 볼 수 있습니다."
                 )
             } else {
-                ForEach(sets) { set in
+                ForEach(groups) { group in
                     NavigationLink {
-                        VocabIOSSetDetailView(dailySet: set, wordsByID: wordsByID)
+                        VocabIOSSetDetailView(
+                            registrationDay: group.day,
+                            words: group.words
+                        )
                     } label: {
                         VStack(alignment: .leading, spacing: 6) {
-                            Text(set.seoulDay)
+                            Text(group.day)
                                 .font(.headline)
-                            Text("\(set.allItems.filter { $0.deletedAt == nil }.count)개 단어")
+                            Text("\(group.words.count)개 단어")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
                         }
@@ -386,39 +392,41 @@ private struct VocabIOSSetListView: View {
         }
     }
 
-    private var wordsByID: [UUID: WordRecord] {
-        Dictionary(uniqueKeysWithValues: words.map { ($0.id, $0) })
-    }
+}
+
+private struct VocabIOSRegistrationGroup: Identifiable {
+    let day: String
+    let words: [WordRecord]
+    var id: String { day }
 }
 
 private struct VocabIOSSetDetailView: View {
-    let dailySet: DailySetRecord
-    let wordsByID: [UUID: WordRecord]
+    let registrationDay: String
+    let words: [WordRecord]
     @State private var faceStates: [UUID: Bool] = [:]
 
     var body: some View {
         ScrollView {
             LazyVStack(spacing: 8) {
-                ForEach(sortedItems) { item in
-                    if let word = wordsByID[item.wordID] {
-                        VocabIOSFlipWordCard(
-                            word: word,
-                            showsMeaning: Binding(
-                                get: { faceStates[item.id] ?? false },
-                                set: { faceStates[item.id] = $0 }
-                            )
+                ForEach(sortedWords) { word in
+                    VocabIOSFlipWordCard(
+                        word: word,
+                        showsMeaning: Binding(
+                            get: { faceStates[word.id] ?? false },
+                            set: { faceStates[word.id] = $0 }
                         )
-                    }
+                    )
                 }
             }
             .padding(12)
         }
-        .navigationTitle(dailySet.seoulDay)
+        .navigationTitle(registrationDay)
     }
 
-    private var sortedItems: [DailySetItemRecord] {
-        dailySet.allItems.filter { $0.deletedAt == nil }.sorted { lhs, rhs in
-            lhs.orderIndex < rhs.orderIndex
+    private var sortedWords: [WordRecord] {
+        words.sorted { lhs, rhs in
+            if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
+            return lhs.normalizedTerm < rhs.normalizedTerm
         }
     }
 }
@@ -449,17 +457,11 @@ private struct VocabIOSReviewListView: View {
 
 private struct VocabIOSTestSetupView: View {
     @Environment(\.modelContext) private var modelContext
-    @Query(filter: #Predicate<DailySetRecord> { $0.deletedAt == nil }) private var sets: [DailySetRecord]
     @State private var mode: SessionMode = .mixed
     @State private var direction: PracticeDirection = .enToKo
     @State private var format: QuestionFormat = .typed
-    @State private var selectedSetID: UUID?
     @State private var activeRun: VocabIOSTestRun?
     @State private var error: String?
-
-    private var orderedSets: [DailySetRecord] {
-        sets.sorted(by: newestSetFirst)
-    }
 
     var body: some View {
         List {
@@ -495,13 +497,6 @@ private struct VocabIOSTestSetupView: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
-                if mode == .set {
-                    Picker("대상 세트", selection: $selectedSetID) {
-                        ForEach(orderedSets) { set in
-                            Text("\(set.seoulDay) 세트").tag(Optional(set.id))
-                        }
-                    }
-                }
             }
 
             if let error {
@@ -523,11 +518,6 @@ private struct VocabIOSTestSetupView: View {
                 .controlSize(.large)
             }
         }
-        .onAppear {
-            if selectedSetID == nil {
-                selectedSetID = orderedSets.first?.id
-            }
-        }
         .sheet(item: $activeRun) { run in
             NavigationStack {
                 VocabIOSTestRunnerView(run: run)
@@ -540,7 +530,6 @@ private struct VocabIOSTestSetupView: View {
             let result = try LearningCoordinator(context: modelContext, syncMode: .cloudKitPrivate).generateSession(
                 mode: mode,
                 direction: direction,
-                setID: selectedSetID,
                 format: format
             )
             activeRun = VocabIOSTestRun(session: result.0, questions: result.1)
@@ -551,15 +540,6 @@ private struct VocabIOSTestSetupView: View {
         }
     }
 
-    private func newestSetFirst(_ lhs: DailySetRecord, _ rhs: DailySetRecord) -> Bool {
-        if lhs.seoulDay != rhs.seoulDay {
-            return lhs.seoulDay > rhs.seoulDay
-        }
-        if lhs.createdAt != rhs.createdAt {
-            return lhs.createdAt > rhs.createdAt
-        }
-        return lhs.id.uuidString > rhs.id.uuidString
-    }
 }
 
 private struct VocabIOSTestRun: Identifiable {
