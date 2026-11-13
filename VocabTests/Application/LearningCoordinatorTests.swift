@@ -386,14 +386,14 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(attempt.submittedAnswer, correct.label)
     }
 
-    func testMultipleChoiceEnglishToKoreanOnlyCanReachMasteredAcrossThreeDays() throws {
+    func testMultipleChoiceEnglishToKoreanOnlyCanReachMasteredAcrossTwoDays() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
         let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first)
         let meaning = try XCTUnwrap(word.activeMeanings.first)
 
-        for dayOffset in 0..<3 {
+        for dayOffset in 0..<2 {
             let answeredAt = testDate.addingTimeInterval(TimeInterval(dayOffset) * 86_400)
             let attempt = AttemptRecord(
                 directionRaw: PracticeDirection.enToKo.rawValue,
@@ -416,7 +416,7 @@ final class LearningCoordinatorTests: XCTestCase {
 
         XCTAssertTrue(coordinator.recomputeReviewState(for: word).isEmpty)
         XCTAssertEqual(word.statusRaw, "mastered")
-        XCTAssertEqual(Set(meaning.successDays).count, 3)
+        XCTAssertEqual(Set(meaning.successDays).count, 2)
         XCTAssertTrue(word.reviewState?.koToEnSuccessDays.isEmpty == true)
     }
 
@@ -502,9 +502,59 @@ final class LearningCoordinatorTests: XCTestCase {
         let generated = try coordinator.generateSession(mode: .mixed, direction: .enToKo, date: testDate)
         let masteredIDs = Set(masteredWords.map(\.id))
 
-        XCTAssertEqual(generated.1.count, 6)
+        XCTAssertEqual(generated.1.count, 20)
         XCTAssertEqual(generated.1.filter { masteredIDs.contains($0.word.id) }.count, 2)
-        XCTAssertEqual(generated.1.filter { $0.word.statusRaw == "active" }.count, 4)
+        XCTAssertEqual(generated.1.filter { $0.word.statusRaw == "active" }.count, 18)
+    }
+
+    func testMixedSessionIncludesPromotionDueWordDespiteUnseenBroadPool() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        let firstSuccessDate = testDate.addingTimeInterval(-86_400)
+        try coordinator.saveDailySet(drafts(count: 100), date: firstSuccessDate)
+        let promotionWord = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first)
+        let meaning = try XCTUnwrap(promotionWord.activeMeanings.first)
+        meaning.successDays = [SeoulCalendar.day(for: firstSuccessDate)]
+        promotionWord.reviewState?.presentationCount = 1
+        promotionWord.reviewState?.lastPresentedAt = firstSuccessDate
+        try context.save()
+
+        let generated = try coordinator.generateSession(
+            mode: .mixed,
+            direction: .enToKo,
+            date: testDate
+        )
+
+        XCTAssertTrue(generated.1.contains { $0.word.id == promotionWord.id })
+        XCTAssertEqual(generated.1.count, 20)
+    }
+
+    func testMaintenanceIntervalRestartsFromPostFailureEvidence() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        let registrationDate = testDate.addingTimeInterval(-40 * 86_400)
+        try coordinator.saveDailySet(drafts(count: 100), date: registrationDate)
+        let relearnedWord = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first)
+        let meaning = try XCTUnwrap(relearnedWord.activeMeanings.first)
+        let failureDate = testDate.addingTimeInterval(-10 * 86_400)
+        let lastSuccessDate = testDate.addingTimeInterval(-8 * 86_400)
+        meaning.successDays = [
+            -35, -34, -33, -32, -31, -9, -8
+        ].map { offset in
+            SeoulCalendar.day(for: testDate.addingTimeInterval(TimeInterval(offset) * 86_400))
+        }
+        relearnedWord.statusRaw = "mastered"
+        relearnedWord.reviewState?.latestWrongAt = failureDate
+        relearnedWord.reviewState?.lastTestedAt = lastSuccessDate
+        try context.save()
+
+        let generated = try coordinator.generateSession(
+            mode: .review,
+            direction: .enToKo,
+            date: testDate
+        )
+
+        XCTAssertTrue(generated.1.contains { $0.word.id == relearnedWord.id })
     }
 
     func testFourMixedSessionsRotateEightyUniqueWordsAcrossTheLibrary() throws {
@@ -532,12 +582,9 @@ final class LearningCoordinatorTests: XCTestCase {
 
             XCTAssertEqual(generated.1.count, 20)
             XCTAssertTrue(presentedIDs.isDisjoint(with: sessionIDs))
-            XCTAssertGreaterThanOrEqual(generated.1.filter { $0.word.term.hasPrefix("today-") }.count, 6)
-            XCTAssertGreaterThanOrEqual(
-                generated.1.filter {
-                    $0.word.term.hasPrefix("previous-") || $0.word.term.hasPrefix("review-")
-                }.count,
-                8
+            XCTAssertLessThanOrEqual(
+                generated.1.filter { $0.word.term.hasPrefix("review-") }.count,
+                4
             )
             presentedIDs.formUnion(sessionIDs)
         }
@@ -740,13 +787,11 @@ final class LearningCoordinatorTests: XCTestCase {
         let terms = generated.1.map(\.word.term)
 
         XCTAssertEqual(terms.count, 20)
-        XCTAssertGreaterThanOrEqual(terms.filter { $0.hasPrefix("latest-past-") }.count, 6)
-        XCTAssertGreaterThanOrEqual(terms.filter { $0.hasPrefix("older-") }.count, 8)
-        XCTAssertTrue(terms.contains { $0.hasPrefix("older-") })
+        XCTAssertEqual(Set(generated.1.map(\.word.id)).count, 20)
         XCTAssertFalse(terms.contains { $0.hasPrefix("future-") })
     }
 
-    func testMixedSessionGuaranteesReferenceAndHistoricalRotationQuotas() throws {
+    func testMixedSessionCapsActiveReviewAndFillsBroadRotation() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         let nextDate = ISO8601DateFormatter().date(from: "2026-05-26T01:00:00Z")!
@@ -765,8 +810,7 @@ final class LearningCoordinatorTests: XCTestCase {
         let selectedIDs = Set(generated.1.map(\.word.id))
 
         XCTAssertEqual(generated.1.count, 20)
-        XCTAssertGreaterThanOrEqual(generated.1.filter { $0.word.term.hasPrefix("today-") }.count, 6)
-        XCTAssertGreaterThanOrEqual(generated.1.filter { $0.word.term.hasPrefix("older-") }.count, 8)
+        XCTAssertEqual(generated.1.filter { ($0.word.reviewState?.activePriority ?? 0) > 0 }.count, 4)
         XCTAssertEqual(selectedIDs.count, 20)
     }
 
