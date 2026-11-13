@@ -41,7 +41,7 @@ struct StudyCardsView: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("학습 카드")
                 .font(.largeTitle.weight(.semibold))
-            Text("같은 날 등록한 단어를 모아 봅니다. 카드를 클릭하거나 Return 키를 눌러 원문과 의미를 뒤집으세요.")
+            Text("단어는 최초 등록일 기준으로 묶입니다. 같은 표제어를 다시 입력하면 기존 단어에 통합되므로 그룹 수가 입력 줄 수보다 적을 수 있습니다. 카드를 클릭하거나 Return 키를 눌러 원문과 의미를 뒤집으세요.")
                 .font(.body)
                 .foregroundStyle(.secondary)
 
@@ -61,7 +61,7 @@ struct StudyCardsView: View {
                 set: { selectedDay = $0 }
             )) {
                 ForEach(groups) { group in
-                    Text("\(group.day)  (\(group.words.count)개)")
+                    Text("\(group.day)  (최초 등록 \(group.words.count)개)")
                         .tag(Optional(group.day))
                 }
             }
@@ -787,11 +787,8 @@ private struct VocabularyRegistrationSheet: View {
             case .batch:
                 drafts = try DailyIntakePasteParser.parse(batchInput)
             }
-            let words = try LearningCoordinator(context: context).registerWords(drafts)
-            let message = mode == .single
-                ? "\(words[0].term)을 단어장에 저장했습니다."
-                : "단어 \(words.count)개를 저장했습니다. 중복 표제어는 기존 SOT에 병합했습니다."
-            onComplete(message, false)
+            let result = try LearningCoordinator(context: context).registerWordsWithSummary(drafts)
+            onComplete(VocabularyRegistrationFeedback.successMessage(for: result), false)
             dismiss()
         } catch {
             self.error = error.localizedDescription

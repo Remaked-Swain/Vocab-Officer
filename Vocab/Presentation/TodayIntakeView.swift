@@ -232,8 +232,8 @@ struct TodayIntakeView: View {
 
     private func save(_ values: [WordDraft]) {
         do {
-            let words = try LearningCoordinator(context: context).registerWords(values)
-            message = "\(words.count)개 표제어를 단어장에 반영했습니다. 중복 표제어는 새 의미만 합쳤습니다."
+            let result = try LearningCoordinator(context: context).registerWordsWithSummary(values)
+            message = VocabularyRegistrationFeedback.successMessage(for: result)
             isError = false
             pastedText = ""
             pasteAnalysis = .empty

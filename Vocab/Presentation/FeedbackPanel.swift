@@ -6,6 +6,27 @@ struct FeedbackItem {
     let color: Color
 }
 
+enum VocabularyRegistrationFeedback {
+    static func successMessage(for result: VocabularyRegistrationResult) -> String {
+        var details = ["신규 표제어 \(result.createdHeadwordCount)개"]
+        if result.matchedExistingHeadwordCount > 0 {
+            details.append("기존 표제어와 통합 \(result.matchedExistingHeadwordCount)개")
+        }
+        if result.duplicateInputRowCount > 0 {
+            details.append("입력 내 중복 행 통합 \(result.duplicateInputRowCount)개")
+        }
+        if result.meaningsAddedToExistingHeadwords > 0 {
+            details.append("기존 표제어에 새 뜻 추가 \(result.meaningsAddedToExistingHeadwords)개")
+        }
+
+        var message = "입력 \(result.inputRowCount)개를 모두 처리했습니다. \(details.joined(separator: " · "))."
+        if result.matchedExistingHeadwordCount > 0 || result.duplicateInputRowCount > 0 {
+            message += " 기존 표제어는 최초 등록일에 유지되며, 이번 저장으로 현재 등록일 그룹에 신규 \(result.createdHeadwordCount)개가 추가됩니다."
+        }
+        return message
+    }
+}
+
 struct FeedbackPanel: View {
     let items: [FeedbackItem]
 
