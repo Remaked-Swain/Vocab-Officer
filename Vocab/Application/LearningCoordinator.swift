@@ -5,6 +5,7 @@ import SwiftData
 
 extension Notification.Name {
     static let vocabLearningStoreDidChange = Notification.Name("vocabLearningStoreDidChange")
+    static let vocabMasteryCleanupRequested = Notification.Name("vocabMasteryCleanupRequested")
 }
 
 struct WordDraft: Identifiable {
@@ -613,6 +614,40 @@ extension MeaningRecord {
 }
 
 extension WordRecord {
+    private static let legacyMasteredRawValue = "mastered"
+    private static let legacyConsolidationPrefix = "consolidatingLegacy@"
+
+    var learningStatus: VocabularyLearningStatus {
+        get {
+            if statusRaw == Self.legacyMasteredRawValue
+                || statusRaw.hasPrefix(Self.legacyConsolidationPrefix) {
+                return .consolidating
+            }
+            return VocabularyLearningStatus(rawValue: statusRaw) ?? .active
+        }
+        set { statusRaw = newValue.rawValue }
+    }
+
+    var learningStatusTitle: String {
+        learningStatus.koreanTitle
+    }
+
+    var legacyMasteryEvidenceBoundary: Date? {
+        guard statusRaw.hasPrefix(Self.legacyConsolidationPrefix),
+              let seconds = TimeInterval(statusRaw.dropFirst(Self.legacyConsolidationPrefix.count)) else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    func markLegacyMasteryAsConsolidating(at date: Date) {
+        statusRaw = legacyConsolidationStatus(at: date)
+    }
+
+    func legacyConsolidationStatus(at date: Date) -> String {
+        Self.legacyConsolidationPrefix + String(date.timeIntervalSince1970)
+    }
+
     var registrationDay: String {
         SeoulCalendar.day(for: createdAt)
     }
@@ -638,7 +673,7 @@ final class LearningCoordinator {
     private let learningFactAuthority: VocabMutationAuthority
     private var activeWordCache: [WordRecord]?
     private var activeWordByIDCache: [UUID: WordRecord]?
-    private var masteredWordCache: [WordRecord]?
+    private var consolidatingWordCache: [WordRecord]?
     private var dailySetCache: [DailySetRecord]?
     private var dailySetMembershipIndexCache: DailySetMembershipIndex?
 
@@ -816,8 +851,8 @@ final class LearningCoordinator {
             if didMutate && !newlyCreatedWordIDs.contains(word.id) {
                 let monotonicBoundary = word.updatedAt.addingTimeInterval(0.001)
                 word.updatedAt = max(max(monotonicBoundary, date), mutationRecordedAt)
-                if word.statusRaw == "mastered" {
-                    word.statusRaw = "active"
+                if word.learningStatus != .active {
+                    word.learningStatus = .active
                 }
                 resetMasteryEvidence(for: word)
             }
@@ -845,7 +880,7 @@ final class LearningCoordinator {
         let maintenanceWords: [WordRecord]
         switch mode {
         case .review, .mixed:
-            maintenanceWords = try masteredWords()
+            maintenanceWords = try consolidatingWords()
         case .today, .set, .loose:
             maintenanceWords = []
         }
@@ -1058,6 +1093,9 @@ final class LearningCoordinator {
         recomputeReviewState(for: question.word)
         compactAttempts(for: question.word, now: date)
         try saveAndNotifyChange()
+        if question.word.learningStatus == .mastered {
+            NotificationCenter.default.post(name: .vocabMasteryCleanupRequested, object: nil)
+        }
     }
 
     func completeSession(_ session: TestSessionRecord, date: Date = .now) throws {
@@ -1109,6 +1147,7 @@ final class LearningCoordinator {
         }
         let now = Date.now
         for removed in existingByNormalized.values.flatMap({ $0 }) where removed.deletedAt == nil {
+            removed.scrubDeletedContent()
             tombstone(removed, at: now)
         }
         word.replaceMeanings(with: revised)
@@ -1117,8 +1156,8 @@ final class LearningCoordinator {
         if originalTerm != normalizedTerm {
             word.reviewState?.koToEnSuccessDays = []
         }
-        if word.statusRaw == "mastered" {
-            word.statusRaw = "active"
+        if word.learningStatus != .active {
+            word.learningStatus = .active
         }
         try saveAndNotifyChange()
         invalidateWordCandidateCaches()
@@ -1133,15 +1172,63 @@ final class LearningCoordinator {
         try saveAndNotifyChange()
     }
 
+    struct MasteryCleanupResult: Equatable, Sendable {
+        let normalizedLegacyCount: Int
+        let retiredCount: Int
+    }
+
+    @discardableResult
+    func normalizeAndRetireMasteredWords(now: Date = .now) throws -> MasteryCleanupResult {
+        try requireLearningFactWriting()
+        let scrubbedExistingDeletion = try scrubPreviouslyDeletedIdentifyingRecords(at: now)
+        let candidates = try context.fetch(FetchDescriptor<WordRecord>(predicate: #Predicate {
+            $0.deletedAt == nil && $0.statusRaw != "active"
+        }))
+        var normalizedLegacyCount = 0
+        var retiringWords: [WordRecord] = []
+
+        for word in candidates {
+            if word.statusRaw == "mastered" {
+                word.markLegacyMasteryAsConsolidating(at: now)
+                normalizedLegacyCount += 1
+            } else if word.learningStatus == .mastered && masteryIsSatisfied(for: word) {
+                retiringWords.append(word)
+            } else if word.learningStatus == .mastered {
+                word.learningStatus = .consolidating
+                normalizedLegacyCount += 1
+            }
+        }
+        try scrubAndTombstoneWords(retiringWords, at: now)
+        let retiredCount = retiringWords.count
+
+        if retiredCount > 0 {
+            let aggregate = AnonymousAggregateRecord(
+                seoulDay: SeoulCalendar.day(for: now),
+                modeRaw: "automaticMasteryCleanup"
+            )
+            aggregate.deletedMasteredCount = retiredCount
+            context.insert(aggregate)
+        }
+        guard scrubbedExistingDeletion || normalizedLegacyCount > 0 || retiredCount > 0 else {
+            return MasteryCleanupResult(normalizedLegacyCount: 0, retiredCount: 0)
+        }
+        try saveAndNotifyChange()
+        invalidateSessionCandidateCache()
+        return MasteryCleanupResult(
+            normalizedLegacyCount: normalizedLegacyCount,
+            retiredCount: retiredCount
+        )
+    }
+
     func deleteMastered(_ word: WordRecord) throws {
         try requireLearningFactWriting()
         try requireVocabularyAuthoring()
-        guard word.statusRaw == "mastered" else { throw LearningError.onlyMasteredCanBeDeleted }
+        guard word.learningStatus == .mastered else { throw LearningError.onlyMasteredCanBeDeleted }
         let day = SeoulCalendar.day(for: .now)
         let aggregate = AnonymousAggregateRecord(seoulDay: day, modeRaw: "deletion")
         aggregate.deletedMasteredCount = 1
         context.insert(aggregate)
-        try deleteWordRecord(word)
+        try scrubAndTombstoneWord(word)
         try saveAndNotifyChange()
         invalidateSessionCandidateCache()
     }
@@ -1149,10 +1236,7 @@ final class LearningCoordinator {
     func deleteWords(_ words: [WordRecord]) throws {
         try requireLearningFactWriting()
         try requireVocabularyAuthoring()
-        var deletedIDs = Set<UUID>()
-        for word in words where deletedIDs.insert(word.id).inserted {
-            try deleteWordRecord(word)
-        }
+        try scrubAndTombstoneWords(words, at: .now)
         try saveAndNotifyChange()
         invalidateSessionCandidateCache()
     }
@@ -1169,7 +1253,7 @@ final class LearningCoordinator {
                 other.wordID == item.wordID && other.set?.id != set.id
             }
             if !isLinkedOutsideSet, let word = wordsByID[item.wordID], deletedWordIDs.insert(word.id).inserted {
-                try deleteWordRecord(word)
+                try scrubAndTombstoneWord(word)
             } else {
                 tombstone(item)
             }
@@ -1225,8 +1309,13 @@ final class LearningCoordinator {
 
         let activeMeanings = word.activeMeanings
         let trackableCoreMeaningIDs = Set(activeMeanings.filter(\.isTrackableCoreMeaning).map(\.id))
+        let unmigratedLegacyBoundary = word.statusRaw == "mastered"
+            ? max(word.updatedAt, sourceAttempts.map(\.answeredAt).max() ?? word.updatedAt)
+            : nil
+        let legacyEvidenceBoundary = word.legacyMasteryEvidenceBoundary ?? unmigratedLegacyBoundary
+        let evidenceBoundary = max(word.updatedAt, legacyEvidenceBoundary ?? .distantPast)
         var expected = RecomputedWordReviewState(
-            statusRaw: word.deletedAt == nil ? "active" : word.statusRaw,
+            statusRaw: word.statusRaw,
             presentationCount: word.reviewState?.presentationCount,
             lastPresentedAt: word.reviewState?.lastPresentedAt,
             updatedAt: word.updatedAt,
@@ -1245,7 +1334,6 @@ final class LearningCoordinator {
             let day = SeoulCalendar.day(for: attempt.answeredAt)
             switch result {
             case .incorrect, .unknown:
-                expected.statusRaw = "active"
                 expected.failureCheck = min(expected.failureCheck + 1, 3)
                 expected.activePriority = max(expected.activePriority, expected.failureCheck)
                 expected.latestWrongDirection = direction.rawValue
@@ -1256,7 +1344,7 @@ final class LearningCoordinator {
                     expected.koToEnStreak = 0
                 }
             case .correct:
-                guard attempt.answeredAt >= word.updatedAt else { continue }
+                guard attempt.answeredAt > evidenceBoundary else { continue }
                 if direction == .enToKo {
                     expected.enToKoStreak += 1
                     if let meaningID = attempt.matchedMeaningID,
@@ -1280,16 +1368,26 @@ final class LearningCoordinator {
                 }
             }
 
-            var verifiedSuccessDays = Set(expected.koToEnSuccessDays)
-            for successDays in expected.meaningSuccessDays.values {
-                verifiedSuccessDays.formUnion(successDays)
-            }
-            if MasteryPolicy().isSatisfied(
-                verifiedSuccessDays: verifiedSuccessDays,
-                latestWrongAt: expected.latestWrongAt
-            ) {
-                expected.statusRaw = "mastered"
-            }
+        }
+        var verifiedSuccessDays = Set(expected.koToEnSuccessDays)
+        for successDays in expected.meaningSuccessDays.values {
+            verifiedSuccessDays.formUnion(successDays)
+        }
+        if MasteryPolicy().isSatisfied(
+            verifiedSuccessDays: verifiedSuccessDays,
+            latestWrongAt: expected.latestWrongAt
+        ) {
+            expected.statusRaw = VocabularyLearningStatus.mastered.rawValue
+        } else if let legacyEvidenceBoundary,
+                  !(expected.latestWrongAt.map { $0 > legacyEvidenceBoundary } ?? false) {
+            expected.statusRaw = word.legacyConsolidationStatus(at: legacyEvidenceBoundary)
+        } else if ConsolidationPolicy().isSatisfied(
+            verifiedSuccessDays: verifiedSuccessDays,
+            latestWrongAt: expected.latestWrongAt
+        ) {
+            expected.statusRaw = VocabularyLearningStatus.consolidating.rawValue
+        } else {
+            expected.statusRaw = VocabularyLearningStatus.active.rawValue
         }
         expected.updatedAt = attempts.last?.answeredAt ?? word.updatedAt
         return (expected, [])
@@ -1390,6 +1488,13 @@ final class LearningCoordinator {
         return successDays.filter { $0 > latestWrongDay }
     }
 
+    private func masteryIsSatisfied(for word: WordRecord) -> Bool {
+        MasteryPolicy().isSatisfied(
+            verifiedSuccessDays: verifiedSuccessDays(for: word),
+            latestWrongAt: word.reviewState?.latestWrongAt
+        )
+    }
+
     private struct PresentationStats {
         var count = 0
         var lastPresentedAt: Date?
@@ -1448,12 +1553,14 @@ final class LearningCoordinator {
         return activeWordByIDCache ?? [:]
     }
 
-    private func masteredWords() throws -> [WordRecord] {
-        if let masteredWordCache { return masteredWordCache }
+    private func consolidatingWords() throws -> [WordRecord] {
+        if let consolidatingWordCache { return consolidatingWordCache }
         let words = try context.fetch(FetchDescriptor<WordRecord>(predicate: #Predicate {
-            $0.deletedAt == nil && $0.statusRaw == "mastered"
-        }))
-        masteredWordCache = words
+            $0.deletedAt == nil
+                && $0.statusRaw != "active"
+                && $0.statusRaw != "masteredV2"
+        })).filter { $0.learningStatus == .consolidating }
+        consolidatingWordCache = words
         return words
     }
 
@@ -1625,7 +1732,7 @@ final class LearningCoordinator {
     private func invalidateWordCandidateCaches() {
         activeWordCache = nil
         activeWordByIDCache = nil
-        masteredWordCache = nil
+        consolidatingWordCache = nil
     }
 
     private func dailySetMembershipIndex(for sets: [DailySetRecord]) -> DailySetMembershipIndex {
@@ -1876,17 +1983,65 @@ final class LearningCoordinator {
         })
     }
 
-    private func deleteWordRecord(_ word: WordRecord) throws {
-        let now = Date.now
-        for set in try context.fetch(FetchDescriptor<DailySetRecord>()) {
-            for item in set.allItems where item.wordID == word.id && item.deletedAt == nil {
-                tombstone(item, at: now)
+    private func scrubAndTombstoneWord(_ word: WordRecord, at now: Date = .now) throws {
+        try scrubAndTombstoneWords([word], at: now)
+    }
+
+    private func scrubAndTombstoneWords(_ words: [WordRecord], at now: Date) throws {
+        let uniqueWords = Dictionary(words.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        let wordIDs = Set(uniqueWords.keys)
+        guard !wordIDs.isEmpty else { return }
+
+        for item in try context.fetch(FetchDescriptor<DailySetItemRecord>())
+            where wordIDs.contains(item.wordID) && item.deletedAt == nil {
+            tombstone(item, at: now)
+        }
+        for session in try context.fetch(FetchDescriptor<TestSessionRecord>())
+            where !wordIDs.isDisjoint(with: session.wordIDs) {
+            session.wordIDs.removeAll(where: wordIDs.contains)
+            session.updatedAt = max(session.updatedAt, now)
+        }
+        for memoryAid in try context.fetch(FetchDescriptor<MemoryAidCacheRecord>())
+            where wordIDs.contains(memoryAid.wordID) && memoryAid.deletedAt == nil {
+            memoryAid.scrubDeletedContent()
+            tombstone(memoryAid, at: now)
+        }
+
+        for word in uniqueWords.values {
+            for attempt in word.allAttempts where attempt.deletedAt == nil {
+                attempt.scrubDeletedContent()
+                tombstone(attempt, at: now)
+            }
+            if let reviewState = word.reviewState, reviewState.deletedAt == nil {
+                reviewState.scrubDeletedContent()
+                tombstone(reviewState, at: now)
+            }
+            for meaning in word.activeMeanings {
+                meaning.scrubDeletedContent()
+                tombstone(meaning, at: now)
+            }
+            word.scrubDeletedContent()
+            tombstone(word, at: now)
+        }
+    }
+
+    private func scrubPreviouslyDeletedIdentifyingRecords(at now: Date) throws -> Bool {
+        var changed = false
+
+        func scrub<T: PersistentModel & VocabSoftDeletableRecord>(_ type: T.Type) throws {
+            for record in try context.fetch(FetchDescriptor<T>()) where record.deletedAt != nil {
+                guard record.scrubDeletedContent() else { continue }
+                record.updatedAt = max(record.updatedAt, now)
+                changed = true
             }
         }
-        for meaning in word.activeMeanings {
-            tombstone(meaning, at: now)
-        }
-        tombstone(word, at: now)
+
+        try scrub(WordRecord.self)
+        try scrub(MeaningRecord.self)
+        try scrub(AttemptRecord.self)
+        try scrub(ReviewStateRecord.self)
+        try scrub(MemoryAidCacheRecord.self)
+        return changed
     }
 
     private func requireVocabularyAuthoring() throws {
@@ -1925,6 +2080,24 @@ final class LearningCoordinator {
         item.deletedAt = date
         item.updatedAt = date
         context.insert(RecordTombstone(recordID: item.id, recordType: "DailySetItemRecord", deletedAt: date))
+    }
+
+    private func tombstone(_ attempt: AttemptRecord, at date: Date = .now) {
+        attempt.deletedAt = date
+        attempt.updatedAt = date
+        context.insert(RecordTombstone(recordID: attempt.id, recordType: "AttemptRecord", deletedAt: date))
+    }
+
+    private func tombstone(_ reviewState: ReviewStateRecord, at date: Date = .now) {
+        reviewState.deletedAt = date
+        reviewState.updatedAt = date
+        context.insert(RecordTombstone(recordID: reviewState.id, recordType: "ReviewStateRecord", deletedAt: date))
+    }
+
+    private func tombstone(_ memoryAid: MemoryAidCacheRecord, at date: Date = .now) {
+        memoryAid.deletedAt = date
+        memoryAid.updatedAt = date
+        context.insert(RecordTombstone(recordID: memoryAid.id, recordType: "MemoryAidCacheRecord", deletedAt: date))
     }
 
     private func tombstone(_ set: DailySetRecord, at date: Date = .now) {
@@ -2428,6 +2601,9 @@ enum VocabImportedChangeDiscovery {
                 }
             }
         }
+        changedTombstoneIDs.formUnion(changedRecords.compactMap { changedRecord in
+            changedRecord.kind == .tombstone ? nil : changedRecord.id
+        })
         return VocabImportedChangeSet(
             affectedWordIDs: affectedWordIDs,
             changedTombstoneIDs: changedTombstoneIDs,
@@ -2443,6 +2619,9 @@ enum VocabImportedChangeDiscovery {
         let words = try context.fetch(FetchDescriptor<WordRecord>())
         let meanings = try context.fetch(FetchDescriptor<MeaningRecord>())
         let attempts = try context.fetch(FetchDescriptor<AttemptRecord>())
+        let reviewStates = try context.fetch(FetchDescriptor<ReviewStateRecord>())
+        let memoryAids = try context.fetch(FetchDescriptor<MemoryAidCacheRecord>())
+        let setItems = try context.fetch(FetchDescriptor<DailySetItemRecord>())
         let tombstones = try context.fetch(FetchDescriptor<RecordTombstone>())
 
         let next = VocabImportedChangeIndex(
@@ -2452,7 +2631,15 @@ enum VocabImportedChangeDiscovery {
             words: Dictionary(uniqueKeysWithValues: words.map { ($0.id.uuidString, wordEntry($0)) }),
             meanings: Dictionary(uniqueKeysWithValues: meanings.map { ($0.id.uuidString, meaningEntry($0)) }),
             tombstones: Dictionary(uniqueKeysWithValues: tombstones.map {
-                ($0.id.uuidString, tombstoneEntry($0, words: words, meanings: meanings))
+                ($0.id.uuidString, tombstoneEntry(
+                    $0,
+                    words: words,
+                    meanings: meanings,
+                    attempts: attempts,
+                    reviewStates: reviewStates,
+                    memoryAids: memoryAids,
+                    setItems: setItems
+                ))
             })
         )
 
@@ -2473,10 +2660,14 @@ enum VocabImportedChangeDiscovery {
         affected.formUnion(changedWordIDs(previous: previous.tombstones, next: next.tombstones))
         let changedTombstones = changedKeys(previous: previous.tombstones, next: next.tombstones)
             .compactMap(UUID.init(uuidString:))
+        let reappliedTombstones = changedKeys(previous: previous.attempts, next: next.attempts)
+            .union(changedKeys(previous: previous.words, next: next.words))
+            .union(changedKeys(previous: previous.meanings, next: next.meanings))
+            .compactMap(UUID.init(uuidString:))
 
         return VocabImportedChangeSet(
             affectedWordIDs: affected,
-            changedTombstoneIDs: Set(changedTombstones),
+            changedTombstoneIDs: Set(changedTombstones).union(reappliedTombstones),
             nextIndex: next,
             requiresFullAudit: false
         )
@@ -2517,12 +2708,24 @@ enum VocabImportedChangeDiscovery {
     static func tombstoneEntry(
         _ record: RecordTombstone,
         words: [WordRecord],
-        meanings: [MeaningRecord]
+        meanings: [MeaningRecord],
+        attempts: [AttemptRecord] = [],
+        reviewStates: [ReviewStateRecord] = [],
+        memoryAids: [MemoryAidCacheRecord] = [],
+        setItems: [DailySetItemRecord] = []
     ) -> VocabImportedChangeIndex.Entry {
         .init(signature: digest([
             record.id.uuidString, record.recordType, record.recordID.uuidString,
             timestamp(record.deletedAt), timestamp(record.updatedAt)
-        ]), wordID: tombstoneWordID(record, words: words, meanings: meanings))
+        ]), wordID: tombstoneWordID(
+            record,
+            words: words,
+            meanings: meanings,
+            attempts: attempts,
+            reviewStates: reviewStates,
+            memoryAids: memoryAids,
+            setItems: setItems
+        ))
     }
 
     static func tombstoneEntry(
@@ -2543,6 +2746,21 @@ enum VocabImportedChangeDiscovery {
             wordID = try context.fetch(
                 FetchDescriptor<DailySetItemRecord>(predicate: #Predicate { $0.id == recordID })
             ).first?.wordID
+        case "AttemptRecord":
+            let recordID = record.recordID
+            wordID = try context.fetch(
+                FetchDescriptor<AttemptRecord>(predicate: #Predicate { $0.id == recordID })
+            ).first?.word?.id
+        case "ReviewStateRecord":
+            let recordID = record.recordID
+            wordID = try context.fetch(
+                FetchDescriptor<ReviewStateRecord>(predicate: #Predicate { $0.id == recordID })
+            ).first?.word?.id
+        case "MemoryAidCacheRecord":
+            let recordID = record.recordID
+            wordID = try context.fetch(
+                FetchDescriptor<MemoryAidCacheRecord>(predicate: #Predicate { $0.id == recordID })
+            ).first?.wordID
         default:
             wordID = nil
         }
@@ -2562,11 +2780,19 @@ enum VocabImportedChangeDiscovery {
     private static func tombstoneWordID(
         _ tombstone: RecordTombstone,
         words: [WordRecord],
-        meanings: [MeaningRecord]
+        meanings: [MeaningRecord],
+        attempts: [AttemptRecord],
+        reviewStates: [ReviewStateRecord],
+        memoryAids: [MemoryAidCacheRecord],
+        setItems: [DailySetItemRecord]
     ) -> UUID? {
         switch tombstone.recordType {
         case "WordRecord": tombstone.recordID
         case "MeaningRecord": meanings.first(where: { $0.id == tombstone.recordID })?.word?.id
+        case "AttemptRecord": attempts.first(where: { $0.id == tombstone.recordID })?.word?.id
+        case "ReviewStateRecord": reviewStates.first(where: { $0.id == tombstone.recordID })?.word?.id
+        case "MemoryAidCacheRecord": memoryAids.first(where: { $0.id == tombstone.recordID })?.wordID
+        case "DailySetItemRecord": setItems.first(where: { $0.id == tombstone.recordID })?.wordID
         default: nil
         }
     }
@@ -2837,41 +3063,40 @@ enum VocabCloudReconciler {
             winningDeletion["\(type):\(id.uuidString)"]
         }
         var didChange = false
-        for record in try context.fetch(FetchDescriptor<WordRecord>()) {
-            if let date = deletion("WordRecord", record.id), record.deletedAt == nil || record.deletedAt! < date {
-                record.deletedAt = date
+        func apply<T: PersistentModel & VocabSoftDeletableRecord>(
+            _ type: T.Type,
+            typeName: String
+        ) throws {
+            for record in try context.fetch(FetchDescriptor<T>()) {
+                guard let date = deletion(typeName, record.id) else { continue }
+                let appliesDeletion = record.deletedAt == nil || record.deletedAt! < date
+                let scrubbed = record.scrubDeletedContent()
+                guard appliesDeletion || scrubbed else { continue }
+                record.deletedAt = max(record.deletedAt ?? .distantPast, date)
                 record.updatedAt = max(record.updatedAt, date)
                 didChange = true
             }
         }
-        for record in try context.fetch(FetchDescriptor<MeaningRecord>()) {
-            if let date = deletion("MeaningRecord", record.id), record.deletedAt == nil || record.deletedAt! < date {
-                record.deletedAt = date
-                record.updatedAt = max(record.updatedAt, date)
-                didChange = true
-            }
-        }
-        for record in try context.fetch(FetchDescriptor<DailySetRecord>()) {
-            if let date = deletion("DailySetRecord", record.id), record.deletedAt == nil || record.deletedAt! < date {
-                record.deletedAt = date
-                record.updatedAt = max(record.updatedAt, date)
-                didChange = true
-            }
-        }
-        for record in try context.fetch(FetchDescriptor<DailySetItemRecord>()) {
-            if let date = deletion("DailySetItemRecord", record.id), record.deletedAt == nil || record.deletedAt! < date {
-                record.deletedAt = date
-                record.updatedAt = max(record.updatedAt, date)
-                didChange = true
-            }
-        }
+        try apply(WordRecord.self, typeName: "WordRecord")
+        try apply(MeaningRecord.self, typeName: "MeaningRecord")
+        try apply(DailySetRecord.self, typeName: "DailySetRecord")
+        try apply(DailySetItemRecord.self, typeName: "DailySetItemRecord")
+        try apply(AttemptRecord.self, typeName: "AttemptRecord")
+        try apply(ReviewStateRecord.self, typeName: "ReviewStateRecord")
+        try apply(MemoryAidCacheRecord.self, typeName: "MemoryAidCacheRecord")
+        let retiredWordIDs = Set(tombstones.lazy.filter { $0.recordType == "WordRecord" }.map(\.recordID))
+        didChange = try sanitizeSessionReferences(
+            context: context,
+            retiredWordIDs: retiredWordIDs,
+            now: now
+        ) || didChange
 
         if syncMode == .cloudKitPrivate {
             let coordinator = LearningCoordinator(context: context, syncMode: syncMode)
             for word in try context.fetch(FetchDescriptor<WordRecord>()) where word.deletedAt == nil {
                 let calculation = coordinator.expectedReviewState(
                     for: word,
-                    attempts: attemptsByWordID[word.id] ?? []
+                    attempts: (attemptsByWordID[word.id] ?? []).filter { $0.deletedAt == nil }
                 )
                 guard let expected = calculation.expected else { continue }
                 if coordinator.applyExpectedReviewState(expected, to: word) {
@@ -2924,41 +3149,66 @@ enum VocabCloudReconciler {
             case "WordRecord":
                 let recordID = tombstone.recordID
                 let target = try context.fetch(FetchDescriptor<WordRecord>(predicate: #Predicate { $0.id == recordID })).first
-                if let target, target.deletedAt == nil || target.deletedAt! < tombstone.deletedAt {
-                    target.deletedAt = tombstone.deletedAt
-                    target.updatedAt = max(target.updatedAt, tombstone.deletedAt)
+                if applyDeletionTombstone(target, at: tombstone.deletedAt) {
+                    guard let target else { continue }
                     affectedWordIDs.insert(target.id)
                     didChange = true
                 }
             case "MeaningRecord":
                 let recordID = tombstone.recordID
                 let target = try context.fetch(FetchDescriptor<MeaningRecord>(predicate: #Predicate { $0.id == recordID })).first
-                if let target, target.deletedAt == nil || target.deletedAt! < tombstone.deletedAt {
-                    target.deletedAt = tombstone.deletedAt
-                    target.updatedAt = max(target.updatedAt, tombstone.deletedAt)
+                if applyDeletionTombstone(target, at: tombstone.deletedAt) {
+                    guard let target else { continue }
                     if let wordID = target.word?.id { affectedWordIDs.insert(wordID) }
                     didChange = true
                 }
             case "DailySetRecord":
                 let recordID = tombstone.recordID
                 let target = try context.fetch(FetchDescriptor<DailySetRecord>(predicate: #Predicate { $0.id == recordID })).first
-                if let target, target.deletedAt == nil || target.deletedAt! < tombstone.deletedAt {
-                    target.deletedAt = tombstone.deletedAt
-                    target.updatedAt = max(target.updatedAt, tombstone.deletedAt)
+                if applyDeletionTombstone(target, at: tombstone.deletedAt) {
                     didChange = true
                 }
             case "DailySetItemRecord":
                 let recordID = tombstone.recordID
                 let target = try context.fetch(FetchDescriptor<DailySetItemRecord>(predicate: #Predicate { $0.id == recordID })).first
-                if let target, target.deletedAt == nil || target.deletedAt! < tombstone.deletedAt {
-                    target.deletedAt = tombstone.deletedAt
-                    target.updatedAt = max(target.updatedAt, tombstone.deletedAt)
+                if applyDeletionTombstone(target, at: tombstone.deletedAt) {
+                    didChange = true
+                }
+            case "AttemptRecord":
+                let recordID = tombstone.recordID
+                let target = try context.fetch(FetchDescriptor<AttemptRecord>(predicate: #Predicate { $0.id == recordID })).first
+                if applyDeletionTombstone(target, at: tombstone.deletedAt) {
+                    guard let target else { continue }
+                    if let wordID = target.word?.id { affectedWordIDs.insert(wordID) }
+                    didChange = true
+                }
+            case "ReviewStateRecord":
+                let recordID = tombstone.recordID
+                let target = try context.fetch(FetchDescriptor<ReviewStateRecord>(predicate: #Predicate { $0.id == recordID })).first
+                if applyDeletionTombstone(target, at: tombstone.deletedAt) {
+                    guard let target else { continue }
+                    if let wordID = target.word?.id { affectedWordIDs.insert(wordID) }
+                    didChange = true
+                }
+            case "MemoryAidCacheRecord":
+                let recordID = tombstone.recordID
+                let target = try context.fetch(FetchDescriptor<MemoryAidCacheRecord>(predicate: #Predicate { $0.id == recordID })).first
+                if applyDeletionTombstone(target, at: tombstone.deletedAt) {
+                    guard let target else { continue }
+                    affectedWordIDs.insert(target.wordID)
                     didChange = true
                 }
             default:
                 continue
             }
         }
+        let retiredWordIDs = Set(try context.fetch(FetchDescriptor<RecordTombstone>())
+            .lazy.filter { $0.recordType == "WordRecord" }.map(\.recordID))
+        didChange = try sanitizeSessionReferences(
+            context: context,
+            retiredWordIDs: retiredWordIDs,
+            now: now
+        ) || didChange
 
         let coordinator = LearningCoordinator(context: context, syncMode: syncMode)
         for wordID in affectedWordIDs {
@@ -2992,6 +3242,54 @@ enum VocabCloudReconciler {
         )
     }
 
+    static func sanitizeSessionReferences(
+        context: ModelContext,
+        retiredWordIDs: Set<UUID>,
+        now: Date
+    ) throws -> Bool {
+        guard !retiredWordIDs.isEmpty else { return false }
+        var changed = false
+        for session in try context.fetch(FetchDescriptor<TestSessionRecord>())
+            where !retiredWordIDs.isDisjoint(with: session.wordIDs) {
+            session.wordIDs.removeAll(where: retiredWordIDs.contains)
+            session.updatedAt = max(session.updatedAt, now)
+            changed = true
+        }
+        return changed
+    }
+
+    private static func applyDeletionTombstone<T: VocabSoftDeletableRecord>(
+        _ record: T?,
+        at date: Date
+    ) -> Bool {
+        guard let record else { return false }
+        let appliesDeletion = record.deletedAt == nil || record.deletedAt! < date
+        let scrubbed = record.scrubDeletedContent()
+        guard appliesDeletion || scrubbed else { return false }
+        record.deletedAt = max(record.deletedAt ?? .distantPast, date)
+        record.updatedAt = max(record.updatedAt, date)
+        return true
+    }
+
+}
+
+@ModelActor
+actor VocabMasteryCleanupWorker {
+    private let createdOnMainThread = Thread.isMainThread
+
+    func run(
+        syncMode: VocabSyncMode,
+        now: Date = .now
+    ) throws -> LearningCoordinator.MasteryCleanupResult {
+        try LearningCoordinator(
+            context: modelContext,
+            syncMode: syncMode
+        ).normalizeAndRetireMasteredWords(now: now)
+    }
+
+    func wasCreatedOnMainThread() -> Bool {
+        createdOnMainThread
+    }
 }
 
 @ModelActor
@@ -3045,6 +3343,20 @@ actor VocabCloudReconciliationWorker {
         try await applyDeletionBatches(MeaningRecord.self, typeName: "MeaningRecord", winningDeletion: winningDeletion)
         try await applyDeletionBatches(DailySetRecord.self, typeName: "DailySetRecord", winningDeletion: winningDeletion)
         try await applyDeletionBatches(DailySetItemRecord.self, typeName: "DailySetItemRecord", winningDeletion: winningDeletion)
+        try await applyDeletionBatches(AttemptRecord.self, typeName: "AttemptRecord", winningDeletion: winningDeletion)
+        try await applyDeletionBatches(ReviewStateRecord.self, typeName: "ReviewStateRecord", winningDeletion: winningDeletion)
+        try await applyDeletionBatches(MemoryAidCacheRecord.self, typeName: "MemoryAidCacheRecord", winningDeletion: winningDeletion)
+        let retiredWordIDs = Set(winningDeletion.keys.compactMap { key -> UUID? in
+            guard key.hasPrefix("WordRecord:") else { return nil }
+            return UUID(uuidString: String(key.dropFirst("WordRecord:".count)))
+        })
+        if try VocabCloudReconciler.sanitizeSessionReferences(
+            context: modelContext,
+            retiredWordIDs: retiredWordIDs,
+            now: now
+        ) {
+            try modelContext.save()
+        }
 
         if syncMode == .cloudKitPrivate {
             let coordinator = LearningCoordinator(context: modelContext, syncMode: syncMode)
@@ -3053,7 +3365,7 @@ actor VocabCloudReconciliationWorker {
                 for word in words where word.deletedAt == nil {
                     let calculation = coordinator.expectedReviewState(
                         for: word,
-                        attempts: attemptsByWordID[word.id] ?? []
+                        attempts: (attemptsByWordID[word.id] ?? []).filter { $0.deletedAt == nil }
                     )
                     guard let expected = calculation.expected else { continue }
                     changed = coordinator.applyExpectedReviewState(expected, to: word) || changed
@@ -3081,6 +3393,9 @@ actor VocabCloudReconciliationWorker {
         var wordIDs = Set<UUID>()
         var meaningWordIDs: [UUID: UUID] = [:]
         var itemWordIDs: [UUID: UUID] = [:]
+        var attemptWordIDs: [UUID: UUID] = [:]
+        var reviewWordIDs: [UUID: UUID] = [:]
+        var memoryAidWordIDs: [UUID: UUID] = [:]
 
         try await forEachBatch(WordRecord.self) { batch in
             for record in batch {
@@ -3100,7 +3415,16 @@ actor VocabCloudReconciliationWorker {
         try await forEachBatch(AttemptRecord.self) { batch in
             for record in batch {
                 attempts[record.id.uuidString] = VocabImportedChangeDiscovery.attemptEntry(record)
+                if let wordID = record.word?.id { attemptWordIDs[record.id] = wordID }
             }
+        }
+        try await forEachBatch(ReviewStateRecord.self) { batch in
+            for record in batch {
+                if let wordID = record.word?.id { reviewWordIDs[record.id] = wordID }
+            }
+        }
+        try await forEachBatch(MemoryAidCacheRecord.self) { batch in
+            for record in batch { memoryAidWordIDs[record.id] = record.wordID }
         }
         try await forEachBatch(RecordTombstone.self) { batch in
             for record in batch {
@@ -3109,6 +3433,9 @@ actor VocabCloudReconciliationWorker {
                 case "WordRecord": wordID = record.recordID
                 case "MeaningRecord": wordID = meaningWordIDs[record.recordID]
                 case "DailySetItemRecord": wordID = itemWordIDs[record.recordID]
+                case "AttemptRecord": wordID = attemptWordIDs[record.recordID]
+                case "ReviewStateRecord": wordID = reviewWordIDs[record.recordID]
+                case "MemoryAidCacheRecord": wordID = memoryAidWordIDs[record.recordID]
                 default: wordID = nil
                 }
                 let signature = VocabImportedChangeDiscovery.tombstoneEntry(
@@ -3157,10 +3484,11 @@ actor VocabCloudReconciliationWorker {
             var changed = false
             for record in records {
                 let key = "\(typeName):\(record.id.uuidString)"
-                guard let date = winningDeletion[key], record.deletedAt == nil || record.deletedAt! < date else {
-                    continue
-                }
-                record.deletedAt = date
+                guard let date = winningDeletion[key] else { continue }
+                let appliesDeletion = record.deletedAt == nil || record.deletedAt! < date
+                let scrubbed = record.scrubDeletedContent()
+                guard appliesDeletion || scrubbed else { continue }
+                record.deletedAt = max(record.deletedAt ?? .distantPast, date)
                 record.updatedAt = max(record.updatedAt, date)
                 changed = true
             }
@@ -3364,17 +3692,115 @@ private protocol VocabSoftDeletableRecord: VocabStableIdentifiedRecord {
     var id: UUID { get }
     var updatedAt: Date { get set }
     var deletedAt: Date? { get set }
+    @discardableResult func scrubDeletedContent() -> Bool
 }
 
-extension WordRecord: VocabSoftDeletableRecord {}
-extension MeaningRecord: VocabSoftDeletableRecord {}
+private extension VocabSoftDeletableRecord {
+    func scrubDeletedContent() -> Bool { false }
+}
+
+extension WordRecord: VocabSoftDeletableRecord {
+    @discardableResult
+    fileprivate func scrubDeletedContent() -> Bool {
+        let changed = !term.isEmpty
+            || !normalizedTerm.isEmpty
+            || !englishAliases.isEmpty
+            || createdAt != .distantPast
+            || statusRaw != VocabularyLearningStatus.active.rawValue
+        term = ""
+        normalizedTerm = ""
+        englishAliases = []
+        createdAt = .distantPast
+        statusRaw = VocabularyLearningStatus.active.rawValue
+        return changed
+    }
+}
+
+extension MeaningRecord: VocabSoftDeletableRecord {
+    @discardableResult
+    fileprivate func scrubDeletedContent() -> Bool {
+        let changed = !text.isEmpty || !normalizedText.isEmpty || !aliases.isEmpty || !successDays.isEmpty
+        text = ""
+        normalizedText = ""
+        aliases = []
+        successDays = []
+        return changed
+    }
+}
+
 extension DailySetRecord: VocabSoftDeletableRecord {}
 extension DailySetItemRecord: VocabSoftDeletableRecord {}
-extension AttemptRecord: VocabStableIdentifiedRecord {}
+extension AttemptRecord: VocabSoftDeletableRecord {
+    @discardableResult
+    fileprivate func scrubDeletedContent() -> Bool {
+        let changed = !directionRaw.isEmpty
+            || !modeRaw.isEmpty
+            || questionIndex != -1
+            || !seoulDay.isEmpty
+            || !prompt.isEmpty
+            || !submittedAnswer.isEmpty
+            || !automaticJudgementRaw.isEmpty
+            || !finalJudgementRaw.isEmpty
+            || correctionRaw != nil
+            || !questionFormatRaw.isEmpty
+            || matchedMeaningID != nil
+            || answeredAt != .distantPast
+        directionRaw = ""
+        modeRaw = ""
+        questionIndex = -1
+        seoulDay = ""
+        prompt = ""
+        submittedAnswer = ""
+        automaticJudgementRaw = ""
+        finalJudgementRaw = ""
+        correctionRaw = nil
+        questionFormatRaw = ""
+        matchedMeaningID = nil
+        answeredAt = .distantPast
+        return changed
+    }
+}
+
+extension ReviewStateRecord: VocabSoftDeletableRecord {
+    @discardableResult
+    fileprivate func scrubDeletedContent() -> Bool {
+        let changed = failureCheck != 0
+            || activePriority != 0
+            || enToKoStreak != 0
+            || koToEnStreak != 0
+            || !koToEnSuccessDays.isEmpty
+            || latestWrongDirection != nil
+            || latestWrongAt != nil
+            || lastTestedAt != nil
+            || presentationCount != 0
+            || lastPresentedAt != nil
+        failureCheck = 0
+        activePriority = 0
+        enToKoStreak = 0
+        koToEnStreak = 0
+        koToEnSuccessDays = []
+        latestWrongDirection = nil
+        latestWrongAt = nil
+        lastTestedAt = nil
+        presentationCount = 0
+        lastPresentedAt = nil
+        return changed
+    }
+}
+
 extension RecordTombstone: VocabStableIdentifiedRecord {}
 extension TestSessionRecord: VocabStableIdentifiedRecord {}
 extension AnonymousAggregateRecord: VocabStableIdentifiedRecord {}
-extension MemoryAidCacheRecord: VocabStableIdentifiedRecord {}
+extension MemoryAidCacheRecord: VocabSoftDeletableRecord {
+    @discardableResult
+    fileprivate func scrubDeletedContent() -> Bool {
+        let changed = !modelRaw.isEmpty || !contentSignature.isEmpty || !markdown.isEmpty
+        modelRaw = ""
+        contentSignature = ""
+        markdown = ""
+        return changed
+    }
+}
 
 enum VocabCloudReconciliationWorkerFactory {
     static func make(modelContainer: ModelContainer) async -> VocabCloudReconciliationWorker {
@@ -3382,6 +3808,18 @@ enum VocabCloudReconciliationWorkerFactory {
             DispatchQueue.global(qos: .utility).async {
                 continuation.resume(
                     returning: VocabCloudReconciliationWorker(modelContainer: modelContainer)
+                )
+            }
+        }
+    }
+}
+
+enum VocabMasteryCleanupWorkerFactory {
+    static func make(modelContainer: ModelContainer) async -> VocabMasteryCleanupWorker {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                continuation.resume(
+                    returning: VocabMasteryCleanupWorker(modelContainer: modelContainer)
                 )
             }
         }

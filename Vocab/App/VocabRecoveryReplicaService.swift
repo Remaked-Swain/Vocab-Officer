@@ -991,9 +991,10 @@ actor VocabRecoveryReplicaWorker {
         try await inspect(DailySetItemRecord.self) { wordIDs.contains($0.wordID) }
         try await inspect(TestSessionRecord.self) { $0.wordIDs.allSatisfy(wordIDs.contains) }
         try await inspect(AttemptRecord.self) { attempt in
-            sessionIDs.contains(attempt.sessionID)
-                && (attempt.word == nil || wordIDs.contains(attempt.word!.id))
-                && (attempt.matchedMeaningID == nil || meaningIDs.contains(attempt.matchedMeaningID!))
+            attempt.deletedAt != nil
+                || (sessionIDs.contains(attempt.sessionID)
+                    && (attempt.word == nil || wordIDs.contains(attempt.word!.id))
+                    && (attempt.matchedMeaningID == nil || meaningIDs.contains(attempt.matchedMeaningID!)))
         }
         try await inspect(MemoryAidCacheRecord.self) { wordIDs.contains($0.wordID) }
     }

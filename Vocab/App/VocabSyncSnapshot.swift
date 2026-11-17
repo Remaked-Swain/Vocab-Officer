@@ -868,13 +868,17 @@ enum VocabSyncSnapshotService {
             guard attemptIDs.insert(attempt.id).inserted else {
                 throw SnapshotValidationError.duplicateAttemptID(attempt.id)
             }
-            if !sessionIDs.contains(attempt.sessionID) {
+            if attempt.deletedAt == nil, !sessionIDs.contains(attempt.sessionID) {
                 throw SnapshotValidationError.missingSessionForAttempt(attempt.sessionID)
             }
-            if let wordID = attempt.wordID, !wordIDs.contains(wordID) {
+            if attempt.deletedAt == nil,
+               let wordID = attempt.wordID,
+               !wordIDs.contains(wordID) {
                 throw SnapshotValidationError.missingWordForAttempt(wordID)
             }
-            if let meaningID = attempt.matchedMeaningID, !meaningIDs.contains(meaningID) {
+            if attempt.deletedAt == nil,
+               let meaningID = attempt.matchedMeaningID,
+               !meaningIDs.contains(meaningID) {
                 throw SnapshotValidationError.missingMeaningForAttempt(meaningID)
             }
         }
