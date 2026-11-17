@@ -9,7 +9,7 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     case test = "테스트"
     case study = "학습 카드"
     case review = "복습"
-    case mastered = "Mastered"
+    case mastered = "장기정착"
     case library = "단어장"
     case history = "기록"
 
@@ -47,6 +47,13 @@ struct RootView: View {
     @State private var recoveryReplicaTask: Task<Void, Never>?
     @State private var maintenanceAuditTask: Task<Void, Never>?
     @State private var maintenanceAuditSlot = VocabMaintenanceTaskSlot()
+    @State private var masteryCleanupTask: Task<Void, Never>?
+    @State private var masteryCleanupRetryTask: Task<Void, Never>?
+    @State private var masteryCleanupPending = false
+    @State private var masteryCleanupRetryCount = 0
+    @State private var backgroundActivityMessage: String?
+    @State private var backgroundActivityIsRunning = false
+    @State private var activityClearTask: Task<Void, Never>?
 
     var body: some View {
         NavigationSplitView {
@@ -90,6 +97,26 @@ struct RootView: View {
             }
         }
         .frame(minWidth: 900, minHeight: 600)
+        .toolbar {
+            if let backgroundActivityMessage {
+                ToolbarItem(placement: .status) {
+                    HStack(spacing: 7) {
+                        if backgroundActivityIsRunning {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Image(systemName: "checkmark.circle")
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(backgroundActivityMessage)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .help(backgroundActivityMessage)
+                }
+            }
+        }
         .task {
             localContentIsUsable = syncMode == .localOnly
                 || VocabSyncRuntimeStateStore.persistedLocalContentIsUsable()
@@ -107,6 +134,7 @@ struct RootView: View {
                 scheduleHydrationRefresh(reason: .initial)
             }
             await resumeBootstrapIfNeeded()
+            scheduleMasteryCleanupIfEligible()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -147,11 +175,121 @@ struct RootView: View {
             Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
             scheduleHydrationRefresh(reason: .successfulImport)
         }
+        .onReceive(NotificationCenter.default.publisher(for: .vocabMasteryCleanupRequested)) { _ in
+            scheduleMasteryCleanupIfEligible()
+        }
         .alert("iCloud 전환 완료", isPresented: $showBootstrapRestart) {
             Button("지금 다시 시작") { relaunchApplication() }
             Button("나중에", role: .cancel) {}
         } message: {
             Text(bootstrapRecoveryMessage)
+        }
+    }
+
+    @MainActor
+    private func scheduleMasteryCleanupIfEligible() {
+        masteryCleanupPending = true
+        guard connectionError == nil,
+              localContentIsUsable,
+              masteryCleanupTask == nil else { return }
+        if masteryCleanupRetryCount > 3 { masteryCleanupRetryCount = 0 }
+        masteryCleanupRetryTask?.cancel()
+        masteryCleanupRetryTask = nil
+        let container = modelContext.container
+        masteryCleanupTask = Task { @MainActor in
+            let indicator = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled else { return }
+                showBackgroundActivity("암기완료 단어를 안전하게 정리하는 중", isRunning: true)
+            }
+            var shouldRunAgain = false
+            var retryDelay: Duration?
+            var waitsForIntegrity = false
+            repeat {
+                masteryCleanupPending = false
+                do {
+                    let worker = await VocabMasteryCleanupWorkerFactory.make(modelContainer: container)
+                    let result = try await worker.run(syncMode: syncMode)
+                    masteryCleanupRetryCount = 0
+                    if result.retiredCount > 0 {
+                        showBackgroundActivity(
+                            "암기완료 \(result.retiredCount)개 정리 완료 · iCloud 및 복구본 반영 대기",
+                            isRunning: false
+                        )
+                        scheduleBackgroundActivityClear()
+                    } else if result.normalizedLegacyCount > 0 {
+                        showBackgroundActivity(
+                            "기존 분류 \(result.normalizedLegacyCount)개를 장기정착으로 전환함",
+                            isRunning: false
+                        )
+                        scheduleBackgroundActivityClear()
+                    } else if !masteryCleanupPending {
+                        clearBackgroundActivity()
+                    }
+                } catch LearningError.mutationsBlockedForIntegrity {
+                    showBackgroundActivity("동기화 검증이 끝나면 암기완료 정리를 이어갑니다", isRunning: false)
+                    masteryCleanupPending = true
+                    waitsForIntegrity = true
+                    break
+                } catch {
+                    showBackgroundActivity("암기완료 정리를 다음 기회에 다시 시도합니다", isRunning: false)
+                    masteryCleanupPending = true
+                    masteryCleanupRetryCount += 1
+                    if masteryCleanupRetryCount <= 3 {
+                        retryDelay = .seconds(5 * (1 << (masteryCleanupRetryCount - 1)))
+                    }
+                    break
+                }
+            } while masteryCleanupPending
+            indicator.cancel()
+            masteryCleanupTask = nil
+            shouldRunAgain = masteryCleanupPending
+                && retryDelay == nil
+                && masteryCleanupRetryCount == 0
+                && !waitsForIntegrity
+            if let retryDelay {
+                scheduleBackgroundActivityClear()
+                scheduleMasteryCleanupRetry(after: retryDelay)
+            } else if shouldRunAgain {
+                scheduleMasteryCleanupIfEligible()
+            }
+        }
+    }
+
+    @MainActor
+    private func scheduleMasteryCleanupRetry(after delay: Duration) {
+        guard masteryCleanupRetryTask == nil else { return }
+        masteryCleanupRetryTask = Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            masteryCleanupRetryTask = nil
+            scheduleMasteryCleanupIfEligible()
+        }
+    }
+
+    @MainActor
+    private func showBackgroundActivity(_ message: String, isRunning: Bool) {
+        activityClearTask?.cancel()
+        activityClearTask = nil
+        backgroundActivityMessage = message
+        backgroundActivityIsRunning = isRunning
+    }
+
+    @MainActor
+    private func clearBackgroundActivity() {
+        activityClearTask?.cancel()
+        activityClearTask = nil
+        backgroundActivityMessage = nil
+        backgroundActivityIsRunning = false
+    }
+
+    @MainActor
+    private func scheduleBackgroundActivityClear() {
+        activityClearTask?.cancel()
+        activityClearTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            clearBackgroundActivity()
         }
     }
 
@@ -215,6 +353,9 @@ struct RootView: View {
                 hydrationState = result.state
                 hydrationMessage = result.message
                 await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted()
+                if result.state == .ready, masteryCleanupPending {
+                    scheduleMasteryCleanupIfEligible()
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -265,6 +406,9 @@ struct RootView: View {
                 VocabMutationAuthorityRuntime.set(authority)
             }
             await VocabSyncRuntimeStateStore.shared.markDiagnosticCompleted(state: hydrationState)
+            if hydrationState == .ready || hydrationState == .localOnly {
+                scheduleMasteryCleanupIfEligible()
+            }
         } catch {
             hydrationState = .failed
             hydrationMessage = error.localizedDescription

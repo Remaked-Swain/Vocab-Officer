@@ -389,9 +389,9 @@ struct LibraryView: View {
                             Text(word.activeMeanings.map(\.text).joined(separator: ", "))
                                 .font(.body)
                                 .foregroundStyle(.secondary)
-                            Text(word.statusRaw.capitalized)
+                            Text(word.learningStatusTitle)
                                 .font(.caption)
-                                .foregroundStyle(word.statusRaw == "mastered" ? Color.green : Color.secondary)
+                                .foregroundStyle(word.learningStatus == .active ? Color.secondary : Color.green)
                         }
                         Spacer()
                         WordMemoryAidButton(word: word)
@@ -659,7 +659,7 @@ private struct WordEditSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("단어 직접 수정")
                 .font(.title.weight(.semibold))
-            Text("OCR 오인식이나 오입력된 단어를 수정합니다. 이 값은 단어장의 단일 진실 공급원(SOT)을 직접 바꾸며, Mastered 단어를 수정하면 다시 활성 단어가 됩니다.")
+            Text("OCR 오인식이나 오입력된 단어를 수정합니다. 이 값은 단어장의 단일 진실 공급원(SOT)을 직접 바꾸며, 장기정착 단어를 수정하면 다시 학습 중으로 돌아갑니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             TextField("영단어", text: $term)

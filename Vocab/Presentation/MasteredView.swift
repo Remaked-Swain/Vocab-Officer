@@ -2,23 +2,19 @@ import SwiftData
 import SwiftUI
 
 struct MasteredView: View {
-    @Environment(\.modelContext) private var context
     @Query(filter: #Predicate<WordRecord> { $0.deletedAt == nil }) private var words: [WordRecord]
-    @State private var pendingDeletion: WordRecord?
-    @State private var confirmationText = ""
-    @State private var notice: String?
 
-    private var mastered: [WordRecord] {
-        words.filter { $0.statusRaw == "mastered" && $0.deletedAt == nil }
+    private var consolidating: [WordRecord] {
+        words.filter { $0.learningStatus == .consolidating }
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            GroupBox("Mastered란?") {
+            GroupBox("장기정착이란?") {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("서로 다른 날짜의 회상 성공으로 충분히 검증되어 일반 출제에서 제외된 단어입니다. 성공 이력이 쌓일수록 14일, 30일, 60일, 120일 간격으로 유지 점검을 받고, 틀리면 다시 복습 대상으로 돌아갑니다.")
+                    Text("서로 다른 날짜에 두 번 이상 맞혀 일반 출제에서 잠시 제외되고, 장기 기억 여부를 간격을 두고 다시 확인하는 단어입니다.")
                         .font(.body.weight(.medium))
-                    Text("테스트 모드·방향·시험 방식과 관계없이 서로 다른 날짜에 충분한 정답 이력이 쌓이고 최근 오답이 없을 때 자동 진입합니다. 일정 기간 뒤 복습·혼합 테스트에서 소수 문항으로 다시 점검하며, 오답이나 모름이면 활성 단어로 돌아갑니다.")
+                    Text("7일, 14일, 30일 간격의 점검을 거쳐 서로 다른 5일에 맞히고, 첫 성공부터 45일 이상이면서 마지막 두 성공 사이가 30일 이상이면 암기완료로 판정되어 자동 정리됩니다. 오답이나 모름이면 다시 학습 중으로 돌아갑니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -26,7 +22,7 @@ struct MasteredView: View {
             }
             .padding(.horizontal)
 
-            List(mastered) { word in
+            List(consolidating) { word in
                 HStack {
                     VStack(alignment: .leading) {
                         Text(word.term).font(.title3.weight(.semibold))
@@ -35,53 +31,18 @@ struct MasteredView: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Button("영구 삭제", role: .destructive) {
-                        pendingDeletion = word
-                    }
-                    .controlSize(.large)
+                    Text("장기정착")
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.green)
                 }
                 .padding(.vertical, 5)
             }
             .overlay {
-                if mastered.isEmpty {
-                    ContentUnavailableView("Mastered 단어가 없습니다", systemImage: "graduationcap")
+                if consolidating.isEmpty {
+                    ContentUnavailableView("장기정착 단어가 없습니다", systemImage: "graduationcap")
                 }
             }
         }
-        .navigationTitle("Mastered")
-        .alert("Mastered 단어 영구 삭제", isPresented: Binding(get: { pendingDeletion != nil }, set: { if !$0 { pendingDeletion = nil } })) {
-            TextField("DELETE 입력", text: $confirmationText)
-                .font(.body)
-            Button("취소", role: .cancel) {
-                pendingDeletion = nil
-                confirmationText = ""
-            }
-            Button("삭제", role: .destructive) {
-                performDeletion()
-            }
-            .disabled(confirmationText != "DELETE")
-        } message: {
-            Text("이 단어와 식별 가능한 학습 이력을 앱 저장소에서 영구 삭제합니다.")
-        }
-        .safeAreaInset(edge: .bottom) {
-            if let notice {
-                Text(notice)
-                    .padding()
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(.regularMaterial)
-            }
-        }
-    }
-
-    private func performDeletion() {
-        guard let word = pendingDeletion else { return }
-        do {
-            try LearningCoordinator(context: context).deleteMastered(word)
-            notice = "식별 가능한 학습 이력을 앱 저장소에서 삭제했습니다."
-        } catch {
-            notice = error.localizedDescription
-        }
-        pendingDeletion = nil
-        confirmationText = ""
+        .navigationTitle("장기정착")
     }
 }

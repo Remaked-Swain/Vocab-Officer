@@ -39,6 +39,13 @@ struct VocabIOSRootView: View {
     @State private var localContentIsUsable = VocabSyncRuntimeStateStore.persistedLocalContentIsUsable()
     @State private var maintenanceAuditTask: Task<Void, Never>?
     @State private var maintenanceAuditSlot = VocabMaintenanceTaskSlot()
+    @State private var masteryCleanupTask: Task<Void, Never>?
+    @State private var masteryCleanupRetryTask: Task<Void, Never>?
+    @State private var masteryCleanupPending = false
+    @State private var masteryCleanupRetryCount = 0
+    @State private var backgroundActivityMessage: String?
+    @State private var backgroundActivityIsRunning = false
+    @State private var activityClearTask: Task<Void, Never>?
 
     var body: some View {
         TabView {
@@ -46,7 +53,27 @@ struct VocabIOSRootView: View {
                 NavigationStack {
                     content(for: tab)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .navigationTitle(tab.rawValue)
+                        .navigationTitle(tab.rawValue)
+                        .toolbar {
+                            if let backgroundActivityMessage {
+                                ToolbarItem(placement: .topBarTrailing) {
+                                    HStack(spacing: 6) {
+                                        if backgroundActivityIsRunning {
+                                            ProgressView()
+                                                .controlSize(.small)
+                                        } else {
+                                            Image(systemName: "checkmark.circle")
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        Text(backgroundActivityMessage)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    .accessibilityElement(children: .combine)
+                                }
+                            }
+                        }
                 }
                 .tabItem {
                     Label(tab.rawValue, systemImage: tab.symbol)
@@ -66,6 +93,7 @@ struct VocabIOSRootView: View {
             } else {
                 await requestConnectionRefresh(reason: .initial)
             }
+            scheduleMasteryCleanupIfEligible()
         }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
@@ -105,6 +133,113 @@ struct VocabIOSRootView: View {
                 guard !Task.isCancelled else { return }
                 await requestConnectionRefresh(reason: .successfulImport)
             }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .vocabMasteryCleanupRequested)) { _ in
+            scheduleMasteryCleanupIfEligible()
+        }
+    }
+
+    @MainActor
+    private func scheduleMasteryCleanupIfEligible() {
+        masteryCleanupPending = true
+        guard connectionError == nil,
+              localContentIsUsable,
+              masteryCleanupTask == nil else { return }
+        if masteryCleanupRetryCount > 3 { masteryCleanupRetryCount = 0 }
+        masteryCleanupRetryTask?.cancel()
+        masteryCleanupRetryTask = nil
+        let container = modelContext.container
+        masteryCleanupTask = Task { @MainActor in
+            let indicator = Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(200))
+                guard !Task.isCancelled else { return }
+                showBackgroundActivity("암기완료 정리 중", isRunning: true)
+            }
+            var shouldRunAgain = false
+            var retryDelay: Duration?
+            var waitsForIntegrity = false
+            repeat {
+                masteryCleanupPending = false
+                do {
+                    let worker = await VocabMasteryCleanupWorkerFactory.make(modelContainer: container)
+                    let result = try await worker.run(syncMode: .cloudKitPrivate)
+                    masteryCleanupRetryCount = 0
+                    if result.retiredCount > 0 {
+                        showBackgroundActivity(
+                            "암기완료 \(result.retiredCount)개 정리 완료 · iCloud 반영 중",
+                            isRunning: false
+                        )
+                        scheduleBackgroundActivityClear()
+                    } else if result.normalizedLegacyCount > 0 {
+                        showBackgroundActivity("기존 분류를 장기정착으로 전환함", isRunning: false)
+                        scheduleBackgroundActivityClear()
+                    } else if !masteryCleanupPending {
+                        clearBackgroundActivity()
+                    }
+                } catch LearningError.mutationsBlockedForIntegrity {
+                    showBackgroundActivity("동기화 검증이 끝나면 암기완료 정리를 이어갑니다", isRunning: false)
+                    masteryCleanupPending = true
+                    waitsForIntegrity = true
+                    break
+                } catch {
+                    showBackgroundActivity("암기완료 정리를 다음 기회에 다시 시도합니다", isRunning: false)
+                    masteryCleanupPending = true
+                    masteryCleanupRetryCount += 1
+                    if masteryCleanupRetryCount <= 3 {
+                        retryDelay = .seconds(5 * (1 << (masteryCleanupRetryCount - 1)))
+                    }
+                    break
+                }
+            } while masteryCleanupPending
+            indicator.cancel()
+            masteryCleanupTask = nil
+            shouldRunAgain = masteryCleanupPending
+                && retryDelay == nil
+                && masteryCleanupRetryCount == 0
+                && !waitsForIntegrity
+            if let retryDelay {
+                scheduleBackgroundActivityClear()
+                scheduleMasteryCleanupRetry(after: retryDelay)
+            } else if shouldRunAgain {
+                scheduleMasteryCleanupIfEligible()
+            }
+        }
+    }
+
+    @MainActor
+    private func scheduleMasteryCleanupRetry(after delay: Duration) {
+        guard masteryCleanupRetryTask == nil else { return }
+        masteryCleanupRetryTask = Task { @MainActor in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            masteryCleanupRetryTask = nil
+            scheduleMasteryCleanupIfEligible()
+        }
+    }
+
+    @MainActor
+    private func showBackgroundActivity(_ message: String, isRunning: Bool) {
+        activityClearTask?.cancel()
+        activityClearTask = nil
+        backgroundActivityMessage = message
+        backgroundActivityIsRunning = isRunning
+    }
+
+    @MainActor
+    private func clearBackgroundActivity() {
+        activityClearTask?.cancel()
+        activityClearTask = nil
+        backgroundActivityMessage = nil
+        backgroundActivityIsRunning = false
+    }
+
+    @MainActor
+    private func scheduleBackgroundActivityClear() {
+        activityClearTask?.cancel()
+        activityClearTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(5))
+            guard !Task.isCancelled else { return }
+            clearBackgroundActivity()
         }
     }
 
@@ -208,6 +343,9 @@ struct VocabIOSRootView: View {
                 VocabMutationAuthorityRuntime.set(authority)
             }
             await VocabSyncRuntimeStateStore.shared.markDiagnosticCompleted(state: hydrationState)
+            if hydrationState == .ready {
+                scheduleMasteryCleanupIfEligible()
+            }
         } catch {
             hydrationState = .failed
             hydrationMessage = error.localizedDescription
@@ -248,6 +386,9 @@ struct VocabIOSRootView: View {
                 hydrationState = result.state
                 hydrationMessage = result.message
                 await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted()
+                if result.state == .ready, masteryCleanupPending {
+                    scheduleMasteryCleanupIfEligible()
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -462,6 +603,7 @@ private struct VocabIOSTestSetupView: View {
     @State private var format: QuestionFormat = .typed
     @State private var activeRun: VocabIOSTestRun?
     @State private var error: String?
+    @State private var isStarting = false
 
     var body: some View {
         List {
@@ -516,6 +658,17 @@ private struct VocabIOSTestSetupView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
+                .disabled(isStarting || activeRun != nil)
+                if isStarting {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("테스트 문항을 준비하는 중")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                    .accessibilityElement(children: .combine)
+                }
             }
         }
         .sheet(item: $activeRun) { run in
@@ -526,17 +679,29 @@ private struct VocabIOSTestSetupView: View {
     }
 
     private func start() {
-        do {
-            let result = try LearningCoordinator(context: modelContext, syncMode: .cloudKitPrivate).generateSession(
-                mode: mode,
-                direction: direction,
-                format: format
-            )
-            activeRun = VocabIOSTestRun(session: result.0, questions: result.1)
-            error = nil
-        } catch {
-            activeRun = nil
-            self.error = error.localizedDescription
+        guard !isStarting, activeRun == nil else { return }
+        isStarting = true
+        error = nil
+        let mode = mode
+        let direction = direction
+        let format = format
+        Task { @MainActor in
+            await Task.yield()
+            do {
+                let result = try LearningCoordinator(
+                    context: modelContext,
+                    syncMode: .cloudKitPrivate
+                ).generateSession(
+                    mode: mode,
+                    direction: direction,
+                    format: format
+                )
+                activeRun = VocabIOSTestRun(session: result.0, questions: result.1)
+            } catch {
+                activeRun = nil
+                self.error = error.localizedDescription
+            }
+            isStarting = false
         }
     }
 
