@@ -602,7 +602,10 @@
       "references": ["CL-0001", "CL-0006", "CL-0009", "CL-0024", "CL-0028"],
       "supersedes": [],
       "supersededBy": null,
-      "partiallySupersededBy": [{"id": "CL-0031", "scope": ["fixed 30-day maintenance interval", "14-day failure blocking", "Mixed maintenance rotation"]}],
+      "partiallySupersededBy": [
+        {"id": "CL-0031", "scope": ["fixed 30-day maintenance interval", "14-day failure blocking", "Mixed maintenance rotation"]},
+        {"id": "CL-0034", "scope": ["Mastered meaning", "permanent periodic revalidation", "terminal retirement"]}
+      ],
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": []
@@ -625,7 +628,8 @@
         {"id": "CL-0030", "scope": ["fixed 30-day maintenance interval", "14-day failure blocking", "Mixed maintenance rotation"]}
       ],
       "partiallySupersededBy": [
-        {"id": "CL-0032", "scope": ["three-date Mastered promotion", "14/30/60/120 maintenance ladder", "latest-reference-set Mixed quota"]}
+        {"id": "CL-0032", "scope": ["three-date Mastered promotion", "14/30/60/120 maintenance ladder", "latest-reference-set Mixed quota"]},
+        {"id": "CL-0034", "scope": ["Mastered meaning", "maintenance ownership", "terminal retirement"]}
       ],
       "retentionUntil": null,
       "protected": true,
@@ -646,6 +650,9 @@
       "supersededBy": null,
       "partiallySupersedes": [
         {"id": "CL-0031", "scope": ["three-date Mastered promotion", "14/30/60/120 maintenance ladder", "latest-reference-set Mixed quota"]}
+      ],
+      "partiallySupersededBy": [
+        {"id": "CL-0034", "scope": ["two-date Mastered promotion", "Mastered maintenance ownership", "manual retention"]}
       ],
       "retentionUntil": null,
       "protected": true,
@@ -669,6 +676,63 @@
       "retentionUntil": null,
       "protected": true,
       "unresolvedLimitations": ["legacy DailySet entities remain until a separately verified CloudKit migration boundary"]
+    },
+    {
+      "id": "CL-0034",
+      "type": "decision",
+      "status": "active",
+      "retentionClass": "permanent",
+      "title": "Terminal mastery and automatic retirement",
+      "date": "2026-11-17",
+      "tags": ["mastery", "consolidation", "automatic-retirement", "tombstone", "cloudkit", "recovery"],
+      "affectedPaths": ["Vocab/Domain/StudyPolicies.swift", "Vocab/Application/LearningCoordinator.swift", "Vocab/Presentation/", "VocabIOS/Presentation/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0034-terminal-mastery-retirement.md",
+      "references": ["CL-0001", "CL-0003", "CL-0016", "CL-0020", "CL-0024", "CL-0028", "CL-0030", "CL-0031", "CL-0032"],
+      "supersedes": [],
+      "supersededBy": null,
+      "partiallySupersedes": [
+        {"id": "CL-0030", "scope": ["Mastered meaning", "permanent periodic revalidation", "terminal retirement"]},
+        {"id": "CL-0031", "scope": ["Mastered meaning", "maintenance ownership", "terminal retirement"]},
+        {"id": "CL-0032", "scope": ["two-date Mastered promotion", "Mastered maintenance ownership", "manual retention"]}
+      ],
+      "partiallySupersededBy": [],
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": ["real-device CloudKit propagation of the expanded child tombstones requires release-stage observation"]
+    },
+    {
+      "id": "CL-0035",
+      "type": "run",
+      "status": "active",
+      "retentionClass": "audit",
+      "title": "Terminal mastery rework submission",
+      "date": "2026-11-18",
+      "tags": ["run", "rework", "mastery", "cloudkit", "data-safety"],
+      "affectedPaths": ["Vocab/", "VocabIOS/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/records/CL-0035-terminal-mastery-rework-submission.md",
+      "references": ["CL-0034", "CL-0025", "CL-0027"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": []
+    },
+    {
+      "id": "CL-0036",
+      "type": "audit",
+      "status": "completed",
+      "retentionClass": "audit",
+      "title": "Terminal mastery audit approval",
+      "date": "2026-11-18",
+      "tags": ["audit", "approval", "mastery", "cloudkit", "data-safety"],
+      "affectedPaths": ["Vocab/", "VocabIOS/", "VocabTests/", "Docs/ClosedLoop/"],
+      "path": "Docs/ClosedLoop/audits/RUN-20261117-CL0034-audit.md",
+      "references": ["CL-0034", "CL-0035"],
+      "supersedes": [],
+      "supersededBy": null,
+      "retentionUntil": null,
+      "protected": true,
+      "unresolvedLimitations": []
     }
   ]
 }

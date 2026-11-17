@@ -42,6 +42,9 @@ only when its scope applies to the current change.
 | CL-0031 | active | 2026-11-09 | spaced relearning, adaptive Mastered maintenance and same-day Mixed rotation | [Spaced relearning and Mixed rotation](records/CL-0031-spaced-relearning-and-mixed-rotation.md) | retain while test scheduling or Mastered lifecycle exists |
 | CL-0032 | active | 2026-11-13 | two-date Mastered promotion, exam-horizon maintenance and promotion-due Mixed quota | [Exam-horizon Mastery promotion](records/CL-0032-exam-horizon-mastery-promotion.md) | retain while test scheduling or Mastered lifecycle exists |
 | CL-0033 | active | 2026-11-13 | setless vocabulary registration, registration-day grouping and legacy compatibility | [Setless vocabulary registration](records/CL-0033-setless-vocabulary-registration.md) | retain while vocabulary persistence or intake exists |
+| CL-0034 | active | 2026-11-17 | terminal mastery, long-term consolidation, automatic scrub and resurrection prevention | [Terminal mastery and automatic retirement](records/CL-0034-terminal-mastery-retirement.md) | retain while learning lifecycle, deletion, CloudKit or recovery exists |
+| CL-0035 | active | 2026-11-18 | immutable Main evidence for CL-0034 re-audit | [Terminal mastery rework submission](records/CL-0035-terminal-mastery-rework-submission.md) | retain with CL-0034 |
+| CL-0036 | completed | 2026-11-18 | final read-only audit approval for terminal mastery | [Terminal mastery audit approval](audits/RUN-20261117-CL0034-audit.md) | retain with CL-0034 |
 
 ## Load Rules
 
@@ -98,8 +101,8 @@ only when its scope applies to the current change.
   MemoryAid quality-gate work must also load `CL-0021`.
 - Printed source-number restarts, OCR page ordering, OCR layout inference or
   missing-number diagnostics must also load `CL-0029`.
-- Mastery evidence, Mastered exclusion, maintenance revalidation or demotion
-  must also load `CL-0030`, `CL-0031` and `CL-0032`.
+- Mastery evidence, consolidation maintenance, automatic retirement or
+  demotion must also load `CL-0030`, `CL-0031`, `CL-0032` and `CL-0034`.
 - Superseded or archived records are read only when investigating regression,
   migration history or a stated dependency.
 - `index.json` is the machine-readable companion for validation tooling only.
