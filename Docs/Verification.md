@@ -20,10 +20,13 @@
   headword/meaning cards by activation without mutating learning progress.
 - Confirm `failureCheck` remains historical while `activePriority` recovers
   only through two-correct streaks in both directions.
-- Confirm Seoul-day mastery counts, 14-day failure blocking and Mastered
-  removal from active testing.
-- Confirm deletion warning, local identifiable-data removal and aggregate
-  preservation.
+- Confirm two eligible Seoul dates enter `장기정착`, while `암기완료` requires
+  five dates, a 45-day evidence span and a 30-day final interval after the
+  latest failure or SOT revision.
+- Confirm legacy `mastered` values migrate to `장기정착` without deletion.
+- Confirm automatic retirement scrubs local identifying content, removes
+  session references, preserves unlinkable aggregates and emits CloudKit-safe
+  tombstones for every identifying child record.
 - Confirm no learning payload, local SwiftData store, secret material or test
   result bundle is tracked in Git before publishing.
 - Apply `AGENTS.md` and `CL-0025`: the main agent implements changes and a
