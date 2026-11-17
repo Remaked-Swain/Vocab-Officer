@@ -17,6 +17,23 @@ public enum Judgement: String, Codable, Hashable, Sendable {
     case unknown
 }
 
+public enum VocabularyLearningStatus: String, Codable, Hashable, Sendable {
+    case active
+    case consolidating
+    case mastered = "masteredV2"
+
+    public var koreanTitle: String {
+        switch self {
+        case .active:
+            "학습 중"
+        case .consolidating:
+            "장기정착"
+        case .mastered:
+            "암기완료"
+        }
+    }
+}
+
 public struct AcceptedAlias: Identifiable, Codable, Hashable, Sendable {
     public let id: UUID
     public var text: String

@@ -134,6 +134,22 @@ public struct StudyCalendar: Sendable {
         calendar.date(byAdding: .day, value: days, to: startOfDay(for: date))
     }
 
+    public func date(forDayKey dayKey: String) -> Date? {
+        let values = dayKey.split(separator: "-").compactMap { Int($0) }
+        guard values.count == 3 else { return nil }
+        return calendar.date(
+            from: DateComponents(year: values[0], month: values[1], day: values[2])
+        )
+    }
+
+    public func days(from startDate: Date, to endDate: Date) -> Int {
+        calendar.dateComponents(
+            [.day],
+            from: startOfDay(for: startDate),
+            to: startOfDay(for: endDate)
+        ).day ?? 0
+    }
+
     private var calendar: Calendar {
         var calendar = Calendar(identifier: .gregorian)
         calendar.locale = Locale(identifier: "en_US_POSIX")
@@ -149,7 +165,7 @@ public struct ProgressPolicy: Sendable {
 
     public init(
         studyCalendar: StudyCalendar = StudyCalendar(),
-        successDayRequirement: Int = 2,
+        successDayRequirement: Int = 5,
         maximumFailureCheck: Int = 3
     ) {
         precondition(successDayRequirement > 0)
@@ -258,6 +274,56 @@ public struct ProgressPolicy: Sendable {
 public struct MasteryPolicy: Sendable {
     public let studyCalendar: StudyCalendar
     public let successDayRequirement: Int
+    public let minimumEvidenceSpanDays: Int
+    public let minimumFinalIntervalDays: Int
+
+    public init(
+        studyCalendar: StudyCalendar = StudyCalendar(),
+        successDayRequirement: Int = 5,
+        minimumEvidenceSpanDays: Int = 45,
+        minimumFinalIntervalDays: Int = 30
+    ) {
+        precondition(successDayRequirement > 0)
+        precondition(minimumEvidenceSpanDays > 0)
+        precondition(minimumFinalIntervalDays > 0)
+        self.studyCalendar = studyCalendar
+        self.successDayRequirement = successDayRequirement
+        self.minimumEvidenceSpanDays = minimumEvidenceSpanDays
+        self.minimumFinalIntervalDays = minimumFinalIntervalDays
+    }
+
+    public func isSatisfied(
+        verifiedSuccessDays: Set<String>,
+        latestWrongAt: Date?
+    ) -> Bool {
+        let eligibleDays = successDaysAfterLatestFailure(
+            verifiedSuccessDays,
+            latestWrongAt: latestWrongAt
+        ).sorted()
+        guard eligibleDays.count >= successDayRequirement,
+              let firstDay = eligibleDays.first,
+              let finalDay = eligibleDays.last,
+              let previousDay = eligibleDays.dropLast().last,
+              let firstDate = studyCalendar.date(forDayKey: firstDay),
+              let previousDate = studyCalendar.date(forDayKey: previousDay),
+              let finalDate = studyCalendar.date(forDayKey: finalDay) else { return false }
+        return studyCalendar.days(from: firstDate, to: finalDate) >= minimumEvidenceSpanDays
+            && studyCalendar.days(from: previousDate, to: finalDate) >= minimumFinalIntervalDays
+    }
+
+    private func successDaysAfterLatestFailure(
+        _ successDays: Set<String>,
+        latestWrongAt: Date?
+    ) -> Set<String> {
+        guard let latestWrongAt else { return successDays }
+        let latestWrongDay = studyCalendar.dayKey(for: latestWrongAt)
+        return successDays.filter { $0 > latestWrongDay }
+    }
+}
+
+public struct ConsolidationPolicy: Sendable {
+    public let studyCalendar: StudyCalendar
+    public let successDayRequirement: Int
 
     public init(
         studyCalendar: StudyCalendar = StudyCalendar(),
@@ -276,21 +342,20 @@ public struct MasteryPolicy: Sendable {
             return verifiedSuccessDays.count >= successDayRequirement
         }
         let latestWrongDay = studyCalendar.dayKey(for: latestWrongAt)
-        let relearnedDays = verifiedSuccessDays.filter { $0 > latestWrongDay }
-        return relearnedDays.count >= successDayRequirement
+        return verifiedSuccessDays.filter { $0 > latestWrongDay }.count >= successDayRequirement
     }
 }
 
 public struct MasteryPromotionPolicy: Sendable {
     public let studyCalendar: StudyCalendar
-    public let masteryPolicy: MasteryPolicy
+    public let consolidationPolicy: ConsolidationPolicy
 
     public init(
         studyCalendar: StudyCalendar = StudyCalendar(),
-        masteryPolicy: MasteryPolicy = MasteryPolicy()
+        consolidationPolicy: ConsolidationPolicy = ConsolidationPolicy()
     ) {
         self.studyCalendar = studyCalendar
-        self.masteryPolicy = masteryPolicy
+        self.consolidationPolicy = consolidationPolicy
     }
 
     public func isDue(
@@ -302,7 +367,7 @@ public struct MasteryPromotionPolicy: Sendable {
             verifiedSuccessDays,
             latestWrongAt: latestWrongAt
         )
-        guard eligibleDays.count == masteryPolicy.successDayRequirement - 1,
+        guard eligibleDays.count == consolidationPolicy.successDayRequirement - 1,
               let latestSuccessDay = eligibleDays.max() else { return false }
         return latestSuccessDay < studyCalendar.dayKey(for: date)
     }
