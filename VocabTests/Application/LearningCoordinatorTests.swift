@@ -420,7 +420,7 @@ final class LearningCoordinatorTests: XCTestCase {
             context.insert(attempt)
         }
         XCTAssertTrue(coordinator.recomputeReviewState(for: word).isEmpty)
-        XCTAssertEqual(word.statusRaw, "mastered")
+        XCTAssertEqual(word.statusRaw, VocabularyLearningStatus.consolidating.rawValue)
 
         let revisionDate = testDate.addingTimeInterval(86_400 * 3)
         try coordinator.registerWords([
@@ -630,7 +630,7 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(attempt.submittedAnswer, correct.label)
     }
 
-    func testMultipleChoiceEnglishToKoreanOnlyCanReachMasteredAcrossTwoDays() throws {
+    func testMultipleChoiceEnglishToKoreanOnlyReachesConsolidationAcrossTwoDays() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
@@ -659,7 +659,7 @@ final class LearningCoordinatorTests: XCTestCase {
         }
 
         XCTAssertTrue(coordinator.recomputeReviewState(for: word).isEmpty)
-        XCTAssertEqual(word.statusRaw, "mastered")
+        XCTAssertEqual(word.statusRaw, VocabularyLearningStatus.consolidating.rawValue)
         XCTAssertEqual(Set(meaning.successDays).count, 2)
         XCTAssertTrue(word.reviewState?.koToEnSuccessDays.isEmpty == true)
     }
@@ -676,7 +676,7 @@ final class LearningCoordinatorTests: XCTestCase {
             SeoulCalendar.day(for: masteredAt.addingTimeInterval(-86_400)),
             SeoulCalendar.day(for: masteredAt)
         ]
-        word.statusRaw = "mastered"
+        word.learningStatus = .consolidating
         word.reviewState?.lastTestedAt = masteredAt
 
         let generated = try coordinator.generateSession(
@@ -1227,7 +1227,7 @@ final class LearningCoordinatorTests: XCTestCase {
         let session = try coordinator.generateSession(mode: .today, direction: .enToKo, date: testDate).0
         let deletedID = try XCTUnwrap(session.wordIDs.first)
         let word = try XCTUnwrap(context.fetch(FetchDescriptor<WordRecord>()).first { $0.id == deletedID })
-        word.statusRaw = "mastered"
+        word.learningStatus = .mastered
 
         try coordinator.deleteMastered(word)
 
@@ -1235,7 +1235,141 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(try context.fetch(FetchDescriptor<AnonymousAggregateRecord>()).reduce(0) { $0 + $1.deletedMasteredCount }, 1)
     }
 
-    func testDirectWordDeletionTombstonesContentAndRetainsAttemptFact() throws {
+    func testAutomaticMasteryCleanupScrubsIdentityAndCreatesResurrectionTombstones() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        let word = try coordinator.registerWords([
+            WordDraft(term: "retire-me", meanings: "정리할 뜻")
+        ], date: testDate)[0]
+        let meaning = try XCTUnwrap(word.activeMeanings.first)
+        meaning.successDays = [
+            "2026-06-01", "2026-06-08", "2026-06-22", "2026-07-22", "2026-08-21"
+        ]
+        word.learningStatus = .mastered
+        let session = TestSessionRecord(
+            directionRaw: PracticeDirection.enToKo.rawValue,
+            modeRaw: SessionMode.mixed.rawValue,
+            seoulDay: "2026-08-21",
+            wordIDs: [word.id],
+            wasReduced: true,
+            startedAt: testDate
+        )
+        let dailySet = DailySetRecord(seoulDay: "2026-05-25", createdAt: testDate)
+        let setItem = DailySetItemRecord(orderIndex: 0, entryKind: "legacy", wordID: word.id)
+        setItem.set = dailySet
+        dailySet.appendItem(setItem)
+        let attempt = AttemptRecord(
+            directionRaw: PracticeDirection.enToKo.rawValue,
+            modeRaw: SessionMode.mixed.rawValue,
+            sessionID: session.id,
+            questionIndex: 0,
+            seoulDay: "2026-08-21",
+            prompt: word.term,
+            submittedAnswer: meaning.text,
+            automaticJudgementRaw: FinalResult.correct.rawValue,
+            finalJudgementRaw: FinalResult.correct.rawValue,
+            matchedMeaningID: meaning.id,
+            answeredAt: testDate,
+            questionFormatRaw: QuestionFormat.multipleChoice.rawValue
+        )
+        attempt.word = word
+        word.appendAttempt(attempt)
+        let memoryAid = MemoryAidCacheRecord(
+            wordID: word.id,
+            modelRaw: "test-model",
+            promptVersion: 1,
+            contentSignature: "signature",
+            markdown: "identifying content",
+            generatedAt: testDate
+        )
+        context.insert(session)
+        context.insert(dailySet)
+        context.insert(setItem)
+        context.insert(attempt)
+        context.insert(memoryAid)
+        try context.save()
+
+        let result = try coordinator.normalizeAndRetireMasteredWords(
+            now: ISO8601DateFormatter().date(from: "2026-09-01T00:00:00Z")!
+        )
+
+        XCTAssertEqual(result, .init(normalizedLegacyCount: 0, retiredCount: 1))
+        XCTAssertNotNil(word.deletedAt)
+        XCTAssertTrue(word.term.isEmpty)
+        XCTAssertTrue(meaning.text.isEmpty)
+        XCTAssertTrue(session.wordIDs.isEmpty)
+        XCTAssertNotNil(attempt.deletedAt)
+        XCTAssertTrue(attempt.seoulDay.isEmpty)
+        XCTAssertTrue(attempt.modeRaw.isEmpty)
+        XCTAssertTrue(attempt.prompt.isEmpty)
+        XCTAssertTrue(attempt.submittedAnswer.isEmpty)
+        XCTAssertNotNil(memoryAid.deletedAt)
+        XCTAssertTrue(memoryAid.markdown.isEmpty)
+        let tombstoneTypes = Set(try context.fetch(FetchDescriptor<RecordTombstone>()).map(\.recordType))
+        XCTAssertTrue(["WordRecord", "MeaningRecord", "DailySetItemRecord", "AttemptRecord", "ReviewStateRecord", "MemoryAidCacheRecord"].allSatisfy(tombstoneTypes.contains))
+        XCTAssertEqual(try context.fetch(FetchDescriptor<AnonymousAggregateRecord>()).reduce(0) { $0 + $1.deletedMasteredCount }, 1)
+
+        context.delete(session)
+        try context.save()
+        let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: context)
+        let restored = try makeContext()
+        try VocabSyncSnapshotService.replaceLocalStore(
+            with: snapshot,
+            context: restored,
+            syncMode: .localOnly
+        )
+        let restoredAttempt = try XCTUnwrap(restored.fetch(FetchDescriptor<AttemptRecord>()).first)
+        XCTAssertNotNil(restoredAttempt.deletedAt)
+        XCTAssertTrue(restoredAttempt.prompt.isEmpty)
+    }
+
+    func testLegacyMasteredValueMigratesToConsolidationWithoutDeletion() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        let word = try coordinator.registerWords([
+            WordDraft(term: "legacy", meanings: "기존 값")
+        ], date: testDate)[0]
+        word.statusRaw = "mastered"
+        word.activeMeanings[0].successDays = [
+            "2026-06-01", "2026-06-08", "2026-06-22", "2026-07-22", "2026-08-21"
+        ]
+        try context.save()
+
+        let result = try coordinator.normalizeAndRetireMasteredWords(
+            now: ISO8601DateFormatter().date(from: "2026-09-01T00:00:00Z")!
+        )
+
+        XCTAssertEqual(result, .init(normalizedLegacyCount: 1, retiredCount: 0))
+        XCTAssertEqual(word.learningStatus, .consolidating)
+        XCTAssertNil(word.deletedAt)
+        XCTAssertEqual(word.term, "legacy")
+    }
+
+    func testCleanupScrubsDetachedPreviouslyTombstonedMeaning() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        let deletedAt = ISO8601DateFormatter().date(from: "2026-08-01T00:00:00Z")!
+        let detached = MeaningRecord(text: "과거 식별 뜻", aliases: ["과거 별칭"])
+        detached.deletedAt = deletedAt
+        context.insert(detached)
+        context.insert(RecordTombstone(
+            recordID: detached.id,
+            recordType: "MeaningRecord",
+            deletedAt: deletedAt
+        ))
+        try context.save()
+
+        _ = try coordinator.normalizeAndRetireMasteredWords(
+            now: ISO8601DateFormatter().date(from: "2026-09-01T00:00:00Z")!
+        )
+
+        XCTAssertTrue(detached.text.isEmpty)
+        XCTAssertTrue(detached.normalizedText.isEmpty)
+        XCTAssertTrue(detached.aliases.isEmpty)
+        XCTAssertGreaterThan(detached.updatedAt, deletedAt)
+    }
+
+    func testDirectWordDeletionScrubsIdentifyingLearningFacts() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
         try coordinator.saveDailySet(drafts(count: 100), date: testDate)
@@ -1247,8 +1381,11 @@ final class LearningCoordinatorTests: XCTestCase {
 
         XCTAssertNotNil(question.word.deletedAt)
         XCTAssertTrue(try context.fetch(FetchDescriptor<DailySetItemRecord>()).contains { $0.wordID == question.word.id && $0.deletedAt != nil })
-        XCTAssertTrue(try context.fetch(FetchDescriptor<TestSessionRecord>()).flatMap(\.wordIDs).contains(question.word.id))
-        XCTAssertEqual(try context.fetch(FetchDescriptor<AttemptRecord>()).count, 1)
+        XCTAssertFalse(try context.fetch(FetchDescriptor<TestSessionRecord>()).flatMap(\.wordIDs).contains(question.word.id))
+        let attempt = try XCTUnwrap(context.fetch(FetchDescriptor<AttemptRecord>()).first)
+        XCTAssertNotNil(attempt.deletedAt)
+        XCTAssertTrue(attempt.prompt.isEmpty)
+        XCTAssertTrue(attempt.submittedAnswer.isEmpty)
     }
 
     func testDiscardDailySetDeletesOnlyWordsUniqueToThatSet() throws {
@@ -1494,7 +1631,9 @@ final class LearningCoordinatorTests: XCTestCase {
             TestSessionRecord.self,
             AttemptRecord.self,
             ReviewStateRecord.self,
-            AnonymousAggregateRecord.self
+            AnonymousAggregateRecord.self,
+            MemoryAidCacheRecord.self,
+            RecordTombstone.self
         ])
         let configuration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true, cloudKitDatabase: .none)
         return ModelContext(try ModelContainer(for: schema, configurations: [configuration]))

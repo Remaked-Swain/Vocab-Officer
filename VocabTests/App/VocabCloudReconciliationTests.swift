@@ -76,6 +76,50 @@ final class VocabCloudReconciliationTests: XCTestCase {
         XCTAssertTrue(changes.changedTombstoneIDs.isEmpty)
     }
 
+    func testIncrementalImportReappliesUnchangedTombstoneToResurrectedDetachedMeaning() throws {
+        let context = try makeContext()
+        let deletedAt = Date(timeIntervalSince1970: 100)
+        let meaning = MeaningRecord(text: "")
+        meaning.deletedAt = deletedAt
+        let tombstone = RecordTombstone(
+            recordID: meaning.id,
+            recordType: "MeaningRecord",
+            deletedAt: deletedAt
+        )
+        let metadata = readyMetadata()
+        metadata.lastReconciledAt = .now
+        context.insert(meaning)
+        context.insert(tombstone)
+        context.insert(metadata)
+        try context.save()
+        let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+
+        meaning.text = "재등장한 식별 뜻"
+        meaning.normalizedText = "재등장한 식별 뜻"
+        meaning.aliases = ["재등장 별칭"]
+        meaning.updatedAt = deletedAt.addingTimeInterval(60)
+        try context.save()
+
+        let changes = try VocabImportedChangeDiscovery.discover(
+            context: context,
+            previous: baseline,
+            changedRecords: [try XCTUnwrap(VocabChangedRecordID(meaning))]
+        )
+        XCTAssertEqual(changes.changedTombstoneIDs, Set([tombstone.id]))
+
+        try VocabCloudReconciler.reconcileAffected(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            wordIDs: changes.affectedWordIDs,
+            tombstoneIDs: changes.changedTombstoneIDs
+        )
+
+        XCTAssertTrue(meaning.text.isEmpty)
+        XCTAssertTrue(meaning.normalizedText.isEmpty)
+        XCTAssertTrue(meaning.aliases.isEmpty)
+        XCTAssertEqual(meaning.deletedAt, deletedAt)
+    }
+
     func testIncrementalAttemptSignatureCoversEveryCanonicalEqualityField() throws {
         enum Field: CaseIterable {
             case direction, mode, sessionID, questionFormat, questionIndex, seoulDay, prompt, submittedAnswer
@@ -1075,6 +1119,146 @@ final class VocabCloudReconciliationTests: XCTestCase {
         )
 
         XCTAssertEqual(try context.fetchCount(FetchDescriptor<AttemptRecord>()), 45)
+    }
+
+    func testReconcileMigratesLegacyMasteredWithoutReplayingOldEvidenceToTerminal() throws {
+        let context = try makeContext()
+        let word = WordRecord(
+            term: "legacy-cloud",
+            createdAt: ISO8601DateFormatter().date(from: "2026-01-01T00:00:00Z")!
+        )
+        word.statusRaw = "mastered"
+        let meaning = MeaningRecord(text: "기존 동기화")
+        meaning.word = word
+        word.appendMeaning(meaning)
+        let state = ReviewStateRecord()
+        state.word = word
+        word.reviewState = state
+        context.insert(word)
+        context.insert(meaning)
+        context.insert(state)
+        let dates = [
+            "2026-01-02T00:00:00Z",
+            "2026-01-09T00:00:00Z",
+            "2026-01-23T00:00:00Z",
+            "2026-02-22T00:00:00Z",
+            "2026-03-24T00:00:00Z"
+        ]
+        for (index, timestamp) in dates.enumerated() {
+            let attempt = AttemptRecord(
+                directionRaw: PracticeDirection.enToKo.rawValue,
+                modeRaw: SessionMode.mixed.rawValue,
+                sessionID: UUID(),
+                questionIndex: index,
+                seoulDay: String(timestamp.prefix(10)),
+                prompt: word.term,
+                submittedAnswer: meaning.text,
+                automaticJudgementRaw: FinalResult.correct.rawValue,
+                finalJudgementRaw: FinalResult.correct.rawValue,
+                matchedMeaningID: meaning.id,
+                answeredAt: ISO8601DateFormatter().date(from: timestamp)!,
+                questionFormatRaw: QuestionFormat.multipleChoice.rawValue
+            )
+            attempt.word = word
+            word.appendAttempt(attempt)
+            context.insert(attempt)
+        }
+        let metadata = readyMetadata()
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+
+        _ = try VocabCloudReconciler.reconcile(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            now: ISO8601DateFormatter().date(from: "2026-04-01T00:00:00Z")!
+        )
+        let cleanup = try LearningCoordinator(
+            context: context,
+            syncMode: .localOnly,
+            mutationAuthority: .allowed
+        ).normalizeAndRetireMasteredWords(
+            now: ISO8601DateFormatter().date(from: "2026-04-02T00:00:00Z")!
+        )
+
+        XCTAssertEqual(word.learningStatus, .consolidating)
+        XCTAssertTrue(word.statusRaw.hasPrefix("consolidatingLegacy@"))
+        XCTAssertNil(word.deletedAt)
+        XCTAssertEqual(cleanup.retiredCount, 0)
+
+        let postMigrationDates = [
+            "2026-04-02T00:00:00Z",
+            "2026-04-10T00:00:00Z",
+            "2026-04-17T00:00:00Z",
+            "2026-05-17T00:00:00Z",
+            "2026-06-16T00:00:00Z"
+        ]
+        for (offset, timestamp) in postMigrationDates.enumerated() {
+            let attempt = makeAttempt(
+                word: word,
+                result: .correct,
+                answeredAt: ISO8601DateFormatter().date(from: timestamp)!,
+                sessionID: UUID()
+            )
+            attempt.questionIndex = dates.count + offset
+            attempt.matchedMeaningID = meaning.id
+            word.appendAttempt(attempt)
+            context.insert(attempt)
+            try context.save()
+            _ = try VocabCloudReconciler.reconcile(
+                context: context,
+                syncMode: .cloudKitPrivate,
+                now: attempt.answeredAt
+            )
+            if offset < 4 {
+                XCTAssertTrue(word.statusRaw.hasPrefix("consolidatingLegacy@"))
+            }
+        }
+        XCTAssertEqual(word.learningStatus, .mastered)
+        XCTAssertEqual(word.statusRaw, VocabularyLearningStatus.mastered.rawValue)
+    }
+
+    func testReconcileRemovesStaleSessionReferenceForRetiredWord() throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "retired-reference")
+        let session = TestSessionRecord(
+            directionRaw: PracticeDirection.enToKo.rawValue,
+            modeRaw: SessionMode.mixed.rawValue,
+            seoulDay: "2026-11-17",
+            wordIDs: [word.id],
+            wasReduced: true
+        )
+        let deletedAt = ISO8601DateFormatter().date(from: "2026-11-17T00:00:00Z")!
+        context.insert(word)
+        context.insert(session)
+        context.insert(RecordTombstone(
+            recordID: word.id,
+            recordType: "WordRecord",
+            deletedAt: deletedAt
+        ))
+        let metadata = readyMetadata()
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+
+        _ = try VocabCloudReconciler.reconcile(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            now: deletedAt
+        )
+        XCTAssertTrue(session.wordIDs.isEmpty)
+
+        session.wordIDs = [word.id]
+        try context.save()
+        _ = try VocabCloudReconciler.reconcileAffected(
+            context: context,
+            syncMode: .cloudKitPrivate,
+            wordIDs: [],
+            tombstoneIDs: [],
+            now: deletedAt.addingTimeInterval(60)
+        )
+
+        XCTAssertTrue(session.wordIDs.isEmpty)
     }
 
     private func readyMetadata() -> CloudBootstrapRecord {

@@ -112,7 +112,7 @@ final class StudyPoliciesTests: XCTestCase {
         XCTAssertEqual(state.coreMeaningSuccessDays[word.coreMeanings[0].id], ["2026-05-25"])
     }
 
-    func testMasteryAcceptsEnglishToKoreanOnlySuccessOnTwoDistinctSeoulDays() {
+    func testConsolidationAcceptsOneDirectionAcrossTwoDistinctSeoulDays() {
         let word = makeWord()
         let attempts = [
             attempt(word, .enToKo, .correct, "2026-05-22T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
@@ -120,67 +120,110 @@ final class StudyPoliciesTests: XCTestCase {
         ]
 
         let state = policy.state(for: word, attempts: attempts)
+        let successDays = state.coreMeaningSuccessDays.values.reduce(into: Set<String>()) {
+            $0.formUnion($1)
+        }
 
-        XCTAssertTrue(state.isMastered)
-        XCTAssertEqual(seoul.dayKey(for: state.masteredOn!), "2026-05-23")
+        XCTAssertFalse(state.isMastered)
+        XCTAssertTrue(ConsolidationPolicy().isSatisfied(
+            verifiedSuccessDays: successDays,
+            latestWrongAt: state.latestWrongAt
+        ))
         XCTAssertEqual(state.coreMeaningSuccessDays[word.coreMeanings[0].id]?.count, 2)
         XCTAssertTrue(state.koToEnSuccessDays.isEmpty)
     }
 
-    func testMasteryAcceptsKoreanToEnglishOnlySuccessOnTwoDistinctSeoulDays() {
+    func testMasteryAcceptsEitherDirectionWhenFiveDatesMeetSpacingRules() {
         let word = makeWord()
-        let attempts = [
-            attempt(word, .koToEn, .correct, "2026-05-22T00:00:00Z"),
-            attempt(word, .koToEn, .correct, "2026-05-23T00:00:00Z")
+        let successDates = [
+            "2026-01-01T00:00:00Z",
+            "2026-01-08T00:00:00Z",
+            "2026-01-22T00:00:00Z",
+            "2026-02-21T00:00:00Z",
+            "2026-03-23T00:00:00Z"
         ]
+        let attempts = successDates.map { attempt(word, .koToEn, .correct, $0) }
 
         let state = policy.state(for: word, attempts: attempts)
 
         XCTAssertTrue(state.isMastered)
-        XCTAssertEqual(seoul.dayKey(for: state.masteredOn!), "2026-05-23")
+        XCTAssertEqual(seoul.dayKey(for: state.masteredOn!), "2026-03-23")
         XCTAssertTrue(state.coreMeaningSuccessDays.isEmpty)
-        XCTAssertEqual(state.koToEnSuccessDays.count, 2)
+        XCTAssertEqual(state.koToEnSuccessDays.count, 5)
     }
 
-    func testMasteryRequiresTwoNewSuccessDaysAfterLatestFailure() {
+    func testMasteryRequiresFiveSpacedSuccessDaysAfterLatestFailure() {
         let word = makeWord()
         let historicalSuccesses = [
-            attempt(word, .enToKo, .correct, "2026-05-22T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .enToKo, .correct, "2026-05-23T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .enToKo, .correct, "2026-05-24T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
-            attempt(word, .enToKo, .incorrect, "2026-05-25T00:00:00Z")
+            attempt(word, .enToKo, .correct, "2026-01-01T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
+            attempt(word, .enToKo, .correct, "2026-01-08T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
+            attempt(word, .enToKo, .correct, "2026-01-22T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id),
+            attempt(word, .enToKo, .incorrect, "2026-02-01T00:00:00Z")
         ]
-        let firstRelearningDay = attempt(
-            word,
-            .enToKo,
-            .correct,
-            "2026-05-26T00:00:00Z",
-            matchedMeaningID: word.coreMeanings[0].id
-        )
-        let secondRelearningDay = attempt(
-            word,
-            .enToKo,
-            .correct,
-            "2026-05-27T00:00:00Z",
-            matchedMeaningID: word.coreMeanings[0].id
-        )
+        let relearningDates = [
+            "2026-02-02T00:00:00Z",
+            "2026-02-09T00:00:00Z",
+            "2026-02-23T00:00:00Z",
+            "2026-03-25T00:00:00Z",
+            "2026-04-24T00:00:00Z"
+        ]
+        let relearningAttempts = relearningDates.map {
+            attempt(word, .enToKo, .correct, $0, matchedMeaningID: word.coreMeanings[0].id)
+        }
 
         let recovering = policy.state(
             for: word,
-            attempts: historicalSuccesses + [firstRelearningDay],
-            asOf: date("2026-05-26T01:00:00Z")
+            attempts: historicalSuccesses + Array(relearningAttempts.dropLast()),
+            asOf: date("2026-03-25T01:00:00Z")
         )
         let relearned = policy.state(
             for: word,
-            attempts: historicalSuccesses + [firstRelearningDay, secondRelearningDay],
-            asOf: date("2026-05-27T01:00:00Z")
+            attempts: historicalSuccesses + relearningAttempts,
+            asOf: date("2026-04-24T01:00:00Z")
         )
 
         XCTAssertFalse(recovering.isMastered)
         XCTAssertNil(recovering.masteredOn)
         XCTAssertTrue(relearned.isMastered)
-        XCTAssertEqual(seoul.dayKey(for: relearned.masteredOn!), "2026-05-27")
+        XCTAssertEqual(seoul.dayKey(for: relearned.masteredOn!), "2026-04-24")
         XCTAssertEqual(relearned.failureCheck, 1)
+    }
+
+    func testMasteryRejectsFiveDatesWhenFinalIntervalIsTooShort() {
+        let successDays: Set<String> = [
+            "2026-01-01", "2026-01-15", "2026-02-01", "2026-02-15", "2026-03-01"
+        ]
+
+        XCTAssertFalse(MasteryPolicy().isSatisfied(
+            verifiedSuccessDays: successDays,
+            latestWrongAt: nil
+        ))
+    }
+
+    func testMasteryAcceptsExactEvidenceBoundaries() {
+        let successDays: Set<String> = [
+            "2026-01-01", "2026-01-04", "2026-01-08", "2026-01-16", "2026-02-15"
+        ]
+
+        XCTAssertTrue(MasteryPolicy().isSatisfied(
+            verifiedSuccessDays: successDays,
+            latestWrongAt: nil
+        ))
+    }
+
+    func testMasteryRejectsFortyFourDaySpanAndTwentyNineDayFinalInterval() {
+        XCTAssertFalse(MasteryPolicy().isSatisfied(
+            verifiedSuccessDays: [
+                "2026-01-01", "2026-01-04", "2026-01-08", "2026-01-16", "2026-02-14"
+            ],
+            latestWrongAt: nil
+        ))
+        XCTAssertFalse(MasteryPolicy().isSatisfied(
+            verifiedSuccessDays: [
+                "2026-01-01", "2026-01-04", "2026-01-08", "2026-01-17", "2026-02-15"
+            ],
+            latestWrongAt: nil
+        ))
     }
 
     func testPromotionBecomesDueOnDayAfterFirstVerifiedSuccess() {
@@ -306,19 +349,24 @@ final class StudyPoliciesTests: XCTestCase {
         XCTAssertEqual(selected.filter(Set(broad).contains).count, 16)
     }
 
-    func testMasteredClassificationKeepsHistoricalPriority() {
+    func testTerminalMasteryKeepsHistoricalPriority() {
         let word = makeWord(createdAt: date("2026-05-01T00:00:00Z"))
         let wrongAttempts = (0..<3).map { index in
             attempt(word, .enToKo, .incorrect, "2026-05-01T00:0\(index):00Z")
         }
-        let successAttempts = (0..<3).map { index in
-            let day = 2 + index
-            return attempt(word, .enToKo, .correct, "2026-05-0\(day)T00:00:00Z", matchedMeaningID: word.coreMeanings[0].id)
+        let successAttempts = [
+            "2026-05-02T00:00:00Z",
+            "2026-05-09T00:00:00Z",
+            "2026-05-23T00:00:00Z",
+            "2026-06-22T00:00:00Z",
+            "2026-07-22T00:00:00Z"
+        ].map { timestamp in
+            attempt(word, .enToKo, .correct, timestamp, matchedMeaningID: word.coreMeanings[0].id)
         }
         let progress = policy.progress(
             for: word,
             attempts: wrongAttempts + successAttempts,
-            asOf: date("2026-05-25T00:00:00Z")
+            asOf: date("2026-07-22T00:00:00Z")
         )
 
         XCTAssertTrue(progress.reviewState.isMastered)
