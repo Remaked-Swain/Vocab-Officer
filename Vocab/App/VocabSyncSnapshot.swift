@@ -1171,17 +1171,17 @@ enum VocabStoreMigrationError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .verificationMismatch:
-            "mirrored store 이관 후 검증값이 원본과 일치하지 않습니다. 기존 로컬 단어장은 유지됩니다."
+            "iCloud 전환을 위해 복사한 단어장이 원본과 일치하지 않습니다. 기존 Mac 단어장은 유지됩니다."
         case .mirroredStoreAlreadyContainsData:
-            "이미 iCloud mirrored 저장소에 단어장 데이터가 있어 자동 이관을 중단했습니다. 기존 iCloud 데이터 삭제를 막기 위한 보호 장치입니다."
+            "이미 iCloud에 단어장 데이터가 있어 자동 전환을 중단했습니다. 기존 iCloud 데이터 손실을 막기 위한 보호 장치입니다."
         case .bootstrapAlreadyCompleted:
-            "iCloud mirrored 저장소의 bootstrap이 이미 완료되어 Mac 로컬 데이터를 다시 seed하지 않았습니다."
+            "iCloud 최초 동기화가 이미 완료되어 Mac 데이터를 다시 업로드하지 않았습니다."
         case .bootstrapUnsupportedOnIOS:
-            "iPhone에서는 mirrored 저장소 bootstrap seed를 실행할 수 없습니다."
+            "iPhone에서는 Mac의 기존 단어장을 최초 업로드할 수 없습니다."
         case .bootstrapClaimDenied(let reason):
-            "iCloud bootstrap claim이 승인되지 않아 seed를 중단했습니다: \(reason.rawValue)"
+            "iCloud 최초 동기화가 승인되지 않아 업로드를 중단했습니다. \(reason.userFacingReason)"
         case .bootstrapClaimMismatch:
-            "iCloud bootstrap claim이 현재 snapshot과 일치하지 않아 seed를 중단했습니다."
+            "iCloud 최초 동기화 정보가 현재 단어장과 일치하지 않아 업로드를 중단했습니다."
         }
     }
 }

@@ -4,6 +4,19 @@ import CoreData
 import SwiftData
 import SwiftUI
 
+private extension VocabHydrationState {
+    var connectionTitle: String {
+        switch self {
+        case .localOnly: "이 Mac에 저장됨"
+        case .awaitingBootstrapMetadata: "최초 동기화 정보 대기 중"
+        case .hydrating: "iCloud 데이터 받는 중"
+        case .reconciling: "데이터 검증 중"
+        case .ready: "사용 가능"
+        case .failed: "확인 필요"
+        }
+    }
+}
+
 enum NavigationItem: String, CaseIterable, Identifiable {
     case intake = "오늘 입력"
     case test = "테스트"
@@ -76,7 +89,7 @@ struct RootView: View {
                 ContentUnavailableView(
                     "iCloud 전환 복구 중",
                     systemImage: "icloud.and.arrow.up",
-                    description: Text("검증된 기존 bootstrap 작업을 중단 지점부터 재개하고 있습니다. 단어장을 안전하게 유지하기 위해 완료 전에는 편집할 수 없습니다.")
+                    description: Text("검증된 기존 iCloud 전환을 중단 지점부터 재개하고 있습니다. 단어장을 안전하게 유지하기 위해 완료 전에는 편집할 수 없습니다.")
                 )
             } else if !localContentIsUsable && hydrationState != .localOnly && hydrationState != .ready {
                 ContentUnavailableView(
@@ -440,7 +453,7 @@ struct RootView: View {
     }
 
     private var hydrationDescription: String {
-        let base = "현재 상태: \(hydrationState.rawValue). metadata와 예상 레코드가 모두 도착하기 전에는 학습 데이터를 변경하지 않습니다."
+        let base = "현재 상태: \(hydrationState.connectionTitle). 필요한 iCloud 데이터가 모두 도착하기 전에는 학습 데이터를 변경하지 않습니다."
         guard let hydrationMessage, !hydrationMessage.isEmpty else { return base }
         return base + "\n\n" + hydrationMessage
     }
@@ -506,7 +519,7 @@ struct SettingsView: View {
     @State private var syncMessageIsError = false
     @State private var hydrationState: VocabHydrationState = .localOnly
     @State private var hydrationMessage: String?
-    @State private var recoveryReplicaDescription = "검증된 복구 replica가 아직 없습니다."
+    @State private var recoveryReplicaDescription = "검증된 복구 사본이 아직 없습니다."
     @State private var serverClaimStatus: VocabBootstrapServerClaimStatus = .unavailable("아직 확인하지 않았습니다.")
     @AppStorage("vocabBootstrapAutoRecoveryLastError") private var bootstrapAutoRecoveryLastError = ""
 
@@ -523,9 +536,8 @@ struct SettingsView: View {
 
             Section("iPhone / iCloud 동기화") {
                 LabeledContent("현재 저장 방식", value: VocabSyncMode.current(allowsCloudKit: true).displayName)
-                LabeledContent("CloudKit 컨테이너", value: VocabSyncMode.cloudKitContainerIdentifier)
-                LabeledContent("Hydration", value: hydrationState.rawValue)
-                LabeledContent("Mac 복구 replica", value: recoveryReplicaDescription)
+                LabeledContent("데이터 준비", value: hydrationState.connectionTitle)
+                LabeledContent("Mac 복구 사본", value: recoveryReplicaDescription)
                 claimStatusView
                 if !bootstrapAutoRecoveryLastError.isEmpty {
                     LabeledContent("마지막 자동 복구 진단") {
@@ -539,7 +551,7 @@ struct SettingsView: View {
                         .foregroundStyle(hydrationState == .failed ? .red : .secondary)
                 }
                 FeedbackPanel(items: cloudKitFeedbackItems)
-                Label("mirrored 모드에서는 snapshot batch 자동 동기화를 실행하지 않습니다.", systemImage: "checkmark.shield")
+                Label("일상 동기화와 수동 복구 사본은 서로 분리되어 안전하게 관리됩니다.", systemImage: "checkmark.shield")
                     .foregroundStyle(.secondary)
                 ViewThatFits(in: .horizontal) {
                     HStack {
@@ -558,7 +570,7 @@ struct SettingsView: View {
                     if isUploadingSnapshot {
                         Label("업로드 중", systemImage: "icloud.and.arrow.up")
                     } else {
-                        Label("수동 복구 snapshot 업로드", systemImage: "icloud.and.arrow.up")
+                        Label("수동 복구 사본 업로드", systemImage: "icloud.and.arrow.up")
                     }
                 }
                 .buttonStyle(.borderedProminent)
@@ -571,9 +583,9 @@ struct SettingsView: View {
                 Divider()
 
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Per-record CloudKit mirroring")
+                    Text("iCloud 자동 동기화")
                         .font(.headline)
-                    Text("현재 로컬 단어장을 별도 mirrored store로 복사 검증한 뒤, 다음 실행부터 SwiftData CloudKit mirroring 저장소를 사용합니다. 기존 `Vocab.store`는 삭제하지 않으며, mirrored store에 기존 데이터가 있으면 삭제 전파를 막기 위해 전환을 중단합니다.")
+                    Text("현재 Mac 단어장을 별도 공간에 복사해 검증한 뒤, 다음 실행부터 iCloud 자동 동기화를 사용합니다. 기존 Mac 단어장은 삭제하지 않으며, iCloud에 기존 데이터가 있으면 손실을 막기 위해 전환을 중단합니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     ViewThatFits(in: .horizontal) {
@@ -581,7 +593,7 @@ struct SettingsView: View {
                         VStack(alignment: .leading) { mirroringButton; localModeButton }
                     }
                     if isMigratingToMirroredStore {
-                        ProgressView("mirrored store 이관 후 CloudKit export 성공을 확인하는 중입니다. 완료될 때까지 Mac 앱을 종료하지 마세요.")
+                        ProgressView("Mac 단어장 업로드를 확인하는 중입니다. 완료될 때까지 Mac 앱을 종료하지 마세요.")
                     }
                 }
 
@@ -591,13 +603,9 @@ struct SettingsView: View {
                         .font(.callout)
                 }
 
-                Text("snapshot은 자동 동기화에 사용하지 않으며, local 모드에서 운영자가 명시적으로 실행하는 복구 사본으로만 남겨 둡니다.")
+                Text("복구 사본은 자동 동기화에 섞이지 않으며, 사용자가 직접 실행하는 복구 작업에만 사용됩니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                Text(localStoreDescription)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .textSelection(.enabled)
             }
 
             Section("암기 도움 API") {
@@ -662,19 +670,19 @@ struct SettingsView: View {
             }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("업로드 전에 현재 로컬 저장소 체크포인트를 생성합니다. 이 snapshot은 자동으로 적용되지 않는 수동 복구 사본입니다.")
+            Text("업로드 전에 현재 Mac 단어장의 복구 지점을 만듭니다. 이 사본은 자동으로 적용되지 않습니다.")
         }
         .confirmationDialog(
-            "per-record iCloud mirrored store로 전환할까요?",
+            "iCloud 자동 동기화로 전환할까요?",
             isPresented: $showMirroringConfirmation,
             titleVisibility: .visible
         ) {
-            Button("체크포인트 생성 후 mirrored store 준비") {
+            Button("복구 지점 생성 후 전환 준비") {
                 Task { await prepareAndMigrateToMirroredStore() }
             }
             Button("취소", role: .cancel) {}
         } message: {
-            Text("기존 로컬 Vocab.store는 삭제하지 않습니다. mirrored store가 비어 있고 이관 검증이 성공한 경우에만 다음 앱 실행부터 적용됩니다.")
+            Text("기존 Mac 단어장은 삭제하지 않습니다. iCloud 저장 공간이 비어 있고 복사 검증이 성공한 경우에만 다음 앱 실행부터 적용됩니다.")
         }
     }
 
@@ -682,7 +690,7 @@ struct SettingsView: View {
     private var claimStatusView: some View {
         let presentation = VocabBootstrapClaimSettingsPresentation(status: serverClaimStatus)
         VStack(alignment: .leading, spacing: 4) {
-            LabeledContent("서버 bootstrap claim", value: presentation.summary)
+            LabeledContent("Mac 최초 동기화", value: presentation.summary)
             if let details = presentation.details {
                 Text(details)
                     .font(.caption.monospaced())
@@ -703,7 +711,7 @@ struct SettingsView: View {
     private var mirroringButton: some View {
         Button { showMirroringConfirmation = true } label: {
             Label(
-                isMigratingToMirroredStore ? "전환 준비 중" : "per-record iCloud 저장소로 전환 준비",
+                isMigratingToMirroredStore ? "전환 준비 중" : "iCloud 자동 동기화로 전환",
                 systemImage: isMigratingToMirroredStore ? "icloud.and.arrow.up" : "point.3.connected.trianglepath.dotted"
             )
         }
@@ -714,7 +722,7 @@ struct SettingsView: View {
     private var localModeButton: some View {
         Button("로컬 저장 모드로 되돌리기") {
             UserDefaults.standard.set(VocabSyncMode.localOnly.rawValue, forKey: VocabSyncMode.userDefaultsKey)
-            syncMessage = "다음 실행부터 기존 로컬 저장소를 사용합니다. mirrored store는 삭제하지 않았습니다."
+            syncMessage = "다음 실행부터 기존 Mac 단어장을 사용합니다. iCloud 데이터는 삭제하지 않았습니다."
             syncMessageIsError = false
         }
         .disabled(isMigratingToMirroredStore)
@@ -801,12 +809,12 @@ struct SettingsView: View {
             let root = try VocabRecoveryReplicaManifestStore.rootURL()
             guard let manifest = try VocabRecoveryReplicaManifestStore.load(root: root),
                   let generation = manifest.generations.first(where: { $0.id == manifest.currentGenerationID }) else {
-                recoveryReplicaDescription = "검증된 복구 replica가 아직 없습니다."
+                recoveryReplicaDescription = "검증된 복구 사본이 아직 없습니다."
                 return
             }
             recoveryReplicaDescription = "\(generation.seoulDay), \(generation.counts.words)단어, 최근 3세대 보존"
         } catch {
-            recoveryReplicaDescription = "복구 replica 상태를 읽지 못했습니다."
+            recoveryReplicaDescription = "복구 사본 상태를 읽지 못했습니다."
         }
     }
 
@@ -825,8 +833,8 @@ struct SettingsView: View {
             let result = try await VocabEmergencyRecoveryService()
                 .uploadExplicitRecoverySnapshot(context: modelContext)
             syncMessage = result.disposition == .unchanged
-                ? "서버 복구 snapshot과 canonical fingerprint가 같습니다. 변경 없음. asset 업로드를 건너뛰었습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
-                : "\(result.wordCount)개 단어와 호환 메타데이터를 iCloud에 업로드했습니다. 체크포인트: \(checkpoint.directory.lastPathComponent)"
+                ? "iCloud의 복구 사본이 현재 단어장과 같습니다. 다시 업로드하지 않았습니다. 복구 지점: \(checkpoint.directory.lastPathComponent)"
+                : "\(result.wordCount)개 단어를 iCloud 복구 사본에 업로드했습니다. 복구 지점: \(checkpoint.directory.lastPathComponent)"
         } catch {
             syncMessage = userFacingSyncError(error)
             syncMessageIsError = true
@@ -909,13 +917,6 @@ struct SettingsView: View {
         }
     }
 
-    private var localStoreDescription: String {
-        do {
-            return "로컬 저장소: \(try VocabModelContainerFactory.storeURL().path)"
-        } catch {
-            return "로컬 저장소 경로를 확인하지 못했습니다."
-        }
-    }
 }
 
 struct VocabBootstrapClaimSettingsPresentation: Equatable {
@@ -925,18 +926,18 @@ struct VocabBootstrapClaimSettingsPresentation: Equatable {
     init(status: VocabBootstrapServerClaimStatus) {
         switch status {
         case .missing:
-            summary = "서버 claim 없음: Mac 최초 전환이 필요합니다."
+            summary = "Mac에서 최초 iCloud 동기화를 시작해야 합니다."
             details = nil
         case .unavailable(let message):
-            summary = "서버 claim 확인 실패"
+            summary = "최초 동기화 상태를 확인하지 못했습니다."
             details = message
         case .available(let claim):
             switch claim.state {
             case .claimed: summary = "Mac이 최초 업로드를 준비하고 있습니다."
             case .seeding: summary = "Mac이 기존 단어장을 iCloud에 업로드하는 중입니다."
-            case .completed: summary = "최초 업로드 완료: 재업로드 없이 hydration합니다."
+            case .completed: summary = "최초 업로드가 완료되었습니다."
             }
-            details = "claimID: \(claim.request.claimID.uuidString)\nrequestID: \(claim.request.requestID.uuidString)\nowner: \(claim.request.ownerDeviceID)\nfingerprint: \(claim.request.sourceFingerprint)\nschema: \(claim.request.schemaVersion)\ncreated: \(claim.createdAt.formatted())\nupdated: \(claim.updatedAt.formatted())"
+            details = "시작: \(claim.createdAt.formatted())\n최근 확인: \(claim.updatedAt.formatted())"
         }
     }
 }

@@ -2129,6 +2129,17 @@ enum VocabHydrationState: String, Equatable, Sendable {
     case reconciling
     case ready
     case failed
+
+    var userFacingTitle: String {
+        switch self {
+        case .localOnly: "이 기기에 저장됨"
+        case .awaitingBootstrapMetadata: "최초 동기화 정보 대기 중"
+        case .hydrating: "iCloud 데이터 받는 중"
+        case .reconciling: "데이터 검증 중"
+        case .ready: "사용 가능"
+        case .failed: "확인 필요"
+        }
+    }
 }
 
 enum VocabSyncHealth: Equatable, Sendable {
@@ -2222,8 +2233,8 @@ enum VocabBootstrapCredentialStoreError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .keychain(let status):
-            "bootstrap claim Keychain 처리에 실패했습니다. (OSStatus \(status))"
+        case .keychain:
+            "iCloud 최초 동기화 보안 정보를 처리하지 못했습니다. Mac 로그인 상태를 확인한 뒤 다시 시도하세요."
         }
     }
 }
@@ -2351,13 +2362,13 @@ enum VocabCloudReconciliationError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .hydrationNotReady(let state):
-            "iCloud hydration이 \(state.rawValue) 상태여서 쓰기 작업을 중단했습니다."
+            "iCloud 데이터 준비 상태가 \(state.userFacingTitle)이어서 변경 작업을 중단했습니다."
         case .unsupportedSchemaVersion(let version):
-            "지원하지 않는 iCloud metadata schema version입니다: \(version)"
+            "현재 앱에서 읽을 수 없는 iCloud 동기화 정보입니다(버전 \(version)). 앱을 업데이트한 뒤 다시 시도하세요."
         case .bootstrapTokenRequired:
-            "Mac 최초 bootstrap에는 사용자 확인으로 발급된 일회성 token이 필요합니다."
+            "Mac 최초 iCloud 전환에는 사용자 확인으로 발급된 일회성 인증 정보가 필요합니다."
         case .attemptReplayConflicts(let conflicts):
-            "동일한 테스트 문항에 서로 다른 Attempt payload가 \(conflicts.count)건 있어 ReviewState 재계산을 중단했습니다."
+            "동일한 테스트 문항의 답안 기록이 \(conflicts.count)건 충돌하여 학습 상태 재계산을 중단했습니다."
         }
     }
 }
@@ -3010,7 +3021,7 @@ enum VocabCloudReconciler {
                 state: .awaitingBootstrapMetadata,
                 counts: .zero,
                 expectedBootstrapUUID: nil,
-                message: "bootstrap metadata가 아직 관찰되지 않았습니다."
+                message: "최초 동기화 정보가 아직 도착하지 않았습니다."
             )
         }
         guard metadata.schemaVersion == metadataSchemaVersion,
@@ -3019,7 +3030,7 @@ enum VocabCloudReconciler {
                 state: .failed,
                 counts: .zero,
                 expectedBootstrapUUID: metadata.bootstrapUUID,
-                message: "metadata schema 또는 fingerprint가 유효하지 않습니다."
+                message: "iCloud의 최초 동기화 정보가 손상되었거나 현재 앱과 호환되지 않습니다."
             )
         }
         return VocabHydrationStatus(
@@ -3044,7 +3055,7 @@ enum VocabCloudReconciler {
                 state: .awaitingBootstrapMetadata,
                 counts: actual,
                 expectedBootstrapUUID: nil,
-                message: "bootstrap metadata가 아직 관찰되지 않았습니다."
+                message: "최초 동기화 정보가 아직 도착하지 않았습니다."
             )
         }
         guard metadata.schemaVersion == metadataSchemaVersion, !metadata.contentFingerprint.isEmpty else {
@@ -3052,7 +3063,7 @@ enum VocabCloudReconciler {
                 state: .failed,
                 counts: actual,
                 expectedBootstrapUUID: metadata.bootstrapUUID,
-                message: "metadata schema 또는 fingerprint가 유효하지 않습니다."
+                message: "iCloud의 최초 동기화 정보가 손상되었거나 현재 앱과 호환되지 않습니다."
             )
         }
         guard actual.satisfies(metadata) else {
@@ -3060,7 +3071,7 @@ enum VocabCloudReconciler {
                 state: .hydrating,
                 counts: actual,
                 expectedBootstrapUUID: metadata.bootstrapUUID,
-                message: "metadata의 예상 엔티티 개수가 아직 도착하지 않았습니다."
+                message: "필요한 단어장 데이터가 아직 모두 도착하지 않았습니다."
             )
         }
         return VocabHydrationStatus(

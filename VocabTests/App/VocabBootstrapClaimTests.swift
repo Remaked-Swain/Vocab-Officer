@@ -376,17 +376,41 @@ final class VocabBootstrapClaimTests: XCTestCase {
         XCTAssertEqual(decision, .hydrateCompleted(claim))
     }
 
-    func testSettingsPresentationUsesNaturalStateAndExposesFullClaimTuple() throws {
+    func testSettingsPresentationUsesPlainStateWithoutInternalIdentifiers() throws {
         let claim = makeServerClaim(state: .seeding, fingerprint: "domain")
         let presentation = VocabBootstrapClaimSettingsPresentation(status: .available(claim))
         let details = try XCTUnwrap(presentation.details)
 
         XCTAssertTrue(presentation.summary.contains("업로드하는 중"))
-        XCTAssertTrue(details.contains(claim.request.claimID.uuidString))
-        XCTAssertTrue(details.contains(claim.request.requestID.uuidString))
-        XCTAssertTrue(details.contains(claim.request.ownerDeviceID))
-        XCTAssertTrue(details.contains(claim.request.sourceFingerprint))
-        XCTAssertTrue(details.contains("schema: \(claim.request.schemaVersion)"))
+        XCTAssertTrue(details.contains("시작:"))
+        XCTAssertTrue(details.contains("최근 확인:"))
+        XCTAssertFalse(details.contains(claim.request.claimID.uuidString))
+        XCTAssertFalse(details.contains(claim.request.requestID.uuidString))
+        XCTAssertFalse(details.contains(claim.request.sourceFingerprint))
+        XCTAssertFalse(details.contains("schema"))
+    }
+
+    func testClaimDenialDescriptionsDoNotExposeRawCodes() {
+        for denial in [
+            VocabBootstrapClaimDenial.existing,
+            .competing,
+            .foreign,
+            .timeout,
+            .unknown
+        ] {
+            let description = VocabStoreMigrationError.bootstrapClaimDenied(denial).errorDescription ?? ""
+
+            XCTAssertFalse(description.contains(denial.rawValue))
+            XCTAssertFalse(description.contains("claim"))
+        }
+    }
+
+    func testCredentialErrorDoesNotExposeOperatingSystemStatusCode() {
+        let description = VocabBootstrapCredentialStoreError.keychain(-25300).errorDescription ?? ""
+
+        XCTAssertFalse(description.contains("OSStatus"))
+        XCTAssertFalse(description.contains("-25300"))
+        XCTAssertTrue(description.contains("다시 시도"))
     }
 
     func testResumePolicyResumesOnlyMatchingStoredTupleAndBlocksForeignTuple() {

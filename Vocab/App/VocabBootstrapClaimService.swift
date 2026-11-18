@@ -39,6 +39,21 @@ enum VocabBootstrapClaimDenial: String, Equatable {
     case foreign
     case timeout
     case unknown
+
+    var userFacingReason: String {
+        switch self {
+        case .existing:
+            "이미 완료된 최초 동기화가 있습니다."
+        case .competing:
+            "다른 Mac에서 최초 동기화를 진행하고 있습니다."
+        case .foreign:
+            "현재 Mac의 단어장과 iCloud의 최초 동기화 정보가 일치하지 않습니다."
+        case .timeout:
+            "iCloud 응답을 제한 시간 안에 받지 못했습니다."
+        case .unknown:
+            "iCloud 상태를 확인하지 못했습니다."
+        }
+    }
 }
 
 enum VocabBootstrapClaimResult: Equatable {
@@ -84,7 +99,7 @@ enum VocabBootstrapResumePolicy {
         case .missing:
             return storedRequest == nil
                 ? .createNew
-                : .blocked("서버 claim은 없지만 로컬에 이전 claim tuple이 남아 있어 새 claim 생성을 중단했습니다.")
+                : .blocked("iCloud에는 진행 중인 작업이 없지만 Mac에 이전 작업 정보가 남아 있어 새 업로드를 시작하지 않았습니다.")
         case .unavailable(let message):
             return .blocked(message)
         case .available(let serverClaim):
@@ -94,10 +109,10 @@ enum VocabBootstrapResumePolicy {
             if let storedRequest {
                 return storedRequest == serverClaim.request
                     ? .resume(storedRequest)
-                    : .blocked("서버 claim과 Keychain tuple이 달라 takeover를 중단했습니다.")
+                    : .blocked("iCloud의 최초 동기화 정보와 이 Mac의 보안 정보가 달라 작업을 중단했습니다.")
             }
             guard serverClaim.request.schemaVersion == expectedSchemaVersion else {
-                return .blocked("서버 claim schema가 현재 앱과 달라 기존 claim 복구를 중단했습니다.")
+                return .blocked("iCloud의 최초 동기화 정보가 현재 앱과 호환되지 않아 복구를 중단했습니다.")
             }
             let currentMatches = serverClaim.request.sourceFingerprint == currentCanonicalFingerprint
             let checkpointMatches = checkpointManifest.map {
@@ -105,7 +120,7 @@ enum VocabBootstrapResumePolicy {
                     && $0.claimRequest == serverClaim.request
             } ?? false
             guard (currentMatches || checkpointMatches), receiptIsValid else {
-                return .blocked("기존 claim의 fingerprint/checkpoint/receipt를 모두 검증하지 못해 takeover 없이 중단했습니다.")
+                return .blocked("이전 최초 동기화 작업이 현재 단어장과 같은지 확인하지 못해 안전을 위해 중단했습니다.")
             }
             return .recoverExisting(serverClaim.request)
         }
@@ -190,10 +205,10 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
         case .missing:
             return .missing
         case .unknown:
-            return .unavailable("bootstrap claim을 조회하지 못했습니다. 네트워크와 iCloud 상태를 확인하세요.")
+            return .unavailable("Mac 최초 동기화 상태를 확인하지 못했습니다. 네트워크와 iCloud 상태를 확인하세요.")
         case .found(let record):
             guard let claim = serverClaim(record) else {
-                return .unavailable("bootstrap claim 상태를 해석하지 못했습니다.")
+                return .unavailable("Mac 최초 동기화 상태를 확인하지 못했습니다.")
             }
             return .available(claim)
         }
@@ -436,11 +451,11 @@ enum VocabCloudExportWaitError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .storeIdentifierUnavailable:
-            "mirrored store 식별자를 확인하지 못해 CloudKit export 완료 판정을 중단했습니다."
+            "iCloud 저장 공간을 확인하지 못해 업로드 완료 확인을 중단했습니다."
         case .exportFailed(let message):
-            "mirrored store의 CloudKit export가 실패했습니다: \(message)"
+            "iCloud 업로드에 실패했습니다: \(message)"
         case .timedOut:
-            "mirrored store의 CloudKit export 성공을 제한 시간 안에 확인하지 못했습니다. claim은 seeding 상태로 유지됩니다."
+            "iCloud 업로드 완료를 제한 시간 안에 확인하지 못했습니다. 진행 상태는 보존되므로 다시 확인할 수 있습니다."
         }
     }
 }
@@ -486,7 +501,7 @@ enum VocabCloudExportEventPolicy {
             return .ignore
         }
         guard event.succeeded, event.errorDescription == nil else {
-            return .failure(event.errorDescription ?? "알 수 없는 export 오류")
+            return .failure(event.errorDescription ?? "알 수 없는 iCloud 업로드 오류")
         }
         return .success
     }
@@ -909,16 +924,16 @@ enum VocabBootstrapActivationService {
         let token: VocabBootstrapToken
         let existingClaimRequest: VocabBootstrapClaimRequest?
         switch decision {
-        case .hydrateCompleted(let claim):
+        case .hydrateCompleted:
             enableMirroredMode()
             return VocabBootstrapActivationOutcome(
                 disposition: .restartRequired,
-                message: "서버 bootstrap 완료를 확인했습니다. Vocab을 다시 열면 iCloud 단어장을 사용합니다. claim \(claim.request.requestID.uuidString)"
+                message: "Mac 최초 동기화 완료를 확인했습니다. Vocab을 다시 열면 iCloud 단어장을 사용합니다."
             )
         case .createNew where !allowsNewClaim:
             return VocabBootstrapActivationOutcome(
                 disposition: .noAction,
-                message: "기존 bootstrap 작업이 없어 자동 전환하지 않았습니다. 최초 전환은 설정에서 직접 승인해야 합니다."
+                message: "기존 최초 동기화 작업이 없어 자동 전환하지 않았습니다. 최초 전환은 설정에서 직접 승인해야 합니다."
             )
         case .createNew:
             token = try VocabBootstrapTokenStore.createAndPersist().token
@@ -960,7 +975,7 @@ enum VocabBootstrapActivationService {
         enableMirroredMode()
         return VocabBootstrapActivationOutcome(
             disposition: .restartRequired,
-            message: "\(report.wordCount)개 단어와 \(report.dailySetCount)개 세트의 CloudKit export를 확인했습니다. Vocab을 다시 열면 레코드 단위 자동 동기화가 시작됩니다."
+            message: "\(report.wordCount)개 단어와 \(report.dailySetCount)개 세트의 iCloud 업로드를 확인했습니다. Vocab을 다시 열면 자동 동기화가 시작됩니다."
         )
     }
 
@@ -1025,7 +1040,7 @@ enum VocabBootstrapActivationService {
             guard case .resumed(let approval) = seedingTransition,
                   approval.request == claim.request,
                   approval.state == .seeding else {
-                throw VocabBootstrapActivationError.blocked("legacy bootstrap의 seeding 전환을 확인하지 못했습니다.")
+                throw VocabBootstrapActivationError.blocked("이전 방식의 최초 업로드 전환을 확인하지 못했습니다.")
             }
         }
 
@@ -1077,13 +1092,13 @@ enum VocabBootstrapActivationService {
         guard case .resumed(let approval) = transition,
               approval.request == claim.request,
               approval.state == .completed else {
-            throw VocabBootstrapActivationError.blocked("legacy bootstrap export 후 서버 완료 전환을 확인하지 못했습니다.")
+            throw VocabBootstrapActivationError.blocked("이전 방식의 최초 업로드 후 서버 완료 상태를 확인하지 못했습니다.")
         }
         _ = try VocabCloudReconciler.reconcile(context: mirroredContext, syncMode: .cloudKitPrivate)
         enableMirroredMode()
         return VocabBootstrapActivationOutcome(
             disposition: .restartRequired,
-            message: "기존 fingerprint 규칙으로 중단된 bootstrap을 실제 local/mirrored 데이터 일치 검증 후 완료했습니다. Vocab을 다시 열면 레코드 단위 자동 동기화가 시작됩니다."
+            message: "이전 검증 규칙으로 중단된 최초 동기화를 Mac과 iCloud 데이터 일치 확인 후 완료했습니다. Vocab을 다시 열면 자동 동기화가 시작됩니다."
         )
     }
 
@@ -1122,23 +1137,23 @@ enum VocabBootstrapActivationService {
         serverStatus: VocabBootstrapServerClaimStatus,
         currentCanonicalFingerprint: String
     ) -> String {
-        guard let credential else { return "Keychain claim 자격 증명이 없습니다." }
-        if credential.request != nil { return "Keychain에 완전한 claim tuple이 있습니다." }
-        guard case .available(let serverClaim) = serverStatus else { return "서버 claim을 읽지 못했습니다." }
+        guard let credential else { return "이 Mac에 이전 작업의 보안 정보가 없습니다." }
+        if credential.request != nil { return "이 Mac에 이전 작업을 재개할 수 있는 보안 정보가 있습니다." }
+        guard case .available(let serverClaim) = serverStatus else { return "iCloud의 이전 작업 상태를 읽지 못했습니다." }
         guard credential.token.claimID == serverClaim.request.claimID,
               credential.token.requestID == serverClaim.request.requestID else {
-            return "Keychain token과 서버 claim 식별자가 다릅니다."
+            return "이 Mac의 보안 정보와 iCloud 작업 정보가 다릅니다."
         }
         guard credential.originDeviceID == serverClaim.request.ownerDeviceID else {
-            return "claim 원본 기기가 현재 Keychain 자격 증명과 다릅니다."
+            return "최초 동기화를 시작한 Mac과 현재 보안 정보가 다릅니다."
         }
         guard serverClaim.request.schemaVersion == VocabCloudReconciler.metadataSchemaVersion else {
-            return "claim schema version이 현재 앱과 다릅니다."
+            return "이전 작업 정보가 현재 앱과 호환되지 않습니다."
         }
         guard currentCanonicalFingerprint == serverClaim.request.sourceFingerprint else {
-            return "현재 로컬 단어장의 canonical fingerprint가 서버 claim과 다릅니다."
+            return "현재 Mac 단어장과 iCloud의 이전 작업 대상이 다릅니다."
         }
-        return "legacy claim의 안전 조건이 모두 일치합니다."
+        return "이전 작업을 안전하게 재개할 조건이 모두 일치합니다."
     }
 
     private static func validReceiptExists(
@@ -1191,7 +1206,7 @@ enum VocabHydrationDiagnosticPolicy {
         case .missing:
             return VocabHydrationDiagnosis(
                 state: .awaitingBootstrapMetadata,
-                message: "Mac에서 최초 iCloud 전환을 완료해야 합니다. iPhone은 데이터를 seed하지 않습니다.",
+                message: "Mac에서 최초 iCloud 전환을 완료해야 합니다. iPhone은 Mac 단어장을 최초 업로드하지 않습니다.",
                 completedMetadataMissingSince: nil
             )
         case .available(let claim) where claim.state == .claimed || claim.state == .seeding:
@@ -1205,13 +1220,13 @@ enum VocabHydrationDiagnosticPolicy {
             if now.timeIntervalSince(startedAt) >= gracePeriod {
                 return VocabHydrationDiagnosis(
                     state: .failed,
-                    message: "Mac 업로드 완료는 확인됐지만 bootstrap metadata를 받지 못했습니다. 네트워크와 iCloud 상태를 확인한 뒤 '동기화 상태 다시 확인'을 실행하세요.",
+                    message: "Mac 업로드 완료는 확인됐지만 최초 동기화 정보를 받지 못했습니다. 네트워크와 iCloud 상태를 확인한 뒤 '동기화 상태 다시 확인'을 실행하세요.",
                     completedMetadataMissingSince: startedAt
                 )
             }
             return VocabHydrationDiagnosis(
                 state: .awaitingBootstrapMetadata,
-                message: "Mac 업로드는 완료됐으며 iPhone이 bootstrap metadata를 가져오고 있습니다.",
+                message: "Mac 업로드는 완료됐으며 iPhone이 최초 동기화 정보를 가져오고 있습니다.",
                 completedMetadataMissingSince: startedAt
             )
         case .unavailable(let message):
@@ -1223,7 +1238,7 @@ enum VocabHydrationDiagnosticPolicy {
         case .available:
             return VocabHydrationDiagnosis(
                 state: .failed,
-                message: "bootstrap claim 상태를 해석하지 못했습니다.",
+                message: "Mac 최초 동기화 상태를 확인하지 못했습니다.",
                 completedMetadataMissingSince: completedMetadataMissingSince
             )
         }

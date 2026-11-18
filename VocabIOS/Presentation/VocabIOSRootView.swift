@@ -31,7 +31,7 @@ struct VocabIOSRootView: View {
     @State private var hydrationState: VocabHydrationState = .awaitingBootstrapMetadata
     @State private var hydrationMessage: String?
     @State private var cloudKitState: VocabCloudKitAccountState = .unknown
-    @State private var claimStatus: VocabBootstrapServerClaimStatus = .unavailable("bootstrap claim을 아직 확인하지 않았습니다.")
+    @State private var claimStatus: VocabBootstrapServerClaimStatus = .unavailable("Mac 최초 동기화 상태를 아직 확인하지 않았습니다.")
     @State private var completedMetadataMissingSince: Date?
     @State private var isRefreshingConnection = false
     @State private var reconciliationWorker: VocabCloudReconciliationWorker?
@@ -401,9 +401,22 @@ struct VocabIOSRootView: View {
     }
 
     private var hydrationDescription: String {
-        let base = "현재 상태: \(hydrationState.rawValue). iPhone은 bootstrap seed를 수행하지 않습니다."
+        let base = "현재 상태: \(hydrationState.connectionTitle). iPhone은 Mac의 기존 데이터를 다시 업로드하지 않습니다."
         guard let hydrationMessage, !hydrationMessage.isEmpty else { return base }
         return base + "\n\n" + hydrationMessage
+    }
+}
+
+private extension VocabHydrationState {
+    var connectionTitle: String {
+        switch self {
+        case .localOnly: "이 기기에 저장됨"
+        case .awaitingBootstrapMetadata: "최초 동기화 정보 대기 중"
+        case .hydrating: "iCloud 데이터 받는 중"
+        case .reconciling: "데이터 검증 중"
+        case .ready: "사용 가능"
+        case .failed: "확인 필요"
+        }
     }
 }
 
@@ -419,10 +432,10 @@ private struct VocabIOSConnectionStatusView: View {
     var body: some View {
         List {
             Section("iCloud 연결") {
-                LabeledContent("저장 방식", value: "SwiftData per-record mirroring")
+                LabeledContent("저장 방식", value: "iCloud 자동 동기화")
                 LabeledContent("계정 상태", value: cloudKitState.message)
-                LabeledContent("Mac bootstrap", value: claimDescription)
-                LabeledContent("Hydration", value: hydrationState.rawValue)
+                LabeledContent("Mac 최초 동기화", value: claimDescription)
+                LabeledContent("데이터 준비", value: hydrationState.connectionTitle)
                 if let connectionError {
                     Label(connectionError, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red)
@@ -430,16 +443,16 @@ private struct VocabIOSConnectionStatusView: View {
                     Label(hydrationMessage, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red)
                 } else if hydrationState == .ready {
-                    Label("mirrored 저장소에 연결되었습니다. iPhone의 기존 로컬 snapshot은 iCloud로 올리지 않습니다.", systemImage: "checkmark.icloud")
+                    Label("iCloud 단어장에 연결되었습니다. iPhone의 이전 로컬 사본은 자동으로 업로드하지 않습니다.", systemImage: "checkmark.icloud")
                         .foregroundStyle(.secondary)
                 } else {
-                    Label("metadata와 예상 레코드를 기다리고 있습니다. 이 상태에서는 쓰기 작업을 하지 않습니다.", systemImage: "icloud.and.arrow.down")
+                    Label("필요한 단어장 데이터를 기다리고 있습니다. 준비가 끝날 때까지 변경 작업을 하지 않습니다.", systemImage: "icloud.and.arrow.down")
                         .foregroundStyle(.secondary)
                 }
-                Text("CloudKit 가져오기는 시스템이 네트워크와 전원 상태를 고려해 수행합니다. 이 버튼은 서버 전송을 강제하지 않고, 도착한 레코드와 현재 연결 상태를 즉시 다시 확인합니다.")
+                Text("iCloud 다운로드는 시스템이 네트워크와 전원 상태를 고려해 수행합니다. 이 버튼은 전송을 강제하지 않고, 도착한 데이터와 현재 연결 상태를 다시 확인합니다.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
-                Button(isChecking ? "확인 중" : "가져오기 상태 다시 확인") {
+                Button(isChecking ? "확인 중" : "동기화 상태 다시 확인") {
                     guard VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .manual, state: hydrationState) else { return }
                     Task { await refresh() }
                 }
@@ -462,6 +475,7 @@ private struct VocabIOSConnectionStatusView: View {
             "확인 오류"
         }
     }
+
 }
 
 private struct CompactEmptyState: View {
