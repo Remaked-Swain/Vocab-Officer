@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROJECT="$ROOT_DIR/Vocab.xcodeproj"
 DERIVED_DATA="$ROOT_DIR/test-build"
 PLAN_ONLY=false
+FINAL_STAGE=false
 
 if [[ "${1:-}" == "--self-test" ]]; then
   domain_plan="$("$0" --plan Vocab/Domain/StudyPolicies.swift)"
@@ -16,16 +17,20 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$app_plan" == *"-only-testing:VocabTests/LearningCoordinatorTests"* ]]
 
   data_plan="$("$0" --plan Vocab/Data/Records.swift)"
-  [[ "$data_plan" == *"CODE_SIGNING_ALLOWED=NO test"* ]]
-  [[ "$data_plan" != *"-only-testing:"* ]]
+  [[ "$data_plan" != *"xcodebuild"* ]]
+  [[ "$data_plan" == *"Final-stage verification deferred"* ]]
 
   deletion_plan="$("$0" --plan Vocab/Presentation/MasteredView.swift)"
-  [[ "$deletion_plan" == *"CODE_SIGNING_ALLOWED=NO test"* ]]
-  [[ "$deletion_plan" != *"-only-testing:"* ]]
+  [[ "$deletion_plan" != *"xcodebuild"* ]]
+  [[ "$deletion_plan" == *"Final-stage verification deferred"* ]]
 
   intake_ui_plan="$("$0" --plan Vocab/Presentation/TodayIntakeView.swift)"
-  [[ "$intake_ui_plan" == *"xcodebuild"* ]]
-  [[ "$intake_ui_plan" == *"build"* ]]
+  [[ "$intake_ui_plan" != *"xcodebuild"* ]]
+  [[ "$intake_ui_plan" == *"Final-stage verification deferred"* ]]
+
+  final_ui_plan="$("$0" --plan --final Vocab/Presentation/TodayIntakeView.swift)"
+  [[ "$final_ui_plan" == *"xcodebuild"* ]]
+  [[ "$final_ui_plan" == *"build"* ]]
 
   process_plan="$("$0" --plan AGENTS.md Docs/ClosedLoop/README.md script/verify_changed.sh)"
   [[ "$process_plan" == *"bash -n"* ]]
@@ -38,6 +43,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$records_plan" == *"closed_loop_pipeline.sh\" --self-test"* ]]
   [[ "$records_plan" == *"closed_loop_records.sh\" validate"* ]]
   [[ "$records_plan" != *"xcodebuild"* ]]
+
+  routes_plan="$("$0" --plan Docs/Rules/context-routes.json script/route_context.sh)"
+  [[ "$routes_plan" == *"route_context.sh\" --self-test"* ]]
+  [[ "$routes_plan" == *"route_context.sh\" --validate"* ]]
+  [[ "$routes_plan" != *"xcodebuild"* ]]
 
   verification_policy_plan="$("$0" --plan Docs/Verification.md)"
   [[ "$verification_policy_plan" == *"closed_loop_pipeline.sh\" --self-test"* ]]
@@ -54,10 +64,14 @@ if [[ "${1:-}" == "--self-test" ]]; then
   exit 0
 fi
 
-if [[ "${1:-}" == "--plan" ]]; then
-  PLAN_ONLY=true
+while [[ "${1:-}" == "--plan" || "${1:-}" == "--final" ]]; do
+  if [[ "$1" == "--plan" ]]; then
+    PLAN_ONLY=true
+  else
+    FINAL_STAGE=true
+  fi
   shift
-fi
+done
 
 declare -a changed_files=()
 inferred_changes=false
@@ -89,6 +103,7 @@ run_build=false
 run_shell=false
 run_closed_loop=false
 run_swift_style=false
+run_context_routes=false
 manual_ui=false
 no_baseline=false
 
@@ -107,6 +122,11 @@ for file in "${changed_files[@]}"; do
       ;;
     AGENTS.md|Docs/Verification.md|Docs/ClosedLoop/*)
       run_closed_loop=true
+      ;;
+    Docs/Rules/*|script/route_context.sh)
+      run_shell=true
+      run_closed_loop=true
+      run_context_routes=true
       ;;
     Docs/*|.gitignore|.codex/*)
       ;;
@@ -188,7 +208,12 @@ if "$run_closed_loop"; then
   actions+=("\"$ROOT_DIR/script/closed_loop_records.sh\" --self-test")
   actions+=("\"$ROOT_DIR/script/closed_loop_records.sh\" validate")
 fi
-if "$run_full"; then
+if "$run_context_routes"; then
+  actions+=("bash -n \"$ROOT_DIR/script/route_context.sh\"")
+  actions+=("\"$ROOT_DIR/script/route_context.sh\" --self-test")
+  actions+=("\"$ROOT_DIR/script/route_context.sh\" --validate")
+fi
+if "$run_full" && "$FINAL_STAGE"; then
   actions+=("xcodebuild -project \"$PROJECT\" -scheme Vocab -configuration Debug -derivedDataPath \"$DERIVED_DATA\" -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test")
 elif "$run_domain" || "$run_application"; then
   command="xcodebuild -project \"$PROJECT\" -scheme Vocab -configuration Debug -derivedDataPath \"$DERIVED_DATA\" -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test"
@@ -196,7 +221,7 @@ elif "$run_domain" || "$run_application"; then
   "$run_application" && command+=" -only-testing:VocabTests/LearningCoordinatorTests"
   actions+=("$command")
 fi
-if "$run_build"; then
+if "$run_build" && "$FINAL_STAGE"; then
   actions+=("xcodebuild -project \"$PROJECT\" -scheme Vocab -configuration Debug -derivedDataPath \"$ROOT_DIR/build\" -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO build")
 fi
 
@@ -212,6 +237,9 @@ fi
 
 echo "Selected verification:"
 printf '  %s\n' "${actions[@]}"
+if ! "$FINAL_STAGE" && ( "$run_full" || "$run_build" ); then
+  echo "Final-stage verification deferred: rerun with --final after the work stage is complete, or obtain user approval before an earlier full build."
+fi
 if "$manual_ui"; then
   echo "Manual follow-up required: exercise the changed presentation flow after the build."
 fi

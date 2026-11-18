@@ -1,0 +1,264 @@
+{
+  "schemaVersion": 1,
+  "alwaysLoad": ["AGENTS.md"],
+  "requiredActiveRecords": [
+    "CL-0001", "CL-0002", "CL-0003", "CL-0004", "CL-0005", "CL-0006",
+    "CL-0007", "CL-0008", "CL-0009", "CL-0010", "CL-0011", "CL-0014",
+    "CL-0016", "CL-0017", "CL-0019", "CL-0020", "CL-0021", "CL-0022",
+    "CL-0023", "CL-0024", "CL-0025", "CL-0026", "CL-0027", "CL-0028",
+    "CL-0029", "CL-0030", "CL-0031", "CL-0032", "CL-0033", "CL-0034",
+    "CL-0037"
+  ],
+  "tasks": {
+    "cloudkit-authority": "CloudKit mutation leases, authoring authority or store notifications",
+    "cloudkit-bootstrap": "initial Mac upload, mirrored-store migration or bootstrap claims",
+    "cloudkit-reconciliation": "incremental import, full audit or reconciliation scheduling",
+    "cloudkit-recovery": "recovery replicas, explicit recovery or store replacement",
+    "concurrency": "Swift Concurrency, actor isolation or legacy GCD migration",
+    "correction": "parenthesized meanings, correction credit or meaning tracking",
+    "deletion": "data deletion, retirement, tombstones or recovery safety",
+    "harness": "agent workflow, routing, verification or Closed-Loop harness",
+    "intake": "vocabulary registration, paste intake or normalized-headword merge",
+    "ios-sync": "iPhone hydration, learning facts or cross-device sync",
+    "mastery": "review scheduling, consolidation or terminal mastery",
+    "memory-aid": "Gemini prompts, caching or generated memory-aid quality",
+    "multiple-choice": "choice generation, persistence or choice UX",
+    "ocr": "Vision OCR, image layout or printed source numbering",
+    "performance": "performance-sensitive implementation or acceptance measurement",
+    "repository-privacy": "publish hygiene, secrets or repository-local data",
+    "testing": "session selection, grading, correction or learning-card behavior",
+    "vocabulary": "canonical vocabulary behavior or persistence"
+  },
+  "rules": [
+    {
+      "id": "swift-change",
+      "pathSuffixes": [".swift"],
+      "documents": [
+        "Docs/SwiftStyleGuide.md",
+        "Docs/ClosedLoop/records/CL-0028-swift-coding-conventions.md"
+      ],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "concurrency-policy",
+      "tasks": ["concurrency"],
+      "documents": [
+        "Docs/SwiftStyleGuide.md",
+        "Docs/ClosedLoop/records/CL-0028-swift-coding-conventions.md"
+      ],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "application-change",
+      "pathPrefixes": ["Vocab/", "VocabIOS/", "VocabTests/", "Vocab.xcodeproj/"],
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0007-session-bootstrap-and-tooling-discipline.md",
+        "Docs/ClosedLoop/records/CL-0025-main-auditor-closed-loop.md",
+        "Docs/ClosedLoop/records/CL-0027-unbounded-auditor-rework.md"
+      ],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "harness-change",
+      "tasks": ["harness"],
+      "pathPrefixes": [
+        "AGENTS.md",
+        "Docs/Rules/",
+        "Docs/ClosedLoop/",
+        "Docs/Verification.md",
+        "script/closed_loop_",
+        "script/route_context.sh",
+        "script/verify_changed.sh"
+      ],
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0002-durable-records-and-selective-verification.md",
+        "Docs/ClosedLoop/records/CL-0007-session-bootstrap-and-tooling-discipline.md",
+        "Docs/ClosedLoop/records/CL-0025-main-auditor-closed-loop.md",
+        "Docs/ClosedLoop/records/CL-0027-unbounded-auditor-rework.md",
+        "Docs/ClosedLoop/records/CL-0037-context-routing-harness.md"
+      ],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "vocabulary-policy",
+      "tasks": ["vocabulary"],
+      "documents": [
+        "Docs/Architecture.md",
+        "Docs/ClosedLoop/records/CL-0001-vocab-mvp-implementation.md",
+        "Docs/ClosedLoop/records/CL-0033-setless-vocabulary-registration.md"
+      ],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "intake-policy",
+      "tasks": ["intake"],
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0001-vocab-mvp-implementation.md",
+        "Docs/ClosedLoop/records/CL-0004-in-app-paste-and-publish-hygiene.md",
+        "Docs/ClosedLoop/records/CL-0033-setless-vocabulary-registration.md"
+      ],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "testing-policy",
+      "tasks": ["testing"],
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0001-vocab-mvp-implementation.md",
+        "Docs/ClosedLoop/records/CL-0005-study-cards-selected-set-testing-and-installation.md",
+        "Docs/ClosedLoop/records/CL-0006-english-to-korean-review-decay.md",
+        "Docs/ClosedLoop/records/CL-0008-loose-word-testing.md",
+        "Docs/ClosedLoop/records/CL-0009-previous-set-review-reexposure.md",
+        "Docs/ClosedLoop/records/CL-0010-parenthesized-comma-meaning-tracking.md"
+      ],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "correction-policy",
+      "tasks": ["correction"],
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0001-vocab-mvp-implementation.md",
+        "Docs/ClosedLoop/records/CL-0010-parenthesized-comma-meaning-tracking.md"
+      ],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "ocr-policy",
+      "tasks": ["ocr"],
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0004-in-app-paste-and-publish-hygiene.md",
+        "Docs/ClosedLoop/records/CL-0011-ocr-intake-input-io-performance-refactor.md",
+        "Docs/ClosedLoop/records/CL-0029-restarted-source-numbering-and-adaptive-ocr.md"
+      ],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "cloudkit-bootstrap-policy",
+      "tasks": ["cloudkit-bootstrap"],
+      "documents": [
+        "Docs/iCloudIOSSyncPlan.md",
+        "Docs/PerRecordCloudKitMirroringPlan.md",
+        "Docs/ClosedLoop/records/CL-0014-automatic-batch-icloud-sync.md",
+        "Docs/ClosedLoop/records/CL-0016-per-record-cloudkit-mirroring.md"
+      ],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "cloudkit-reconciliation-policy",
+      "tasks": ["cloudkit-reconciliation"],
+      "documents": [
+        "Docs/PerRecordCloudKitMirroringPlan.md",
+        "Docs/ClosedLoop/records/CL-0016-per-record-cloudkit-mirroring.md",
+        "Docs/ClosedLoop/records/CL-0017-cloudkit-reconciliation-scheduling.md",
+        "Docs/ClosedLoop/records/CL-0023-store-notification-mutation-authority.md",
+        "Docs/ClosedLoop/records/CL-0026-foreground-incremental-cloud-import.md"
+      ],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "cloudkit-recovery-policy",
+      "tasks": ["cloudkit-recovery"],
+      "documents": [
+        "Docs/PerRecordCloudKitMirroringPlan.md",
+        "Docs/ClosedLoop/records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md",
+        "Docs/ClosedLoop/records/CL-0020-foreground-safe-recovery-replica-refresh.md"
+      ],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "cloudkit-authority-policy",
+      "tasks": ["cloudkit-authority"],
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md",
+        "Docs/ClosedLoop/records/CL-0021-foreground-authoring-and-memory-aid-quality.md",
+        "Docs/ClosedLoop/records/CL-0023-store-notification-mutation-authority.md"
+      ],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "ios-sync-policy",
+      "tasks": ["ios-sync"],
+      "documents": [
+        "Docs/iCloudIOSSyncPlan.md",
+        "Docs/ClosedLoop/records/CL-0014-automatic-batch-icloud-sync.md",
+        "Docs/ClosedLoop/records/CL-0016-per-record-cloudkit-mirroring.md",
+        "Docs/ClosedLoop/records/CL-0022-ios-learning-facts-offline-authority.md",
+        "Docs/ClosedLoop/records/CL-0026-foreground-incremental-cloud-import.md"
+      ],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "deletion-policy",
+      "tasks": ["deletion"],
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0001-vocab-mvp-implementation.md",
+        "Docs/ClosedLoop/records/CL-0003-local-intake-without-json-backup.md",
+        "Docs/ClosedLoop/records/CL-0016-per-record-cloudkit-mirroring.md",
+        "Docs/ClosedLoop/records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md",
+        "Docs/ClosedLoop/records/CL-0020-foreground-safe-recovery-replica-refresh.md",
+        "Docs/ClosedLoop/records/CL-0034-terminal-mastery-retirement.md"
+      ],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "mastery-policy",
+      "tasks": ["mastery"],
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0030-direction-agnostic-mastery-revalidation.md",
+        "Docs/ClosedLoop/records/CL-0031-spaced-relearning-and-mixed-rotation.md",
+        "Docs/ClosedLoop/records/CL-0032-exam-horizon-mastery-promotion.md",
+        "Docs/ClosedLoop/records/CL-0034-terminal-mastery-retirement.md"
+      ],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "multiple-choice-policy",
+      "tasks": ["multiple-choice"],
+      "documents": ["Docs/ClosedLoop/records/CL-0024-multiple-choice-test-mode.md"],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "memory-aid-policy",
+      "tasks": ["memory-aid"],
+      "documents": ["Docs/ClosedLoop/records/CL-0021-foreground-authoring-and-memory-aid-quality.md"],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "performance-policy",
+      "tasks": ["performance"],
+      "documents": [
+        "Docs/Performance.md",
+        "Docs/ClosedLoop/records/CL-0011-ocr-intake-input-io-performance-refactor.md"
+      ],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "repository-privacy-policy",
+      "tasks": ["repository-privacy"],
+      "documents": [
+        "Docs/RepositoryPrivacy.md",
+        "Docs/ClosedLoop/records/CL-0004-in-app-paste-and-publish-hygiene.md"
+      ],
+      "audit": "required",
+      "evidence": "durable"
+    }
+  ]
+}

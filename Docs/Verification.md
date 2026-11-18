@@ -43,3 +43,14 @@
 - Build and install the local executable with
   `script/build_and_run.sh --install-verify`, then verify
   `/Applications/Vocab.app` has bundle identifier `com.swainyun.Vocab`.
+
+## Stage Boundary
+
+- During implementation and review, run only the smallest focused tests
+  selected for the changed behavior. Do not run a full platform build.
+- A full test/build plan is available only through
+  `script/verify_changed.sh --final`, which asserts that the current work stage
+  is complete. If a full build is needed before that boundary, obtain explicit
+  user approval first.
+- Build-and-reinstall is permitted only after the entire requested work stage
+  is complete. It is never an intermediate diagnostic step.

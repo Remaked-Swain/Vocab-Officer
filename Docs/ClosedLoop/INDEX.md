@@ -45,66 +45,17 @@ only when its scope applies to the current change.
 | CL-0034 | active | 2026-11-17 | terminal mastery, long-term consolidation, automatic scrub and resurrection prevention | [Terminal mastery and automatic retirement](records/CL-0034-terminal-mastery-retirement.md) | retain while learning lifecycle, deletion, CloudKit or recovery exists |
 | CL-0035 | active | 2026-11-18 | immutable Main evidence for CL-0034 re-audit | [Terminal mastery rework submission](records/CL-0035-terminal-mastery-rework-submission.md) | retain with CL-0034 |
 | CL-0036 | completed | 2026-11-18 | final read-only audit approval for terminal mastery | [Terminal mastery audit approval](audits/RUN-20261117-CL0034-audit.md) | retain with CL-0034 |
+| CL-0037 | active | 2026-11-19 | agent bootstrap, rule routing, selective document loading, harness verification | [Context routing harness](records/CL-0037-context-routing-harness.md) | retain while Codex workflow uses this harness |
 
-## Load Rules
+## Context Routing
 
-- Any change to vocabulary behavior, backup/restore, deletion or user-facing
-  testing must load `CL-0001`.
-- JSON, managed-backup, deletion or operator intake work must also load
-  `CL-0003`; it overrides the removed backup portions of `CL-0001`.
-- Daily intake UI, paste-format handling or public repository hygiene work
-  must load `CL-0004`.
-- Selected-set testing, test presentation safety, learning cards, judgement
-  acknowledgement or local app installation work must load `CL-0005`.
-- Parenthesized delimiter handling, confirmed core-meaning correction, or
-  meaning trackability work must load `CL-0010`.
-- OCR intake, image IO, daily-intake performance, or OCR-formatted paste output
-  work must load `CL-0011`.
-- Loose-word test eligibility or presentation work must load `CL-0008`.
-- Review priority, failure checks, review session eligibility or scheduler work
-  must load `CL-0006`.
-- Review-session previous-set recurrence or its 14+6 selection rule must load
-  `CL-0009`.
-- Any future code, persistence, sync, security, data-safety, release, or harness
-  change must apply `CL-0025`: the main agent implements and one read-only
-  Auditor reviews. Simple questions, read-only inspection, and command-only
-  operations remain main-only. Apply `CL-0027` to rejection handling: retry
-  count is diagnostic only and never terminates review.
-- Any future Closed-Loop task must also apply `CL-0002`; reading its full record is
-  required only when changing workflow, retention or verification rules.
-- Any future task that uses agents or edits the app must apply `CL-0007`.
-  Reading its full record is required when changing session bootstrap, sandbox
-  handling, root-path handling or implementation tooling rules.
-- Any Swift implementation or review must load `CL-0028` and
-  `Docs/SwiftStyleGuide.md`, run the objective style checker, and include the
-  contextual conventions in Auditor review.
-- iCloud, iPhone sync, CloudKit, migration, cross-device data-loss or sync
-  conflict work must load `CL-0014` and `Docs/iCloudIOSSyncPlan.md`.
-- Per-record CloudKit mirroring, mirrored-store migration, CloudKit-backed
-  SwiftData schema compatibility or rollback work must also load `CL-0016` and
-  `Docs/PerRecordCloudKitMirroringPlan.md`.
-- Recovery generation access, `Vocab.store` replacement or CloudKit mutation
-  authorization must also load `CL-0019`.
-- Automatic recovery-replica scheduling or foreground lifecycle performance
-  work must also load `CL-0020`.
-- Mutation authority foreground handling, macOS authoring continuity or
-  CloudKit-backed authoring authorization work must also load `CL-0021`.
-- iOS learning sessions, iOS learning-fact writes, iOS correction behavior,
-  iOS foreground validation-epoch handling or mutation-lease test isolation
-  must also load `CL-0022`.
-- Generic SwiftData/CloudKit store notifications, mutation-authority
-  invalidation, full-audit receipt invalidation or metadata fingerprint gating
-  must also load `CL-0023` and `CL-0026`.
-- Multiple-choice test behavior, distractors, question-format persistence, or
-  Mac/iOS choice UX must also load `CL-0024`.
-- MemoryAid, Gemini prompt, repair prompt, response budget, cache-version or
-  MemoryAid quality-gate work must also load `CL-0021`.
-- Printed source-number restarts, OCR page ordering, OCR layout inference or
-  missing-number diagnostics must also load `CL-0029`.
-- Mastery evidence, consolidation maintenance, automatic retirement or
-  demotion must also load `CL-0030`, `CL-0031`, `CL-0032` and `CL-0034`.
-- Superseded or archived records are read only when investigating regression,
-  migration history or a stated dependency.
-- `index.json` is the machine-readable companion for validation tooling only.
-- `script/verify_changed.sh` is the executable source of truth for test
-  impact selection; changing it requires its plan-fixture verification.
+Use `script/route_context.sh` with `--intent inspect|change`, task tags and
+intended changed paths. Its manifest, `Docs/Rules/context-routes.json`, is the
+executable source of truth for selective document loading. Read this full
+ledger only when maintaining a durable record, investigating history or
+following an explicit route.
+
+Superseded and archived records are never routed by default. The router
+validates that every routed Closed-Loop record is indexed and active.
+`script/verify_changed.sh` remains the independent executable source of truth
+for test-impact selection.

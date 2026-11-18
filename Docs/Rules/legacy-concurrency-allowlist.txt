@@ -1,0 +1,7 @@
+Vocab/App/VocabCloudKitStatusService.swift:    private let lock = NSLock()
+Vocab/App/VocabCloudSyncNetworkMonitor.swift:            let queue = DispatchQueue(label: "VocabCloudSyncNetworkMonitor")
+Vocab/App/VocabCloudSyncNetworkMonitor.swift:    private let lock = NSLock()
+Vocab/App/VocabRecoveryReplicaService.swift:            DispatchQueue.global(qos: .utility).async {
+Vocab/Application/LearningCoordinator.swift:            DispatchQueue.global(qos: .utility).async {
+Vocab/Application/LearningCoordinator.swift:            DispatchQueue.global(qos: .utility).async {
+Vocab/Application/LearningCoordinator.swift:    private static let lock = NSLock()

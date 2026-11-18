@@ -68,13 +68,42 @@ run_check() {
   check_rule 'do not terminate production flows with preconditionFailure' 'preconditionFailure[[:space:]]*\(' production
   check_rule 'use actor isolation instead of DispatchQueue.main.async' 'DispatchQueue\.main\.async' all
 
+  local concurrency_allowlist="$root/Docs/Rules/legacy-concurrency-allowlist.txt"
+  [[ -f "$concurrency_allowlist" ]] || {
+    echo "Swift style check cannot find the legacy concurrency allowlist." >&2
+    return 2
+  }
+  local current_concurrency
+  local concurrency_status
+  set +e
+  current_concurrency="$(
+    cd "$root"
+    "$RG_BIN" --no-heading --no-line-number --glob '*.swift' \
+      '\b(NSLock|NSRecursiveLock|NSCondition|DispatchQueue|DispatchGroup|DispatchSemaphore|os_unfair_lock)\b' \
+      Vocab VocabIOS VocabTests 2>/dev/null | LC_ALL=C sort
+  )"
+  concurrency_status=$?
+  set -e
+  [[ "$concurrency_status" -eq 0 || "$concurrency_status" -eq 1 ]] || {
+    echo "Swift style check failed while scanning legacy concurrency." >&2
+    return 2
+  }
+  local expected_concurrency
+  expected_concurrency="$(LC_ALL=C sort "$concurrency_allowlist")"
+  if [[ "$current_concurrency" != "$expected_concurrency" ]]; then
+    echo "Swift style violation: legacy GCD/lock inventory changed; use Swift Concurrency or update it in a separately reviewed migration." >&2
+    diff -u <(printf '%s\n' "$expected_concurrency") <(printf '%s\n' "$current_concurrency") >&2 || true
+    failed=true
+  fi
+
   [[ "$failed" == false ]]
 }
 
 if [[ "${1:-}" == "--self-test" ]]; then
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/vocab-swift-style.XXXXXX")"
   trap 'rm -rf "$temp_dir"' EXIT INT TERM
-  mkdir -p "$temp_dir/Vocab" "$temp_dir/VocabIOS" "$temp_dir/VocabTests" "$temp_dir/script"
+  mkdir -p "$temp_dir/Vocab" "$temp_dir/VocabIOS" "$temp_dir/VocabTests" "$temp_dir/script" "$temp_dir/Docs/Rules"
+  : > "$temp_dir/Docs/Rules/legacy-concurrency-allowlist.txt"
   cp "$0" "$temp_dir/script/swift_style_check.sh"
   chmod +x "$temp_dir/script/swift_style_check.sh"
 
@@ -104,6 +133,7 @@ if [[ "${1:-}" == "--self-test" ]]; then
   expect_failure Vocab 'func invalid() { fatalError("stop") }' 'fatalError requires'
   expect_failure Vocab 'func invalid() { preconditionFailure("stop") }' 'preconditionFailure'
   expect_failure VocabTests 'func invalid() { DispatchQueue.main.async {} }' 'actor isolation'
+  expect_failure Vocab 'func invalid() { _ = NSLock() }' 'legacy GCD/lock inventory changed'
 
   rm -f "$temp_dir/Vocab/Invalid.swift" "$temp_dir/VocabIOS/Invalid.swift" "$temp_dir/VocabTests/Invalid.swift"
   printf 'func allowedBootstrapFailure() { fatalError("stop") } // swift-style: allow(fatalError)\n' > "$temp_dir/Vocab/Allowed.swift"

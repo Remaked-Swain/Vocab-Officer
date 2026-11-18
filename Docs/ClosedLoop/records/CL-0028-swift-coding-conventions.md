@@ -40,6 +40,22 @@ platform's SwiftData container.
   rejecting intentional failure fixtures.
 - Convention failures block Closed-Loop approval and release acceptance.
 
+## 2026-11-19 Concurrency Amendment
+
+- New asynchronous coordination must use Swift Concurrency. Mixing GCD
+  primitives with `async`/`await` is prohibited.
+- Lock-based asynchronous integrity is treated as the same legacy coordination
+  model. Mutable asynchronous state belongs behind actor isolation instead.
+- Existing GCD and lock occurrences are frozen in
+  `Docs/Rules/legacy-concurrency-allowlist.txt`. The allowlist is migration
+  inventory, not an exception mechanism; any addition fails the style check.
+- Refactoring the inventoried occurrences is intentionally deferred to a
+  separately scoped task. This amendment adds the convention and enforcement
+  boundary without changing those implementations.
+- Full builds and reinstall operations are final-stage verification only.
+  Focused tests remain available during implementation; an earlier full build
+  requires explicit user approval.
+
 ## Evidence
 
 - Changed paths for this decision are `AGENTS.md`, `Docs/SwiftStyleGuide.md`,

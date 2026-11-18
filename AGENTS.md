@@ -16,9 +16,18 @@ This file is the repository entry point for Codex and review agents.
   any accepted tradeoff or residual risk in the relevant decision evidence.
 - Performance and readability are acceptance criteria for every code change,
   even when the user does not call them out explicitly.
+- Before loading detailed project documents, run `script/route_context.sh`
+  with `--intent inspect|change`, the request's task tags and known changed
+  paths. Use `--list-tasks` when the available tags are unclear, then read only
+  the returned documents.
 - Select verification with `script/verify_changed.sh`; expand it only when
   persistence, shared contracts, project settings, or release acceptance
   require broader coverage.
+- Before a work stage is declared complete, run only focused tests. Full
+  platform builds require prior user approval during an active stage; use
+  `script/verify_changed.sh --final` only after the stage is complete.
+- Build-and-reinstall is a final-stage operation only. Never run
+  `script/build_and_run.sh --install-verify` during implementation or review.
 
 ## Agent Policy
 
@@ -54,8 +63,10 @@ architecture, data policy, security, migration, deletion, or harness decisions
 that future work must consult.
 
 Durable decisions live in `Docs/ClosedLoop/records/` and are indexed by both
-`Docs/ClosedLoop/INDEX.md` and `Docs/ClosedLoop/index.json`. Read the index
-first and load only records whose scope intersects the task.
+`Docs/ClosedLoop/INDEX.md` and `Docs/ClosedLoop/index.json`. The context router
+is the normal loading entry point. Read the full index only when editing the
+durable ledger, investigating historical or superseded behavior, or when the
+router explicitly returns it.
 
 Durable Auditor approvals live in `Docs/ClosedLoop/audits/`; the local
 registration/hash chain remains under `.git/closed-loop-pipeline/completed/`.

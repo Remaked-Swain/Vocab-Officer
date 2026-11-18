@@ -49,6 +49,15 @@ review. It complements the architecture and product decisions in
 
 ## Concurrency And UI
 
+- Use Modern Swift Concurrency exclusively for asynchronous coordination:
+  `async`/`await`, actors, task groups, async sequences and cancellation.
+- Do not introduce or mix GCD primitives such as `DispatchQueue`,
+  `DispatchGroup` or `DispatchSemaphore`. Lock-based asynchronous integrity
+  using `NSLock`, related lock types or unfair locks is treated as the same
+  prohibited coordination model; isolate mutable state in an actor instead.
+- Existing GCD and lock occurrences are a migration backlog, not precedent.
+  They are frozen by `Docs/Rules/legacy-concurrency-allowlist.txt` and must be
+  removed in a separately scoped refactor. New occurrences are forbidden.
 - Keep UI state on `@MainActor`; move network, CloudKit, OCR, serialization,
   and large collection work off the main actor.
 - Use structured concurrency and cancellation. Do not introduce
@@ -91,9 +100,10 @@ review. It complements the architecture and product decisions in
 ## Enforcement
 
 Run `script/swift_style_check.sh` for every Swift change. It checks universally
-applicable iteration and main-actor rules in production and tests, and applies
-runtime-safety bans to production targets where test fixtures may intentionally
-exercise failures. It fails closed if its repository-standard `rg` search tool
-is unavailable or errors. The Auditor must review contextual rules, especially
-`guard` versus `if`, loop choice, naming, actor boundaries, architecture
-dependencies, and test credibility.
+applicable iteration, concurrency and main-actor rules in production and tests,
+and applies runtime-safety bans to production targets where test fixtures may
+intentionally exercise failures. It fails closed if its repository-standard
+`rg` search tool or the reviewed legacy-concurrency allowlist is unavailable or
+drifts. The Auditor must review contextual rules, especially `guard` versus
+`if`, loop choice, naming, actor boundaries, architecture dependencies, and
+test credibility.
