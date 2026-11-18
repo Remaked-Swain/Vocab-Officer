@@ -3531,27 +3531,31 @@ actor VocabCloudReconciliationWorker {
         winningDeletion: [String: Date]
     ) async throws {
         let prefix = "\(typeName):"
-        let targetIDs = Set(winningDeletion.keys.compactMap { key -> UUID? in
+        let targetIDs = winningDeletion.keys.compactMap { key -> UUID? in
             guard key.hasPrefix(prefix) else { return nil }
             return UUID(uuidString: String(key.dropFirst(prefix.count)))
-        })
+        }.sorted { $0.uuidString < $1.uuidString }
         guard !targetIDs.isEmpty else { return }
 
-        let descriptor = FetchDescriptor<T>(predicate: #Predicate { targetIDs.contains($0.id) })
-        var changed = false
-        for record in try modelContext.fetch(descriptor) {
-            let key = "\(typeName):\(record.id.uuidString)"
-            guard let date = winningDeletion[key] else { continue }
-            let appliesDeletion = record.deletedAt == nil || record.deletedAt! < date
-            let scrubbed = record.scrubDeletedContent()
-            guard appliesDeletion || scrubbed else { continue }
-            record.deletedAt = max(record.deletedAt ?? .distantPast, date)
-            record.updatedAt = max(record.updatedAt, date)
-            changed = true
+        for start in stride(from: 0, to: targetIDs.count, by: auditBatchSize) {
+            try Task.checkCancellation()
+            let end = min(start + auditBatchSize, targetIDs.count)
+            let batchIDs = Set(targetIDs[start..<end])
+            let descriptor = FetchDescriptor<T>(predicate: #Predicate { batchIDs.contains($0.id) })
+            var changed = false
+            for record in try modelContext.fetch(descriptor) {
+                let key = "\(typeName):\(record.id.uuidString)"
+                guard let date = winningDeletion[key] else { continue }
+                let appliesDeletion = record.deletedAt == nil || record.deletedAt! < date
+                let scrubbed = record.scrubDeletedContent()
+                guard appliesDeletion || scrubbed else { continue }
+                record.deletedAt = max(record.deletedAt ?? .distantPast, date)
+                record.updatedAt = max(record.updatedAt, date)
+                changed = true
+            }
+            if changed { try modelContext.save() }
+            await Task.yield()
         }
-        if changed { try modelContext.save() }
-        try Task.checkCancellation()
-        await Task.yield()
     }
 
     func auditAll(

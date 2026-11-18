@@ -4,6 +4,57 @@ import XCTest
 
 @MainActor
 final class VocabCloudReconciliationTests: XCTestCase {
+    func testCooperativeDeletionAppliesTombstonesAcrossBoundedBatches() async throws {
+        let context = try makeContext()
+        let deletedAt = Date(timeIntervalSince1970: 100)
+        for index in 0..<501 {
+            let word = WordRecord(term: "bounded-deletion-\(index)")
+            context.insert(word)
+            context.insert(RecordTombstone(
+                recordID: word.id,
+                recordType: "WordRecord",
+                deletedAt: deletedAt
+            ))
+        }
+        try context.save()
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        _ = try await worker.reconcileFullCooperatively(syncMode: .localOnly)
+
+        let words = try context.fetch(FetchDescriptor<WordRecord>())
+        XCTAssertEqual(words.count, 501)
+        XCTAssertTrue(words.allSatisfy { $0.deletedAt == deletedAt })
+    }
+
+    func testCanceledCooperativeDeletionStopsBeforeApplyingMultipleBatches() async throws {
+        let context = try makeContext()
+        let deletedAt = Date(timeIntervalSince1970: 100)
+        for index in 0..<501 {
+            let word = WordRecord(term: "canceled-deletion-\(index)")
+            context.insert(word)
+            context.insert(RecordTombstone(
+                recordID: word.id,
+                recordType: "WordRecord",
+                deletedAt: deletedAt
+            ))
+        }
+        try context.save()
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        let task = Task {
+            try await worker.reconcileFullCooperatively(syncMode: .localOnly)
+        }
+        task.cancel()
+
+        do {
+            _ = try await task.value
+            XCTFail("Expected canceled reconciliation to stop")
+        } catch is CancellationError {
+        }
+        let words = try context.fetch(FetchDescriptor<WordRecord>())
+        XCTAssertTrue(words.allSatisfy { $0.deletedAt == nil })
+    }
+
     func testCanceledMaintenanceTaskCannotClearReplacementTaskSlot() {
         var slot = VocabMaintenanceTaskSlot()
         let first = UUID()
