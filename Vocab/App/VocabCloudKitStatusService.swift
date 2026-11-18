@@ -1,6 +1,69 @@
 import CloudKit
 import Foundation
 
+final class VocabAsyncResultGate<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Value, Never>?
+    private var timeoutTask: Task<Void, Never>?
+
+    init(continuation: CheckedContinuation<Value, Never>) {
+        self.continuation = continuation
+    }
+
+    func installTimeoutTask(_ task: Task<Void, Never>) {
+        lock.lock()
+        guard continuation != nil else {
+            lock.unlock()
+            task.cancel()
+            return
+        }
+        timeoutTask = task
+        lock.unlock()
+    }
+
+    @discardableResult
+    func resume(returning value: Value) -> Bool {
+        lock.lock()
+        guard let continuation else {
+            lock.unlock()
+            return false
+        }
+        self.continuation = nil
+        let timeoutTask = self.timeoutTask
+        self.timeoutTask = nil
+        lock.unlock()
+
+        timeoutTask?.cancel()
+        continuation.resume(returning: value)
+        return true
+    }
+}
+
+enum VocabAsyncDeadline {
+    static func value<Value>(
+        timeoutNanoseconds: UInt64,
+        timeoutValue: Value,
+        operation: @escaping @Sendable () async -> Value
+    ) async -> Value {
+        await withCheckedContinuation { continuation in
+            let gate = VocabAsyncResultGate(continuation: continuation)
+            let operationTask = Task {
+                gate.resume(returning: await operation())
+            }
+            let timeoutTask = Task {
+                do {
+                    try await Task.sleep(nanoseconds: max(timeoutNanoseconds, 1_000_000))
+                } catch {
+                    return
+                }
+                guard gate.resume(returning: timeoutValue) else { return }
+                operationTask.cancel()
+            }
+            gate.installTimeoutTask(timeoutTask)
+        }
+    }
+}
+
 enum VocabCloudKitAccountState: Equatable {
     case unknown
     case available
@@ -56,18 +119,37 @@ protocol VocabCloudKitAccountStatusChecking {
 }
 
 struct VocabCloudKitStatusService: VocabCloudKitAccountStatusChecking {
-    private let container: CKContainer
+    private let timeoutNanoseconds: UInt64
+    private let accountStatusLoader: @Sendable () async throws -> CKAccountStatus
 
-    init(container: CKContainer = CKContainer(identifier: VocabSyncMode.cloudKitContainerIdentifier)) {
-        self.container = container
+    init(
+        container: CKContainer = CKContainer(identifier: VocabSyncMode.cloudKitContainerIdentifier),
+        timeout: TimeInterval = 15
+    ) {
+        timeoutNanoseconds = UInt64(max(timeout, 0.001) * 1_000_000_000)
+        accountStatusLoader = { try await container.accountStatus() }
+    }
+
+    init(
+        timeout: TimeInterval,
+        accountStatusLoader: @escaping @Sendable () async throws -> CKAccountStatus
+    ) {
+        timeoutNanoseconds = UInt64(max(timeout, 0.001) * 1_000_000_000)
+        self.accountStatusLoader = accountStatusLoader
     }
 
     func accountStatus() async -> VocabCloudKitAccountState {
-        do {
-            let status = try await container.accountStatus()
-            return Self.map(status)
-        } catch {
-            return .temporarilyUnavailable("iCloud 상태 확인 중 문제가 발생했습니다. 잠시 후 다시 시도하세요.")
+        await VocabAsyncDeadline.value(
+            timeoutNanoseconds: timeoutNanoseconds,
+            timeoutValue: .temporarilyUnavailable(
+                "iCloud 상태 확인 시간이 초과되었습니다. 네트워크와 iCloud 상태를 확인한 뒤 다시 시도하세요."
+            )
+        ) {
+            do {
+                return Self.map(try await accountStatusLoader())
+            } catch {
+                return .temporarilyUnavailable("iCloud 상태 확인 중 문제가 발생했습니다. 잠시 후 다시 시도하세요.")
+            }
         }
     }
 
@@ -85,6 +167,19 @@ struct VocabCloudKitStatusService: VocabCloudKitAccountStatusChecking {
             return .temporarilyUnavailable("Apple iCloud 서비스 또는 네트워크 상태가 일시적으로 불안정합니다.")
         @unknown default:
             return .couldNotDetermine
+        }
+    }
+
+    static func resolve(
+        accountState: VocabCloudKitAccountState,
+        claimStatus: VocabBootstrapServerClaimStatus
+    ) -> VocabCloudKitAccountState {
+        guard !accountState.isReadyForSync else { return accountState }
+        switch claimStatus {
+        case .missing, .available:
+            return .available
+        case .unavailable:
+            return accountState
         }
     }
 }

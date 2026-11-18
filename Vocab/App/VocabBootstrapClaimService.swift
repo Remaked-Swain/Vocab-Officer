@@ -152,6 +152,7 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
 
     private let database: CKDatabase
     private let timeoutNanoseconds: UInt64
+    private let recordFetcher: @Sendable (CKRecord.ID) async throws -> CKRecord
 
     init(
         container: CKContainer = CKContainer(identifier: VocabSyncMode.cloudKitContainerIdentifier),
@@ -159,6 +160,7 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
     ) {
         database = container.privateCloudDatabase
         timeoutNanoseconds = UInt64(max(timeout, 0.1) * 1_000_000_000)
+        recordFetcher = { try await container.privateCloudDatabase.record(for: $0) }
     }
 
     func claim(_ request: VocabBootstrapClaimRequest) async -> VocabBootstrapClaimResult {
@@ -319,12 +321,17 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
     }
 
     private func fetchRecord(_ recordID: CKRecord.ID) async -> FetchResult {
-        do {
-            return .found(try await database.record(for: recordID))
-        } catch let error as CKError where error.code == .unknownItem {
-            return .missing
-        } catch {
-            return .unknown
+        await VocabAsyncDeadline.value(
+            timeoutNanoseconds: timeoutNanoseconds,
+            timeoutValue: .unknown
+        ) {
+            do {
+                return .found(try await self.recordFetcher(recordID))
+            } catch let error as CKError where error.code == .unknownItem {
+                return .missing
+            } catch {
+                return .unknown
+            }
         }
     }
 

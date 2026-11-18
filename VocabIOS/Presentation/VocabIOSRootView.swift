@@ -325,16 +325,19 @@ struct VocabIOSRootView: View {
                     hydrationMessage = result.message
                     await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted()
                 } else {
-                let diagnosis = VocabHydrationDiagnosticPolicy.diagnose(
-                    localStatus: status,
-                    claimStatus: fetchedClaim,
-                    completedMetadataMissingSince: completedMetadataMissingSince
-                )
-                completedMetadataMissingSince = diagnosis.completedMetadataMissingSince
-                hydrationState = diagnosis.state
-                hydrationMessage = diagnosis.message
+                    let diagnosis = VocabHydrationDiagnosticPolicy.diagnose(
+                        localStatus: status,
+                        claimStatus: fetchedClaim,
+                        completedMetadataMissingSince: completedMetadataMissingSince
+                    )
+                    completedMetadataMissingSince = diagnosis.completedMetadataMissingSince
+                    hydrationState = diagnosis.state
+                    hydrationMessage = diagnosis.message
                 }
-                cloudKitState = await account
+                cloudKitState = VocabCloudKitStatusService.resolve(
+                    accountState: await account,
+                    claimStatus: fetchedClaim
+                )
             }
             if hydrationState == .ready {
                 localContentIsUsable = true

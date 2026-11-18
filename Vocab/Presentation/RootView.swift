@@ -759,8 +759,14 @@ struct SettingsView: View {
         guard !isCheckingCloudKit else { return }
         isCheckingCloudKit = true
         defer { isCheckingCloudKit = false }
-        cloudKitState = await VocabCloudKitStatusService().accountStatus()
-        serverClaimStatus = await VocabCloudKitBootstrapClaimService().fixedClaimStatus()
+        async let accountState = VocabCloudKitStatusService().accountStatus()
+        async let claimStatus = VocabCloudKitBootstrapClaimService().fixedClaimStatus()
+        let fetchedClaimStatus = await claimStatus
+        serverClaimStatus = fetchedClaimStatus
+        cloudKitState = VocabCloudKitStatusService.resolve(
+            accountState: await accountState,
+            claimStatus: fetchedClaimStatus
+        )
         await refreshHydrationStatus(runFullAudit: true)
         refreshRecoveryReplicaDescription()
     }
