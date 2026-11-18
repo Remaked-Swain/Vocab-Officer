@@ -326,7 +326,7 @@ enum VocabMutationAuthorityRuntime {
             let storeIdentity = VocabFullAuditReceipt.storeIdentity(for: container)
             if let lease = store.load(),
                lease.formatVersion == VocabMutationLease.currentFormatVersion,
-               lease.storeIdentity == storeIdentity,
+               VocabFullAuditReceipt.storeIdentity(lease.storeIdentity, matches: storeIdentity),
                lease.bootstrapUUID == metadata.bootstrapUUID,
                lease.schemaVersion == metadata.schemaVersion {
                 lock.withLock { authorizedEpoch = validationEpoch }
@@ -336,7 +336,7 @@ enum VocabMutationAuthorityRuntime {
                 from: try receiptURL ?? VocabFullAuditReceiptStore.defaultURL()
             ),
                   receipt.formatVersion == VocabFullAuditReceipt.currentFormatVersion,
-                  receipt.storeIdentity == storeIdentity,
+                  VocabFullAuditReceipt.storeIdentity(receipt.storeIdentity, matches: storeIdentity),
                   receipt.bootstrapUUID == metadata.bootstrapUUID,
                   receipt.schemaVersion == metadata.schemaVersion,
                   receipt.reconciliationVersion == VocabFullAuditReceipt.reconciliationVersion,
@@ -417,7 +417,10 @@ enum VocabMutationAuthorityRuntime {
             }
             guard let lease = store.load(),
                   lease.formatVersion == VocabMutationLease.currentFormatVersion,
-                  lease.storeIdentity == VocabFullAuditReceipt.storeIdentity(for: container),
+                  VocabFullAuditReceipt.storeIdentity(
+                    lease.storeIdentity,
+                    matches: VocabFullAuditReceipt.storeIdentity(for: container)
+                  ),
                   let metadata = try VocabMutationLeaseStore.activeMetadata(context: context),
                   metadata.bootstrapUUID == lease.bootstrapUUID,
                   metadata.schemaVersion == lease.schemaVersion,
@@ -2826,7 +2829,7 @@ struct VocabFullAuditReceipt: Codable, Equatable {
     func validates(container: ModelContainer, snapshot: VocabSyncSnapshot) throws -> Bool {
         let currentFingerprint = try snapshot.contentFingerprint()
         return formatVersion == Self.currentFormatVersion
-            && storeIdentity == Self.storeIdentity(for: container)
+            && Self.storeIdentity(storeIdentity, matches: Self.storeIdentity(for: container))
             && bootstrapUUID == snapshot.syncMetadata?.bootstrapUUID
             && schemaVersion == VocabCloudReconciler.metadataSchemaVersion
             && reconciliationVersion == Self.reconciliationVersion
@@ -2835,7 +2838,43 @@ struct VocabFullAuditReceipt: Codable, Equatable {
     }
 
     static func storeIdentity(for container: ModelContainer) -> String {
-        container.configurations.map { $0.url.standardizedFileURL.path }.sorted().joined(separator: "|")
+        canonicalStoreIdentity(
+            container.configurations.map { $0.url.path }.joined(separator: "|")
+        )
+    }
+
+    static func storeIdentity(_ lhs: String, matches rhs: String) -> Bool {
+        canonicalStoreIdentity(lhs) == canonicalStoreIdentity(rhs)
+    }
+
+    private static func canonicalStoreIdentity(_ identity: String) -> String {
+        identity.split(separator: "|", omittingEmptySubsequences: false)
+            .map {
+                let standardizedPath = URL(fileURLWithPath: String($0))
+                    .standardizedFileURL
+                    .path
+                let aliasedPath: String
+                if standardizedPath == "/var" || standardizedPath.hasPrefix("/var/") {
+                    aliasedPath = "/private" + standardizedPath
+                } else if standardizedPath == "/tmp" || standardizedPath.hasPrefix("/tmp/") {
+                    aliasedPath = "/private" + standardizedPath
+                } else {
+                    aliasedPath = standardizedPath
+                }
+                let resolvedPath = URL(fileURLWithPath: aliasedPath).resolvingSymlinksInPath().path
+                return stableApplicationContainerPath(resolvedPath)
+            }
+            .sorted()
+            .joined(separator: "|")
+    }
+
+    private static func stableApplicationContainerPath(_ path: String) -> String {
+        let marker = "/Containers/Data/Application/"
+        guard let markerRange = path.range(of: marker) else { return path }
+        let suffix = path[markerRange.upperBound...]
+        guard let separator = suffix.firstIndex(of: "/"),
+              UUID(uuidString: String(suffix[..<separator])) != nil else { return path }
+        return String(path[..<markerRange.upperBound]) + "<container>" + suffix[separator...]
     }
 }
 
@@ -3480,20 +3519,28 @@ actor VocabCloudReconciliationWorker {
         typeName: String,
         winningDeletion: [String: Date]
     ) async throws {
-        try await forEachBatch(type) { records in
-            var changed = false
-            for record in records {
-                let key = "\(typeName):\(record.id.uuidString)"
-                guard let date = winningDeletion[key] else { continue }
-                let appliesDeletion = record.deletedAt == nil || record.deletedAt! < date
-                let scrubbed = record.scrubDeletedContent()
-                guard appliesDeletion || scrubbed else { continue }
-                record.deletedAt = max(record.deletedAt ?? .distantPast, date)
-                record.updatedAt = max(record.updatedAt, date)
-                changed = true
-            }
-            if changed { try modelContext.save() }
+        let prefix = "\(typeName):"
+        let targetIDs = Set(winningDeletion.keys.compactMap { key -> UUID? in
+            guard key.hasPrefix(prefix) else { return nil }
+            return UUID(uuidString: String(key.dropFirst(prefix.count)))
+        })
+        guard !targetIDs.isEmpty else { return }
+
+        let descriptor = FetchDescriptor<T>(predicate: #Predicate { targetIDs.contains($0.id) })
+        var changed = false
+        for record in try modelContext.fetch(descriptor) {
+            let key = "\(typeName):\(record.id.uuidString)"
+            guard let date = winningDeletion[key] else { continue }
+            let appliesDeletion = record.deletedAt == nil || record.deletedAt! < date
+            let scrubbed = record.scrubDeletedContent()
+            guard appliesDeletion || scrubbed else { continue }
+            record.deletedAt = max(record.deletedAt ?? .distantPast, date)
+            record.updatedAt = max(record.updatedAt, date)
+            changed = true
         }
+        if changed { try modelContext.save() }
+        try Task.checkCancellation()
+        await Task.yield()
     }
 
     func auditAll(

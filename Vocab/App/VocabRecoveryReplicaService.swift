@@ -166,7 +166,10 @@ actor VocabRecoveryReplicaService {
         try failIfInjected(.export)
         let worker = await VocabRecoveryReplicaWorkerFactory.make(modelContainer: modelContainer)
         guard let receipt,
-              receipt.storeIdentity == VocabFullAuditReceipt.storeIdentity(for: modelContainer),
+              VocabFullAuditReceipt.storeIdentity(
+                receipt.storeIdentity,
+                matches: VocabFullAuditReceipt.storeIdentity(for: modelContainer)
+              ),
               receipt.expectedCounts != nil,
               receipt.requiredIDDigest != nil,
               try await worker.sourceIsCovered(by: receipt) else {

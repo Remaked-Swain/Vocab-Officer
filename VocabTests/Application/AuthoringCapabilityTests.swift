@@ -312,6 +312,17 @@ final class AuthoringCapabilityTests: XCTestCase {
         XCTAssertNil(firstStore.load())
     }
 
+    func testStoreIdentityAcceptsEquivalentIOSContainerPaths() {
+        let legacyContainer = "11111111-1111-1111-1111-111111111111"
+        let currentContainer = "22222222-2222-2222-2222-222222222222"
+        let storeSuffix = "/Library/Application Support/Vocab.store"
+        let legacy = "/var/mobile/Containers/Data/Application/\(legacyContainer)\(storeSuffix)"
+        let canonical = "/private/var/mobile/Containers/Data/Application/\(currentContainer)\(storeSuffix)"
+
+        XCTAssertTrue(VocabFullAuditReceipt.storeIdentity(legacy, matches: canonical))
+        XCTAssertFalse(VocabFullAuditReceipt.storeIdentity(legacy, matches: canonical + "-other"))
+    }
+
     func testValidatedPersistedLeaseReauthorizesNewLaunchEpoch() throws {
         let context = try makeContext()
         _ = insertWord(context: context, term: "epoch-word")
