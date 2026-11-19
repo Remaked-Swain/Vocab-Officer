@@ -1,13 +1,14 @@
 # Verification Checklist
 
-- Save 1 to 100 daily-set entries, append later entries to the same incomplete
-  Seoul-day set, complete it at 100, and reject only overflow or malformed input.
-- Paste 1 to 100 lines in the supported in-app formats, preserving internal
-  punctuation in headwords and multiple meanings.
-- Generate Today, Selected Set, Review and Mixed sessions with at most 20
+- Save any positive number of entries into the normalized-headword vocabulary,
+  merge newly supplied meanings into an existing source of truth, and reject
+  only empty or malformed input.
+- Paste any positive number of lines in the supported in-app formats,
+  preserving internal punctuation in headwords and multiple meanings.
+- Generate Today, Review and Mixed sessions with at most 20
   distinct words and visibly reduced sessions when fewer candidates exist.
-- With two completed intake sets and no attempt for the earlier set, select
-  that earlier set after the later set exists and receive 20 questions.
+- When today has no intake, generate Today from the latest registration day;
+  keep Review spaced and Mixed fairly rotated across the whole library.
 - Reject a zero-candidate start without persisting or presenting an empty
   session; never index an empty test runner question list.
 - Test both directions, multiple core meanings, registered aliases, typo
@@ -16,7 +17,7 @@
   application grading path, and the correction panel shows headword, full
   meanings, submitted answer and automatic result for correct/incorrect
   acknowledgements.
-- Confirm the learning-card screen groups words by intake set and toggles
+- Confirm the learning-card screen presents vocabulary entries and toggles
   headword/meaning cards by activation without mutating learning progress.
 - Confirm `failureCheck` remains historical while `activePriority` recovers
   only through two-correct streaks in both directions.
