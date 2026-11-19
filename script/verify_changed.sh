@@ -44,9 +44,11 @@ if [[ "${1:-}" == "--self-test" ]]; then
   [[ "$records_plan" == *"closed_loop_records.sh\" validate"* ]]
   [[ "$records_plan" != *"xcodebuild"* ]]
 
-  routes_plan="$("$0" --plan Docs/Rules/context-routes.json script/route_context.sh)"
+  routes_plan="$("$0" --plan Docs/Rules/policy-registry.json Docs/Rules/routing-scenarios.json script/route_context.sh script/validate_policy_registry.rb script/measure_context_routing.sh)"
   [[ "$routes_plan" == *"route_context.sh\" --self-test"* ]]
   [[ "$routes_plan" == *"route_context.sh\" --validate"* ]]
+  [[ "$routes_plan" == *"ruby -c"*"validate_policy_registry.rb"* ]]
+  [[ "$routes_plan" == *"measure_context_routing.sh"* ]]
   [[ "$routes_plan" != *"xcodebuild"* ]]
 
   verification_policy_plan="$("$0" --plan Docs/Verification.md)"
@@ -123,7 +125,7 @@ for file in "${changed_files[@]}"; do
     AGENTS.md|Docs/Verification.md|Docs/ClosedLoop/*)
       run_closed_loop=true
       ;;
-    Docs/Rules/*|script/route_context.sh)
+    Docs/Rules/*|script/route_context.sh|script/validate_policy_registry.rb|script/measure_context_routing.sh)
       run_shell=true
       run_closed_loop=true
       run_context_routes=true
@@ -210,8 +212,10 @@ if "$run_closed_loop"; then
 fi
 if "$run_context_routes"; then
   actions+=("bash -n \"$ROOT_DIR/script/route_context.sh\"")
+  actions+=("/usr/bin/ruby -c \"$ROOT_DIR/script/validate_policy_registry.rb\"")
   actions+=("\"$ROOT_DIR/script/route_context.sh\" --self-test")
   actions+=("\"$ROOT_DIR/script/route_context.sh\" --validate")
+  actions+=("\"$ROOT_DIR/script/measure_context_routing.sh\"")
 fi
 if "$run_full" && "$FINAL_STAGE"; then
   actions+=("xcodebuild -project \"$PROJECT\" -scheme Vocab -configuration Debug -derivedDataPath \"$DERIVED_DATA\" -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test")

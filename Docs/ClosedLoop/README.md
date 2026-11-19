@@ -33,11 +33,11 @@ Before editing or starting a run, the main agent must establish:
 5. focused verification selected by `script/verify_changed.sh --plan`
 
 Run `script/route_context.sh` with `--intent inspect|change`, the task tags and
-intended changed paths, then load only the returned documents. Use
-`--list-tasks` to discover tags.
-Read `INDEX.md` only for durable-ledger edits, historical investigation or an
-explicit route. `index.json` remains tooling input and does not need to enter
-conversational context.
+known paths. Its known-required output is a mandatory minimum, never a limit.
+Inspect other documents when warnings, dependencies, conflicts or scope changes
+make them useful. Use `--list-tasks` and `Docs/Rules/CATALOG.md` for discovery,
+and read `INDEX.md` whenever applicable policy remains unclear. `index.json`
+remains tooling input and does not need to enter conversational context.
 
 ## Enforced Flow
 

@@ -45,17 +45,19 @@ only when its scope applies to the current change.
 | CL-0034 | active | 2026-11-17 | terminal mastery, long-term consolidation, automatic scrub and resurrection prevention | [Terminal mastery and automatic retirement](records/CL-0034-terminal-mastery-retirement.md) | retain while learning lifecycle, deletion, CloudKit or recovery exists |
 | CL-0035 | active | 2026-11-18 | immutable Main evidence for CL-0034 re-audit | [Terminal mastery rework submission](records/CL-0035-terminal-mastery-rework-submission.md) | retain with CL-0034 |
 | CL-0036 | completed | 2026-11-18 | final read-only audit approval for terminal mastery | [Terminal mastery audit approval](audits/RUN-20261117-CL0034-audit.md) | retain with CL-0034 |
-| CL-0037 | active | 2026-11-19 | agent bootstrap, rule routing, selective document loading, harness verification | [Context routing harness](records/CL-0037-context-routing-harness.md) | retain while Codex workflow uses this harness |
+| CL-0037 | superseded | 2026-11-19 | historical exclusive context routing; replaced by CL-0038 | [Context routing harness](records/CL-0037-context-routing-harness.md) | retain through 2027-02-17 and while it explains the routing regression |
+| CL-0038 | active | 2026-11-19 | open policy discovery, fail-open routing, semantic recall and cross-session continuity | [Open context discovery and durable routing](records/CL-0038-open-context-discovery.md) | retain while Codex workflow uses this harness |
 
 ## Context Routing
 
 Use `script/route_context.sh` with `--intent inspect|change`, task tags and
-intended changed paths. Its manifest, `Docs/Rules/context-routes.json`, is the
-executable source of truth for selective document loading. Read this full
-ledger only when maintaining a durable record, investigating history or
-following an explicit route.
+known paths. Its registry is a discovery source, not a document-access limit.
+Read additional documents whenever warnings, dependencies, conflicts or scope
+changes require them, and consult this full ledger whenever applicability is
+unclear.
 
-Superseded and archived records are never routed by default. The router
-validates that every routed Closed-Loop record is indexed and active.
+Superseded and archived records are never required by default. They appear
+only through explicit historical conditions. The router validates routed
+records, typed edges and semantic scenarios.
 `script/verify_changed.sh` remains the independent executable source of truth
 for test-impact selection.

@@ -16,10 +16,13 @@ This file is the repository entry point for Codex and review agents.
   any accepted tradeoff or residual risk in the relevant decision evidence.
 - Performance and readability are acceptance criteria for every code change,
   even when the user does not call them out explicitly.
-- Before loading detailed project documents, run `script/route_context.sh`
-  with `--intent inspect|change`, the request's task tags and known changed
-  paths. Use `--list-tasks` when the available tags are unclear, then read only
-  the returned documents.
+- Use `script/route_context.sh` to discover a known-required minimum, likely
+  relevant documents, conditions and warnings. Router output is never an
+  allowlist: inspect additional documents whenever dependencies, ambiguity,
+  conflicts or changed scope demand it. Re-run discovery after code inspection
+  and against the final diff. If routing fails or remains uncertain, fail open
+  through `Docs/Rules/CATALOG.md`, direct repository inspection and the full
+  Closed-Loop index.
 - Select verification with `script/verify_changed.sh`; expand it only when
   persistence, shared contracts, project settings, or release acceptance
   require broader coverage.
@@ -64,9 +67,8 @@ that future work must consult.
 
 Durable decisions live in `Docs/ClosedLoop/records/` and are indexed by both
 `Docs/ClosedLoop/INDEX.md` and `Docs/ClosedLoop/index.json`. The context router
-is the normal loading entry point. Read the full index only when editing the
-durable ledger, investigating historical or superseded behavior, or when the
-router explicitly returns it.
+is a discovery aid, not an access boundary. Read the full index whenever the
+catalog, warnings or repository evidence leave the applicable policy unclear.
 
 Durable Auditor approvals live in `Docs/ClosedLoop/audits/`; the local
 registration/hash chain remains under `.git/closed-loop-pipeline/completed/`.

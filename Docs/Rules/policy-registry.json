@@ -1,0 +1,277 @@
+{
+  "schemaVersion": 1,
+  "alwaysRequired": ["AGENTS.md", "Docs/Rules/README.md"],
+  "fallbackDocuments": [
+    "Docs/Rules/CATALOG.md",
+    "Docs/Architecture.md",
+    "Docs/Verification.md",
+    "Docs/ClosedLoop/INDEX.md"
+  ],
+  "applicationPathPrefixes": ["Vocab/", "VocabIOS/", "VocabTests/", "Vocab.xcodeproj/"],
+  "broadSharedPaths": [
+    "Vocab/Application/LearningCoordinator.swift",
+    "Vocab/Presentation/RootView.swift",
+    "VocabIOS/Presentation/VocabIOSRootView.swift",
+    "Vocab.xcodeproj/"
+  ],
+  "tasks": {
+    "cloudkit-authority": "CloudKit mutation leases, authoring authority or store notifications",
+    "cloudkit-bootstrap": "initial Mac upload, mirrored-store migration or bootstrap claims",
+    "cloudkit-reconciliation": "incremental import, full audit or reconciliation scheduling",
+    "cloudkit-recovery": "recovery replicas, explicit recovery or store replacement",
+    "concurrency": "Swift Concurrency, actor isolation or legacy GCD migration",
+    "correction": "parenthesized meanings, correction credit or meaning tracking",
+    "deletion": "data deletion, retirement, tombstones or recovery safety",
+    "harness": "agent workflow, routing, verification or Closed-Loop harness",
+    "intake": "vocabulary registration, paste intake or normalized-headword merge",
+    "ios-sync": "iPhone hydration, learning facts or cross-device sync",
+    "mastery": "review scheduling, consolidation or terminal mastery",
+    "memory-aid": "Gemini prompts, caching or generated memory-aid quality",
+    "multiple-choice": "choice generation, persistence or choice UX",
+    "ocr": "Vision OCR, image layout or printed source numbering",
+    "performance": "performance-sensitive implementation or acceptance measurement",
+    "repository-privacy": "publish hygiene, secrets or repository-local data",
+    "review-ui": "review grid presentation, accessibility or review-card layout",
+    "testing": "session selection, grading, correction or learning-card behavior",
+    "vocabulary": "canonical vocabulary behavior or persistence"
+  },
+  "rules": [
+    {
+      "id": "swift-structure",
+      "pathSuffixes": [".swift"],
+      "required": ["Docs/SwiftStyleGuide.md", "Docs/ClosedLoop/records/CL-0028-swift-coding-conventions.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "application-structure",
+      "pathPrefixes": ["Vocab/", "VocabIOS/", "VocabTests/", "Vocab.xcodeproj/"],
+      "required": ["Docs/Architecture.md", "Docs/Verification.md"],
+      "changeRequired": [
+        "Docs/ClosedLoop/records/CL-0007-session-bootstrap-and-tooling-discipline.md",
+        "Docs/ClosedLoop/records/CL-0025-main-auditor-closed-loop.md",
+        "Docs/ClosedLoop/records/CL-0027-unbounded-auditor-rework.md"
+      ],
+      "recommended": ["Docs/Performance.md"],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "harness",
+      "tasks": ["harness"],
+      "pathPrefixes": ["AGENTS.md", "Docs/Rules/", "Docs/ClosedLoop/", "Docs/Verification.md", "script/closed_loop_", "script/route_context.sh", "script/validate_policy_registry.rb", "script/measure_context_routing.sh", "script/verify_changed.sh"],
+      "required": [
+        "Docs/ClosedLoop/records/CL-0002-durable-records-and-selective-verification.md",
+        "Docs/ClosedLoop/records/CL-0007-session-bootstrap-and-tooling-discipline.md",
+        "Docs/ClosedLoop/records/CL-0025-main-auditor-closed-loop.md",
+        "Docs/ClosedLoop/records/CL-0027-unbounded-auditor-rework.md",
+        "Docs/ClosedLoop/records/CL-0038-open-context-discovery.md"
+      ],
+      "recommended": ["Docs/ClosedLoop/README.md"],
+      "conditional": [{"when": "investigating superseded routing behavior", "documents": ["Docs/ClosedLoop/records/CL-0037-context-routing-harness.md"]}],
+      "edges": [],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "vocabulary",
+      "tasks": ["vocabulary"],
+      "required": ["Docs/Architecture.md", "Docs/ClosedLoop/records/CL-0001-vocab-mvp-implementation.md", "Docs/ClosedLoop/records/CL-0033-setless-vocabulary-registration.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "intake",
+      "tasks": ["intake"],
+      "required": ["Docs/ClosedLoop/records/CL-0004-in-app-paste-and-publish-hygiene.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [{"to": "vocabulary", "type": "requires"}],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "testing",
+      "tasks": ["testing"],
+      "required": [
+        "Docs/ClosedLoop/records/CL-0005-study-cards-selected-set-testing-and-installation.md",
+        "Docs/ClosedLoop/records/CL-0006-english-to-korean-review-decay.md",
+        "Docs/ClosedLoop/records/CL-0008-loose-word-testing.md",
+        "Docs/ClosedLoop/records/CL-0009-previous-set-review-reexposure.md",
+        "Docs/ClosedLoop/records/CL-0010-parenthesized-comma-meaning-tracking.md"
+      ],
+      "recommended": [],
+      "conditional": [],
+      "edges": [{"to": "vocabulary", "type": "requires"}],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "review-ui",
+      "tasks": ["review-ui"],
+      "required": ["Docs/ClosedLoop/records/CL-0013-review-grid-cards.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [{"to": "testing", "type": "recommends"}],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "correction",
+      "tasks": ["correction"],
+      "required": ["Docs/ClosedLoop/records/CL-0010-parenthesized-comma-meaning-tracking.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [{"to": "vocabulary", "type": "requires"}],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "ocr",
+      "tasks": ["ocr"],
+      "required": ["Docs/ClosedLoop/records/CL-0011-ocr-intake-input-io-performance-refactor.md", "Docs/ClosedLoop/records/CL-0029-restarted-source-numbering-and-adaptive-ocr.md"],
+      "recommended": ["Docs/ClosedLoop/records/CL-0004-in-app-paste-and-publish-hygiene.md"],
+      "conditional": [],
+      "edges": [{"to": "intake", "type": "recommends"}],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "cloudkit-bootstrap",
+      "tasks": ["cloudkit-bootstrap"],
+      "required": ["Docs/iCloudIOSSyncPlan.md", "Docs/PerRecordCloudKitMirroringPlan.md", "Docs/ClosedLoop/records/CL-0014-automatic-batch-icloud-sync.md", "Docs/ClosedLoop/records/CL-0016-per-record-cloudkit-mirroring.md"],
+      "recommended": [],
+      "conditional": [{"when": "bootstrap recovery or store replacement is involved", "documents": ["Docs/ClosedLoop/records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md"]}],
+      "edges": [],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "cloudkit-reconciliation",
+      "tasks": ["cloudkit-reconciliation"],
+      "required": ["Docs/PerRecordCloudKitMirroringPlan.md", "Docs/ClosedLoop/records/CL-0016-per-record-cloudkit-mirroring.md", "Docs/ClosedLoop/records/CL-0017-cloudkit-reconciliation-scheduling.md", "Docs/ClosedLoop/records/CL-0023-store-notification-mutation-authority.md", "Docs/ClosedLoop/records/CL-0026-foreground-incremental-cloud-import.md"],
+      "recommended": ["Docs/Performance.md"],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "cloudkit-recovery",
+      "tasks": ["cloudkit-recovery"],
+      "required": ["Docs/PerRecordCloudKitMirroringPlan.md", "Docs/ClosedLoop/records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md", "Docs/ClosedLoop/records/CL-0020-foreground-safe-recovery-replica-refresh.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "cloudkit-authority",
+      "tasks": ["cloudkit-authority"],
+      "required": ["Docs/ClosedLoop/records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md", "Docs/ClosedLoop/records/CL-0021-foreground-authoring-and-memory-aid-quality.md", "Docs/ClosedLoop/records/CL-0023-store-notification-mutation-authority.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "ios-sync",
+      "tasks": ["ios-sync"],
+      "required": ["Docs/iCloudIOSSyncPlan.md", "Docs/ClosedLoop/records/CL-0014-automatic-batch-icloud-sync.md", "Docs/ClosedLoop/records/CL-0016-per-record-cloudkit-mirroring.md", "Docs/ClosedLoop/records/CL-0022-ios-learning-facts-offline-authority.md", "Docs/ClosedLoop/records/CL-0026-foreground-incremental-cloud-import.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "deletion",
+      "tasks": ["deletion"],
+      "required": ["Docs/ClosedLoop/records/CL-0003-local-intake-without-json-backup.md", "Docs/ClosedLoop/records/CL-0034-terminal-mastery-retirement.md"],
+      "recommended": [],
+      "conditional": [{"when": "CloudKit or recovery graphs are affected", "documents": ["Docs/ClosedLoop/records/CL-0016-per-record-cloudkit-mirroring.md", "Docs/ClosedLoop/records/CL-0019-explicit-recovery-and-cloudkit-write-safety.md", "Docs/ClosedLoop/records/CL-0020-foreground-safe-recovery-replica-refresh.md"]}],
+      "edges": [{"to": "vocabulary", "type": "requires"}, {"to": "cloudkit-recovery", "type": "recommends"}],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "mastery",
+      "tasks": ["mastery"],
+      "required": ["Docs/ClosedLoop/records/CL-0030-direction-agnostic-mastery-revalidation.md", "Docs/ClosedLoop/records/CL-0031-spaced-relearning-and-mixed-rotation.md", "Docs/ClosedLoop/records/CL-0032-exam-horizon-mastery-promotion.md", "Docs/ClosedLoop/records/CL-0034-terminal-mastery-retirement.md"],
+      "recommended": [],
+      "conditional": [{"when": "question format or distractor credit changes", "documents": ["Docs/ClosedLoop/records/CL-0024-multiple-choice-test-mode.md"]}],
+      "edges": [{"to": "vocabulary", "type": "requires"}],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "multiple-choice",
+      "tasks": ["multiple-choice"],
+      "required": ["Docs/ClosedLoop/records/CL-0024-multiple-choice-test-mode.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [{"to": "testing", "type": "recommends"}],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "memory-aid",
+      "tasks": ["memory-aid"],
+      "required": ["Docs/ClosedLoop/records/CL-0021-foreground-authoring-and-memory-aid-quality.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "performance",
+      "tasks": ["performance"],
+      "required": ["Docs/Performance.md"],
+      "recommended": ["Docs/ClosedLoop/records/CL-0011-ocr-intake-input-io-performance-refactor.md"],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "transient"
+    },
+    {
+      "id": "repository-privacy",
+      "tasks": ["repository-privacy"],
+      "required": ["Docs/RepositoryPrivacy.md", "Docs/ClosedLoop/records/CL-0004-in-app-paste-and-publish-hygiene.md"],
+      "recommended": [],
+      "conditional": [],
+      "edges": [],
+      "audit": "required",
+      "evidence": "durable"
+    },
+    {
+      "id": "concurrency",
+      "tasks": ["concurrency"],
+      "required": ["Docs/SwiftStyleGuide.md", "Docs/ClosedLoop/records/CL-0028-swift-coding-conventions.md"],
+      "recommended": [],
+      "conditional": [{"when": "removing an inventoried legacy primitive", "documents": ["Docs/Rules/legacy-concurrency-allowlist.txt"]}],
+      "edges": [],
+      "audit": "required",
+      "evidence": "transient"
+    }
+  ],
+  "knownConflicts": [
+    {
+      "documents": [
+        "Docs/ClosedLoop/records/CL-0005-study-cards-selected-set-testing-and-installation.md",
+        "Docs/ClosedLoop/records/CL-0033-setless-vocabulary-registration.md"
+      ],
+      "message": "CL-0033 supersedes CL-0005 selected-set product behavior; retain only CL-0005 study-card and still-applicable testing details."
+    }
+  ]
+}

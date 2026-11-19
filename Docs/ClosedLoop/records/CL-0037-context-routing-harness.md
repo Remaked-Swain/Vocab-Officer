@@ -2,11 +2,12 @@
 
 | Field | Value |
 | --- | --- |
-| Status | active |
+| Status | superseded |
 | Date | 2026-11-19 (Asia/Seoul) |
 | Scope | agent bootstrap, rule routing, selective document loading, harness verification |
 | Agents | Codex main agent, one read-only Auditor |
-| Archive review | retain while Codex workflow uses this harness |
+| Superseded by | CL-0038 |
+| Archive review | retain through 2027-02-17 and while it explains the routing regression |
 
 ## Problem
 
