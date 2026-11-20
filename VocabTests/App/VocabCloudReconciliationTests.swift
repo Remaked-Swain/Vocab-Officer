@@ -818,6 +818,24 @@ final class VocabCloudReconciliationTests: XCTestCase {
         XCTAssertNil(remaining, "Concurrent import events must collapse into one follow-up pass")
     }
 
+    func testSettingsStatusCheckUsesLightweightRefreshAfterContentBecameUsable() {
+        XCTAssertFalse(VocabSettingsHydrationRefreshPolicy.shouldRunFullAudit(
+            syncMode: .cloudKitPrivate,
+            localContentIsUsable: true
+        ))
+    }
+
+    func testSettingsStatusCheckKeepsFullAuditForUnestablishedMirroredContent() {
+        XCTAssertTrue(VocabSettingsHydrationRefreshPolicy.shouldRunFullAudit(
+            syncMode: .cloudKitPrivate,
+            localContentIsUsable: false
+        ))
+        XCTAssertFalse(VocabSettingsHydrationRefreshPolicy.shouldRunFullAudit(
+            syncMode: .localOnly,
+            localContentIsUsable: false
+        ))
+    }
+
     func testWorkerIsCreatedOffMainAndRoutineHydrationPollingKeepsMainActorHeartbeatBelow100Milliseconds() async throws {
         let fixtureCount = 1_000
         let container = try makeHeartbeatFixtureContainer(count: fixtureCount)

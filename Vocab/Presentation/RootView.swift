@@ -775,7 +775,13 @@ struct SettingsView: View {
             accountState: await accountState,
             claimStatus: fetchedClaimStatus
         )
-        await refreshHydrationStatus(runFullAudit: true)
+        let mode = VocabSyncMode.current(allowsCloudKit: true)
+        await refreshHydrationStatus(
+            runFullAudit: VocabSettingsHydrationRefreshPolicy.shouldRunFullAudit(
+                syncMode: mode,
+                localContentIsUsable: VocabSyncRuntimeStateStore.persistedLocalContentIsUsable()
+            )
+        )
         refreshRecoveryReplicaDescription()
     }
 
@@ -785,7 +791,7 @@ struct SettingsView: View {
             let worker = await VocabCloudReconciliationWorkerFactory.make(
                 modelContainer: modelContext.container
             )
-            let status = if runFullAudit && mode == .cloudKitPrivate {
+            let status = if runFullAudit {
                 try await worker.auditAll(syncMode: mode)
             } else {
                 try await worker.hydrationStatus(syncMode: mode)
@@ -939,5 +945,14 @@ struct VocabBootstrapClaimSettingsPresentation: Equatable {
             }
             details = "시작: \(claim.createdAt.formatted())\n최근 확인: \(claim.updatedAt.formatted())"
         }
+    }
+}
+
+enum VocabSettingsHydrationRefreshPolicy {
+    static func shouldRunFullAudit(
+        syncMode: VocabSyncMode,
+        localContentIsUsable: Bool
+    ) -> Bool {
+        syncMode == .cloudKitPrivate && !localContentIsUsable
     }
 }
