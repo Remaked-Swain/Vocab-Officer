@@ -9,8 +9,9 @@
       "Bash(.claude/skills/verify/select.sh)",
       "Bash(.claude/skills/verify/select.sh --run:*)",
       "Bash(.claude/hooks/self_test.sh)",
-      "Bash(./script/swift_style_check.sh:*)",
-      "Bash(script/swift_style_check.sh:*)",
+      "Bash(.claude/lint/swift_lint.sh)",
+      "Bash(.claude/lint/swift_lint.sh --list)",
+      "Bash(.claude/lint/swift_lint.sh --self-test)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
       "Bash(git log:*)"
@@ -22,14 +23,16 @@
     ],
     "deny": [
       "Edit(.git/claude-audit/**)",
-      "Write(.git/claude-audit/**)"
+      "Write(.git/claude-audit/**)",
+      "Edit(.git/claude-metrics/**)",
+      "Write(.git/claude-metrics/**)"
     ]
   },
   "hooks": {
-    "SessionStart": [
+    "InstructionsLoaded": [
       {
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/session_start.sh" }
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/log_instructions.sh" }
         ]
       }
     ],
@@ -45,7 +48,7 @@
       {
         "matcher": "Edit|Write|MultiEdit",
         "hooks": [
-          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/swift_style_after_edit.sh" }
+          { "type": "command", "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/lint_after_edit.sh" }
         ]
       }
     ],

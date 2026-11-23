@@ -5,8 +5,9 @@ paths:
 
 # Swift Conventions
 
-Objective bans are enforced by `script/swift_style_check.sh` (hook-run after
-every `.swift` edit). The Auditor owns the contextual rules below.
+Objective bans live in `.claude/lint/swift.rules` (run by
+`.claude/lint/swift_lint.sh` after every `.swift` edit). The Auditor owns the
+contextual rules below.
 
 ## Control Flow And Iteration
 
@@ -40,8 +41,8 @@ every `.swift` edit). The Auditor owns the contextual rules below.
 
 - Modern Swift Concurrency only. No new `DispatchQueue`, `DispatchGroup`,
   `DispatchSemaphore`, `NSLock`/unfair locks; isolate mutable state in actors.
-  Existing occurrences are a frozen backlog in
-  `script/legacy-concurrency-allowlist.txt`, not precedent.
+  Existing occurrences are a frozen backlog
+  (`.claude/lint/baselines/legacy-concurrency.txt`), not precedent.
 - UI state on `@MainActor`; network, CloudKit, OCR, serialization and large
   collection work off the main actor. Structured concurrency and cancellation.
 - Lifecycle events never trigger unbounded work: coalesce, keep foreground

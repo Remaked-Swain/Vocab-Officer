@@ -43,10 +43,10 @@ add_test() {
 
 for file in "${files[@]}"; do
   file="${file#"$ROOT_DIR"/}"
-  # Removing a file outside the app targets needs no test selection.
+  # Removing a file outside the app targets and harness needs no tests.
   if [[ ! -e "$ROOT_DIR/$file" ]]; then
     case "$file" in
-      Vocab/*|VocabIOS/*|VocabTests/*|Vocab.xcodeproj/*) ;;
+      Vocab/*|VocabIOS/*|VocabTests/*|Vocab.xcodeproj/*|.claude/*|CLAUDE.md) ;;
       *) continue ;;
     esac
   fi
@@ -65,13 +65,13 @@ for file in "${files[@]}"; do
       build=true ;;
     VocabTests/*)
       full=true ;;
-    script/swift_style_check.sh|script/legacy-concurrency-allowlist.txt)
-      shell=true; style=true; style_self=true ;;
+    .claude/lint/*)
+      harness=true; style=true; style_self=true ;;
     script/*.sh)
       shell=true ;;
     CLAUDE.md|.claude/*)
       harness=true ;;
-    Docs/*|README.md|.gitignore|*.md)
+    README.md|.gitignore|*.md)
       ;;
     *)
       full=true ;;
@@ -89,8 +89,8 @@ done
 
 declare -a actions=()
 "$shell" && actions+=("for f in \"$ROOT_DIR\"/script/*.sh; do bash -n \"\$f\"; done")
-"$style_self" && actions+=("\"$ROOT_DIR/script/swift_style_check.sh\" --self-test")
-"$style" && actions+=("\"$ROOT_DIR/script/swift_style_check.sh\"")
+"$style_self" && actions+=("\"$ROOT_DIR/.claude/lint/swift_lint.sh\" --self-test")
+"$style" && actions+=("\"$ROOT_DIR/.claude/lint/swift_lint.sh\"")
 "$harness" && actions+=("\"$ROOT_DIR/.claude/hooks/self_test.sh\"")
 if "$full" && "$FINAL"; then
   actions+=("$XCTEST")

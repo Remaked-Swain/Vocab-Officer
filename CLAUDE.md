@@ -30,9 +30,28 @@ one explicitly when a change affects its area without touching those paths.
 4. Code, persistence, sync, security, deletion, release and harness changes
    need the `auditor` subagent before commit; use the `audit` skill.
    Questions, inspection and command-only work need no Auditor.
-5. When a change alters a policy recorded in `.claude/rules/`, update that
-   rule in the same change. Rules hold current truth only; rationale goes in
-   the commit message, history stays in Git.
+5. When a change alters a recorded policy, update it in the same change.
+   A new, changed or removed convention from the user goes through the
+   `convention` skill.
+
+## Where Conventions Live
+
+| Kind | Place | Enforced by |
+| --- | --- | --- |
+| Area design and contextual code rules | `.claude/rules/<area>.md` (`paths:` scoped) | auto-load + Auditor |
+| Objective, pattern-checkable bans | `.claude/lint/swift.rules` (+ `baselines/`) | lint on edit and on `git commit` |
+| Product, workflow, Git, privacy | this file | always loaded |
+
+Rules hold current truth only. A failed approach worth not repeating goes in
+its area rule under `## Pitfalls` as one line with the commit hash.
+
+## Git
+
+- Commits: `type(scope): imperative summary` (`feat`, `fix`, `refactor`,
+  `docs`, `chore`, `test`); the body states why. Audited commits end with
+  `Audit: approved`. One logical change per commit.
+- PRs target `develop`; the description lists changed areas, verification
+  run and residual risk. Issues state observed vs expected behavior.
 
 ## Agents And Tools
 
@@ -41,11 +60,11 @@ one explicitly when a change affects its area without touching those paths.
   Explore, Plan, general-purpose or fork agents for repository work.
 - Edit Swift, Xcode and harness files with Edit/Write, never with Python or
   `sed -i` rewrites.
-- Hooks: a `.swift` edit runs `script/swift_style_check.sh` (failure =
-  blocking finding); the auditor's verdict is recorded under
-  `.git/claude-audit/` bound to a worktree fingerprint, and `git commit` of
-  gated paths is blocked without a matching approval. Never write that
-  directory yourself.
+- Hooks: a `.swift` or lint-rule edit runs the lint (failure = blocking
+  finding); the auditor's verdict is recorded under `.git/claude-audit/`
+  bound to the worktree tree, and `git commit` of gated paths is blocked
+  without a matching approval; loaded rule files are logged to
+  `.git/claude-metrics/`. Never write under `.git/claude-*` yourself.
 
 ## Privacy
 

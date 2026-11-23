@@ -112,8 +112,8 @@ Gemini API 키는 앱의 **설정**에서 입력하며 Keychain에 저장됩니�
 | `Vocab/Presentation` | macOS 화면과 상호작용 |
 | `VocabIOS` | iPhone companion 앱 |
 | `VocabTests` | 도메인, 애플리케이션, 저장소·동기화 회귀 테스트 |
-| `CLAUDE.md`, `.claude` | Claude Code 하네스: 계약, 영역 규칙, Auditor, 검증·감사 스킬, 훅 |
-| `script` | Swift 스타일 검사, 성능 측정, 빌드·설치 도구 |
+| `CLAUDE.md`, `.claude` | Claude Code 하네스: 계약, 영역 규칙, Swift 린트 규칙, Auditor, 스킬, 훅 |
+| `script` | 성능 측정, 빌드·설치 도구 |
 
 ## 데이터와 개인정보
 

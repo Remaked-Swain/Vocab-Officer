@@ -20,6 +20,14 @@ changed="$(vocab_changed_paths "$root")"
 gated="$(grep -E "$VOCAB_GATED_PATHS" <<< "$changed" || true)"
 [[ -n "$gated" ]] || exit 0
 
+# Lint at commit too: Swift can change outside Edit/Write (checkout, apply).
+if grep -Eq '(\.swift$|^\.claude/lint/)' <<< "$gated"; then
+  if ! lint_output="$("$root/.claude/lint/swift_lint.sh" 2>&1)"; then
+    printf 'Commit blocked: Swift lint failed.\n%s\n' "$lint_output" >&2
+    exit 2
+  fi
+fi
+
 audit_dir="$(vocab_audit_dir "$root")"
 current="$(vocab_worktree_fingerprint "$root")"
 approved="$(cat "$audit_dir/approved" 2>/dev/null || true)"

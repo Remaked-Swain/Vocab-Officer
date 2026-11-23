@@ -1,0 +1,62 @@
+# Objective Swift lint rules for Vocab, enforced by swift_lint.sh.
+#
+# One block per rule. Add, change or delete a block to change the lint;
+# contextual guidance belongs in .claude/rules/*.md instead.
+#
+#   [rule-id]        lowercase id, reported on violation
+#   message  =       why it is wrong / what to do instead (required)
+#   pattern  =       PCRE matched per line (required)
+#   paths    =       space-separated targets; a directory means its *.swift
+#                    (default: Vocab VocabIOS VocabTests)
+#   allow    =       marker that exempts a line (optional)
+#   baseline =       file in baselines/ freezing existing matches as backlog;
+#                    new matches fail, removed ones require shrinking it
+#                    (optional; regenerate with swift_lint.sh --baseline <id>)
+#   example  =       one-line Swift violation; the self-test asserts it fails
+
+[no-foreach]
+message = use for-in instead of forEach for imperative iteration
+pattern = \.forEach\s*\{
+example = func invalid(_ values: [Int]) { values.forEach { print($0) } }
+
+[no-force-try]
+message = do not force a throwing operation with try!
+pattern = try!\s
+paths = Vocab VocabIOS
+example = func invalid() { _ = try! throwingCall() }
+
+[no-force-cast]
+message = do not force-cast with as!
+pattern = as!\s
+paths = Vocab VocabIOS
+example = func invalid(_ value: Any) { _ = value as! Int }
+
+[fatal-error-marker]
+message = fatalError requires an audited irrecoverable-bootstrap marker
+pattern = fatalError\s*\(
+paths = Vocab VocabIOS
+allow = swift-style: allow(fatalError)
+example = func invalid() { fatalError("stop") }
+
+[no-precondition-failure]
+message = do not terminate production flows with preconditionFailure
+pattern = preconditionFailure\s*\(
+paths = Vocab VocabIOS
+example = func invalid() { preconditionFailure("stop") }
+
+[no-main-queue-async]
+message = use actor isolation instead of DispatchQueue.main.async
+pattern = DispatchQueue\.main\.async
+example = func invalid() { DispatchQueue.main.async {} }
+
+[legacy-concurrency]
+message = no new GCD or lock-based coordination; use Swift Concurrency and actors
+pattern = \b(NSLock|NSRecursiveLock|NSCondition|DispatchQueue|DispatchGroup|DispatchSemaphore|os_unfair_lock)\b
+baseline = legacy-concurrency.txt
+example = func invalid() { _ = NSLock() }
+
+[domain-purity]
+message = Domain must not depend on SwiftUI, SwiftData, CloudKit or platform UI
+pattern = ^\s*(@testable\s+)?import\s+(SwiftUI|SwiftData|CloudKit|UIKit|AppKit)\b
+paths = Vocab/Domain
+example = import SwiftData
