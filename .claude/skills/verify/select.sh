@@ -31,7 +31,7 @@ fi
 [[ "${#files[@]}" -gt 0 ]] || { echo "No changed files; nothing to verify."; exit 0; }
 
 full=false; build=false; manual_ui=false; style=false; style_self=false
-shell=false; harness=false
+shell=false; harness=false; perf_self=false
 declare -a test_classes=()
 add_test() {
   local existing
@@ -67,6 +67,8 @@ for file in "${files[@]}"; do
       full=true ;;
     .claude/lint/*)
       harness=true; style=true; style_self=true ;;
+    script/measure_intake_performance.sh)
+      shell=true; perf_self=true ;;
     script/*.sh)
       shell=true ;;
     CLAUDE.md|.claude/*)
@@ -89,6 +91,7 @@ done
 
 declare -a actions=()
 "$shell" && actions+=("for f in \"$ROOT_DIR\"/script/*.sh; do bash -n \"\$f\"; done")
+"$perf_self" && actions+=("\"$ROOT_DIR/script/measure_intake_performance.sh\" --self-test")
 "$style_self" && actions+=("\"$ROOT_DIR/.claude/lint/swift_lint.sh\" --self-test")
 "$style" && actions+=("\"$ROOT_DIR/.claude/lint/swift_lint.sh\"")
 "$harness" && actions+=("\"$ROOT_DIR/.claude/hooks/self_test.sh\"")
