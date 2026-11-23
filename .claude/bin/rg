@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Repository scripts call `rg` directly. Claude Code exposes ripgrep only as an
+# interactive shell function, so resolve a real binary for non-interactive use.
+set -euo pipefail
+
+self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+IFS=: read -r -a path_dirs <<< "${PATH:-}"
+for dir in "${path_dirs[@]}"; do
+  [[ -n "$dir" && "$dir" != "$self_dir" && -x "$dir/rg" ]] || continue
+  exec "$dir/rg" "$@"
+done
+
+if [[ -x "${CLAUDE_CODE_EXECPATH:-}" ]]; then
+  exec -a rg "$CLAUDE_CODE_EXECPATH" "$@"
+fi
+
+echo "rg shim: no ripgrep binary found (install ripgrep or run inside Claude Code)." >&2
+exit 2
