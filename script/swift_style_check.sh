@@ -68,7 +68,7 @@ run_check() {
   check_rule 'do not terminate production flows with preconditionFailure' 'preconditionFailure[[:space:]]*\(' production
   check_rule 'use actor isolation instead of DispatchQueue.main.async' 'DispatchQueue\.main\.async' all
 
-  local concurrency_allowlist="$root/Docs/Rules/legacy-concurrency-allowlist.txt"
+  local concurrency_allowlist="$root/script/legacy-concurrency-allowlist.txt"
   [[ -f "$concurrency_allowlist" ]] || {
     echo "Swift style check cannot find the legacy concurrency allowlist." >&2
     return 2
@@ -102,8 +102,8 @@ run_check() {
 if [[ "${1:-}" == "--self-test" ]]; then
   temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/vocab-swift-style.XXXXXX")"
   trap 'rm -rf "$temp_dir"' EXIT INT TERM
-  mkdir -p "$temp_dir/Vocab" "$temp_dir/VocabIOS" "$temp_dir/VocabTests" "$temp_dir/script" "$temp_dir/Docs/Rules"
-  : > "$temp_dir/Docs/Rules/legacy-concurrency-allowlist.txt"
+  mkdir -p "$temp_dir/Vocab" "$temp_dir/VocabIOS" "$temp_dir/VocabTests" "$temp_dir/script"
+  : > "$temp_dir/script/legacy-concurrency-allowlist.txt"
   cp "$0" "$temp_dir/script/swift_style_check.sh"
   chmod +x "$temp_dir/script/swift_style_check.sh"
 
