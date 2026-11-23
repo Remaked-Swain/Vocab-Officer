@@ -10,14 +10,19 @@ INSTALL_BUNDLE="/Applications/$APP_NAME.app"
 CONFIGURATION="Debug"
 BUILD_DIR="$ROOT_DIR/build"
 
-if [[ "$MODE" == "--install" || "$MODE" == "install" || "$MODE" == "--install-verify" || "$MODE" == "install-verify" ]]; then
-  CONFIGURATION="Release"
-  BUILD_DIR="$ROOT_DIR/release-build"
-fi
+case "$MODE" in
+  run|--debug|debug|--logs|logs|--telemetry|telemetry|--verify|verify) ;;
+  --install|install|--install-verify|install-verify)
+    CONFIGURATION="Release"
+    BUILD_DIR="$ROOT_DIR/release-build"
+    ;;
+  *)
+    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--install|--install-verify]" >&2
+    exit 2
+    ;;
+esac
 
 APP_BUNDLE="$BUILD_DIR/Build/Products/$CONFIGURATION/$APP_NAME.app"
-
-pkill -x "$APP_NAME" >/dev/null 2>&1 || true
 
 xcodebuild \
   -project "$PROJECT" \
@@ -27,8 +32,32 @@ xcodebuild \
   -destination 'platform=macOS' \
   build
 
+# Quit the running app only once a replacement build exists, and wait until it
+# has exited so two instances never share the store and launch checks cannot
+# mistake the old process for the new one.
+pkill -x "$APP_NAME" >/dev/null 2>&1 || true
+for attempt in $(seq 1 20); do
+  pgrep -x "$APP_NAME" >/dev/null || break
+  sleep 0.5
+done
+if pgrep -x "$APP_NAME" >/dev/null; then
+  echo "$APP_NAME did not quit within 10 seconds; not launching the new build." >&2
+  exit 1
+fi
+
 open_app() {
   /usr/bin/open -n "$APP_BUNDLE"
+}
+
+# Waits up to 10 s for the app process instead of a fixed one-second sleep.
+wait_for_launch() {
+  local attempt
+  for attempt in $(seq 1 20); do
+    pgrep -x "$APP_NAME" >/dev/null && return 0
+    sleep 0.5
+  done
+  echo "$APP_NAME did not launch within 10 seconds." >&2
+  return 1
 }
 
 case "$MODE" in
@@ -48,8 +77,7 @@ case "$MODE" in
     ;;
   --verify|verify)
     open_app
-    sleep 1
-    pgrep -x "$APP_NAME" >/dev/null
+    wait_for_launch
     ;;
   --install|install)
     /usr/bin/ditto "$APP_BUNDLE" "$INSTALL_BUNDLE"
@@ -58,12 +86,7 @@ case "$MODE" in
   --install-verify|install-verify)
     /usr/bin/ditto "$APP_BUNDLE" "$INSTALL_BUNDLE"
     /usr/bin/open -n "$INSTALL_BUNDLE"
-    sleep 1
     test -d "$INSTALL_BUNDLE"
-    pgrep -x "$APP_NAME" >/dev/null
-    ;;
-  *)
-    echo "usage: $0 [run|--debug|--logs|--telemetry|--verify|--install|--install-verify]" >&2
-    exit 2
+    wait_for_launch
     ;;
 esac
