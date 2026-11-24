@@ -3,13 +3,16 @@ paths:
   - "Vocab/Domain/**"
   - "Vocab/Application/LearningCoordinator.swift"
   - "Vocab/Application/WordLibrarySearch.swift"
+  - "Vocab/Application/VocabLibraryReadModel.swift"
   - "Vocab/Presentation/TestViews.swift"
   - "Vocab/Presentation/FeedbackPanel.swift"
   - "Vocab/Presentation/LibraryViews.swift"
   - "Vocab/Presentation/MasteredView.swift"
+  - "Vocab/Presentation/Shared/**"
   - "VocabIOS/Presentation/**"
   - "VocabTests/Domain/**"
   - "VocabTests/Application/LearningCoordinatorTests.swift"
+  - "VocabTests/Application/VocabLibraryReadModelTests.swift"
 ---
 
 # Learning Policy
@@ -62,7 +65,9 @@ paths:
 ## Lifecycle
 
 - Evidence: one success per Seoul date; any mode, direction or format; only
-  dates after the latest wrong/unknown (or SOT revision) count.
+  dates after the latest wrong/unknown count. A correct answer counts when
+  answered at or after the latest SOT revision (`word.updatedAt`), but only
+  strictly after a legacy mastery boundary (the last pre-migration answer).
 - `consolidating` (`장기정착`): two eligible dates; one date makes the word
   promotion-due from the next day. Excluded from ordinary rotation;
   maintenance after 7/14/30/45 days (2/3/4/5+ dates). Wrong/unknown returns
@@ -79,3 +84,36 @@ paths:
   without changing progress. Review grid cards are static, adaptive
   (min 210 pt, 16 pt spacing), never truncate meanings, and carry
   accessibility labels.
+
+## Shared Presentation
+
+- `Vocab/Presentation/Shared/` compiles into both targets (iOS lists each
+  file in the project); macOS and iOS compose its cards, test components and
+  display mappings instead of duplicating them. It holds display only.
+- Review lists on both platforms come from `ReviewCandidateList`: active,
+  nondeleted words with positive priority, by priority, failure checks, then
+  oldest presentation. Registration-day grouping is rebuilt per library
+  change, never per render.
+- Library pages (learning cards, review, 장기정착, 단어장, 학습 기록) never
+  `@Query` the library. They render `Sendable` snapshots built by
+  `VocabLibraryReadModel` on a fresh background context and reload in
+  `task(id:)` on `vocabStoreRevision`, which the root bumps on every save or
+  import (`PageReloadPolicy` coalesces bursts). 단어장 and 학습 기록 load in
+  pages; an action that needs the live record fetches it by ID on demand.
+- iOS tabs mirror the Mac learning section (테스트, 학습 카드, 복습) in name,
+  symbol and order; page titles come from the navigation item name.
+- A finished test shows a completion summary before closing; the tally is
+  display-only and never feeds grading.
+- Each page has exactly one scroll container; put headers and status panels
+  inside the List (a Section) or in a safe-area inset, never in a VStack
+  above it. Prominent (`borderedProminent`) buttons are text-only on both
+  platforms.
+
+## Pitfalls
+
+- 장기정착 (a GroupBox above a long List in a VStack) shifted the whole Mac
+  window content, sidebar included, upward; removing `navigationSubtitle`
+  did not fix it (bab9067). The cause is unconfirmed, so keep one scroll
+  container per page.
+- SF Symbols inside prominent buttons took the accent fill color (iOS List
+  rows, Mac) and were invisible while enabled (7bb9e2a).

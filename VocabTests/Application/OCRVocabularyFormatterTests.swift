@@ -142,6 +142,26 @@ final class OCRVocabularyFormatterTests: XCTestCase {
         XCTAssertEqual(output, "0001-categorically-절대적으로, 명확히")
     }
 
+    func testRemovesPronunciationWhoseOpeningBracketReadsAsCapitalI() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760),
+            token("miserly Imaizar", x: 0.150, y: 0.738),
+            token("구두쇠의, 인색한", x: 0.150, y: 0.714)
+        ])
+
+        XCTAssertEqual(output, "0001-miserly-구두쇠의, 인색한")
+    }
+
+    func testPreservesMultiwordHeadwordWhoseSecondWordStartsWithLowercaseI() throws {
+        let output = try OCRVocabularyFormatter.format([
+            token("0001", x: 0.150, y: 0.760),
+            token("make inroads", x: 0.150, y: 0.738),
+            token("잠식하다", x: 0.150, y: 0.714)
+        ])
+
+        XCTAssertEqual(output, "0001-make inroads-잠식하다")
+    }
+
     func testPreservesGenuineMultiwordHeadwordWithoutPronunciation() throws {
         let output = try OCRVocabularyFormatter.format([
             token("0001", x: 0.150, y: 0.760),

@@ -14,57 +14,58 @@ struct TestSetupView: View {
     @State private var error: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            Text("테스트")
-                .font(.largeTitle.weight(.semibold))
-            Text("한 회차는 최대 20개의 고유 단어로 구성됩니다. 오늘 등록 단어가 없으면 가장 최근 등록일의 단어를 사용합니다.")
-                .font(.body)
+        VStack(alignment: .leading, spacing: 20) {
+            Text("한 회차는 최대 20개의 고유 단어로 구성됩니다.")
+                .font(.callout)
                 .foregroundStyle(.secondary)
 
             Form {
-                Picker("모드", selection: $mode) {
-                    ForEach(SessionMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
+                Section {
+                    Picker("모드", selection: $mode) {
+                        ForEach(SessionMode.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                } footer: {
+                    Text(mode.setupDescription)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .pickerStyle(.segmented)
-                Picker("방향", selection: $direction) {
-                    ForEach(PracticeDirection.allCases, id: \.self) { direction in
-                        Text(direction.rawValue).tag(direction)
+                Section {
+                    Picker("방향", selection: $direction) {
+                        ForEach(PracticeDirection.allCases, id: \.self) { direction in
+                            Text(direction.shortTitle).tag(direction)
+                        }
                     }
-                }
-                .pickerStyle(.segmented)
-                Picker("시험 방식", selection: $format) {
-                    ForEach(QuestionFormat.allCases) { format in
-                        Text(format.title).tag(format)
+                    .pickerStyle(.segmented)
+                    Picker("시험 방식", selection: $format) {
+                        ForEach(QuestionFormat.allCases) { format in
+                            Text(format.title).tag(format)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                } footer: {
+                    Text(format.setupDescription)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                 }
-                .pickerStyle(.segmented)
             }
             .formStyle(.grouped)
             .controlSize(.large)
             .frame(maxWidth: 620)
 
-            if mode == .review {
-                Text("복습은 미암기 단어를 우선하고 직전 등록일 단어와 점검 기한이 지난 장기정착 단어를 함께 출제합니다. 같은 날 반복 정답은 복습 강도를 낮추지만 장기정착 근거는 하루 한 번만 쌓입니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else if mode == .mixed {
-                Text("혼합은 활성 복습과 장기정착 유지 점검을 제한적으로 포함하고, 단어장 전체를 넓게 순환합니다. 오늘 아직 출제되지 않은 후보가 남아 있으면 같은 단어를 다시 출제하지 않습니다.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            } else {
-                Text("오늘 등록 단어를 우선하며, 없으면 가장 최근 등록일 단어를 사용합니다.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            }
             if let error {
                 Label(error, systemImage: "exclamationmark.triangle")
                     .foregroundStyle(.red)
             }
             HStack(spacing: 12) {
-                Button(format == .multipleChoice ? "4지선택형 테스트 시작" : "20문항 테스트 시작", action: start)
+                // Prominent Mac buttons stay text-only: a symbol inside them can take
+                // the accent fill color and vanish while the button is enabled.
+                Button(format.startButtonTitle, action: start)
                     .keyboardShortcut(.return, modifiers: .command)
+                    .help("⌘Return")
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .disabled(isStarting || activeRun != nil)
@@ -139,6 +140,8 @@ struct TestRunnerView: View {
     @State private var correctedMeaningID: UUID?
     @State private var addAlias = false
     @State private var notice: String?
+    @State private var tally = TestSessionTally()
+    @State private var isCompleted = false
     @FocusState private var focus: FocusTarget?
 
     private var question: SessionQuestion? {
@@ -146,7 +149,10 @@ struct TestRunnerView: View {
     }
 
     var body: some View {
-        if let question {
+        if isCompleted {
+            TestCompletionView(modeTitle: run.session.modeRaw, tally: tally, onClose: closeRunner)
+                .frame(minWidth: 760, minHeight: 640)
+        } else if let question {
             content(question)
         } else {
             ContentUnavailableView("출제 문항이 없습니다", systemImage: "exclamationmark.triangle")
@@ -156,28 +162,14 @@ struct TestRunnerView: View {
 
     private func content(_ question: SessionQuestion) -> some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                HStack {
-                    Text(run.session.modeRaw)
-                        .font(.headline)
-                    if run.session.wasReduced {
-                        Label("축소 세션: \(run.questions.count)문항", systemImage: "info.circle")
-                            .foregroundStyle(.orange)
-                    }
-                    Spacer()
-                    Text("\(index + 1) / \(run.questions.count)")
-                        .monospacedDigit()
-                }
-                ProgressView(value: Double(index), total: Double(run.questions.count))
-                Text(question.direction.rawValue)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Text(question.format.title)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Text(question.prompt)
-                    .font(.system(size: 34, weight: .medium, design: .rounded))
-                    .frame(maxWidth: .infinity, minHeight: 100, alignment: .center)
+            VStack(alignment: .leading, spacing: 20) {
+                TestProgressHeader(
+                    modeTitle: run.session.modeRaw,
+                    index: index,
+                    total: run.questions.count,
+                    reducedQuestionCount: run.session.wasReduced ? run.questions.count : nil
+                )
+                TestPromptCard(question: question)
 
                 if question.format == .multipleChoice {
                     multipleChoiceGrid(question)
@@ -195,11 +187,13 @@ struct TestRunnerView: View {
                 if let judgeResult {
                     resultPanel(judgeResult, question: question)
                 } else {
-                    HStack {
-                        Button("제출", action: submitForJudgement)
-                            .buttonStyle(.borderedProminent)
-                            .controlSize(.large)
-                            .keyboardShortcut(.defaultAction)
+                    HStack(spacing: 12) {
+                        if question.format == .typed {
+                            Button("제출", action: submitForJudgement)
+                                .buttonStyle(.borderedProminent)
+                                .controlSize(.large)
+                                .keyboardShortcut(.defaultAction)
+                        }
                         Button("모름") {
                             judgeResult = JudgeResult(automaticResult: .unknown, matchedMeaningID: nil, isTypoSuggestion: false)
                             chosenResult = .unknown
@@ -209,10 +203,15 @@ struct TestRunnerView: View {
                             focus = .advance
                         }
                         .controlSize(.large)
+                        Spacer()
+                        Text(question.format == .multipleChoice ? "1–4 선택 · Return 확정" : "Return 제출")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 if let notice {
-                    Text(notice).foregroundStyle(.secondary)
+                    Label(notice, systemImage: "info.circle")
+                        .foregroundStyle(.secondary)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .topLeading)
@@ -251,25 +250,15 @@ struct TestRunnerView: View {
 
     @ViewBuilder
     private func multipleChoiceGrid(_ question: SessionQuestion) -> some View {
-        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+        LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
             ForEach(Array(question.choices.enumerated()), id: \.element.id) { offset, option in
-                Button {
+                ChoiceOptionButton(
+                    number: offset + 1,
+                    label: option.label,
+                    appearance: .resolve(option: option, selectedAnswer: answer, isJudged: judgeResult != nil)
+                ) {
                     selectChoice(option)
-                } label: {
-                    HStack(alignment: .top, spacing: 10) {
-                        Text("\(offset + 1)")
-                            .font(.headline.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                        Text(option.label)
-                            .font(.title3.weight(.semibold))
-                            .multilineTextAlignment(.leading)
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 72, alignment: .leading)
-                    .padding(14)
-                    .background(choiceBackground(option), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
                 }
-                .buttonStyle(.plain)
                 .disabled(judgeResult != nil)
                 .keyboardShortcut(KeyEquivalent(Character("\(offset + 1)")), modifiers: [])
             }
@@ -278,75 +267,64 @@ struct TestRunnerView: View {
 
     @ViewBuilder
     private func resultPanel(_ result: JudgeResult, question: SessionQuestion) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Label("자동 판정: \(result.automaticResult.rawValue)", systemImage: result.automaticResult == .correct ? "checkmark.circle" : "exclamationmark.circle")
-                if result.automaticResult != .unknown {
-                    LabeledContent("원문") {
-                        Text(question.word.term).fontWeight(.semibold)
-                    }
-                    LabeledContent("등록 의미") {
-                        Text(question.word.activeMeanings.map(\.text).joined(separator: ", "))
-                            .multilineTextAlignment(.trailing)
-                    }
-                    LabeledContent("입력 답안") {
-                        Text(displayedAnswer(for: question))
-                    }
-                    if question.format == .multipleChoice {
-                        LabeledContent("정답") {
-                            Text(question.choices.first(where: \.isCorrect)?.label ?? "")
-                        }
-                    }
-                }
-                if result.isTypoSuggestion {
-                    Text("근접 오타일 수 있습니다. 자동 정답 처리하지 않으며 직접 보정해야 합니다.")
-                        .foregroundStyle(.orange)
-                }
-                if result.automaticResult == .incorrect {
-                    Text("자동 오답은 원문과 등록 의미를 확인한 뒤 확정하거나 정답으로 보정하세요.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 14) {
+            JudgementBanner(result: result)
+            if result.automaticResult != .unknown {
+                AnswerComparisonView(question: question, submittedAnswer: displayedAnswer(for: question))
+            }
+            Divider()
+            HStack(spacing: 10) {
                 Picker("최종 판정", selection: Binding(get: { chosenResult ?? result.automaticResult }, set: { chosenResult = $0 })) {
-                    Text("정답").tag(FinalResult.correct)
-                    Text("오답").tag(FinalResult.incorrect)
-                    Text("모름").tag(FinalResult.unknown)
+                    ForEach(FinalResult.judgementOrder, id: \.self) { judgement in
+                        Text(judgement.title).tag(judgement)
+                    }
                 }
                 .pickerStyle(.segmented)
+                .frame(maxWidth: 360)
                 .focused($focus, equals: .finalJudgement)
                 Button("판정 전환") {
                     _ = cycleFinalJudgement()
                 }
                 .keyboardShortcut(.tab, modifiers: [])
                 .controlSize(.small)
-                if (chosenResult ?? result.automaticResult) == .correct && result.automaticResult != .correct {
-                    if question.direction == .enToKo {
-                        Picker("확인한 핵심 뜻", selection: $correctedMeaningID) {
-                            ForEach(question.word.correctionCandidateMeanings) { meaning in
-                                Text(meaning.text).tag(Optional(meaning.id))
-                            }
+                .help("Tab")
+            }
+            if (chosenResult ?? result.automaticResult) == .correct && result.automaticResult != .correct {
+                if question.direction == .enToKo {
+                    Picker("확인한 핵심 뜻", selection: $correctedMeaningID) {
+                        ForEach(question.word.correctionCandidateMeanings) { meaning in
+                            Text(meaning.text).tag(Optional(meaning.id))
                         }
-                        .focused($focus, equals: .correctedMeaning)
                     }
-                    if question.format == .typed {
-                        Toggle("이 답안을 이후 허용 답안으로 추가", isOn: $addAlias)
-                            .focused($focus, equals: .addAlias)
-                    } else {
-                        Text("선택형 보정은 이번 답안의 최종 판정에만 반영합니다.")
-                            .font(.callout)
-                            .foregroundStyle(.secondary)
-                    }
+                    .frame(maxWidth: 420)
+                    .focused($focus, equals: .correctedMeaning)
                 }
-                Text(question.format == .multipleChoice ? "1-4로 선택하고 Return으로 확정합니다. Tab으로 최종 판정을 전환할 수 있습니다." : "Return으로 제출·확정하고, Tab으로 최종 판정을 전환할 수 있습니다.")
+                if question.format == .typed {
+                    Toggle("이 답안을 이후 허용 답안으로 추가", isOn: $addAlias)
+                        .focused($focus, equals: .addAlias)
+                } else {
+                    Text("선택형 보정은 이번 답안의 최종 판정에만 반영합니다.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            HStack(alignment: .center) {
+                Text("Return 확정 · Tab 판정 전환")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Spacer()
                 Button(index + 1 == run.questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
                     .focused($focus, equals: .advance)
             }
-            .padding(8)
+        }
+        .padding(16)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: VocabMetrics.panelCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: VocabMetrics.panelCornerRadius, style: .continuous)
+                .stroke((chosenResult ?? result.automaticResult).tint.opacity(0.35), lineWidth: 1)
         }
     }
 
@@ -378,11 +356,6 @@ struct TestRunnerView: View {
         submitForJudgement()
     }
 
-    private func choiceBackground(_ option: MultipleChoiceOption) -> Color {
-        guard answer == option.id.uuidString else { return Color.secondary.opacity(0.10) }
-        return Color.accentColor.opacity(0.18)
-    }
-
     private func displayedAnswer(for question: SessionQuestion) -> String {
         guard question.format == .multipleChoice else { return answer.isEmpty ? "(입력 없음)" : answer }
         return question.choices.first { $0.id.uuidString == answer }?.label ?? "(선택 없음)"
@@ -390,7 +363,7 @@ struct TestRunnerView: View {
 
     private func cycleFinalJudgement() -> Bool {
         guard let judgeResult else { return false }
-        let order: [FinalResult] = [.correct, .incorrect, .unknown]
+        let order = FinalResult.judgementOrder
         let current = chosenResult ?? judgeResult.automaticResult
         guard let index = order.firstIndex(of: current) else { return false }
         chosenResult = order[(index + 1) % order.count]
@@ -432,9 +405,10 @@ struct TestRunnerView: View {
                 ? (judgeResult.matchedMeaningID ?? correctedMeaningID)
                 : judgeResult.matchedMeaningID
             try LearningCoordinator(context: context).commit(answer: answer, result: final, automatic: judgeResult.automaticResult, matchedMeaningID: finalMeaningID, question: question, session: run.session, correction: final == judgeResult.automaticResult ? nil : (addAlias ? "acceptedAlias" : "oneTimeCorrection"))
+            tally.record(final, forQuestionAt: index)
             if index + 1 == run.questions.count {
                 try LearningCoordinator(context: context).completeSession(run.session)
-                closeRunner()
+                isCompleted = true
             } else {
                 index += 1
                 answer = ""

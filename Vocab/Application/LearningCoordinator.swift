@@ -1316,7 +1316,6 @@ final class LearningCoordinator {
             ? max(word.updatedAt, sourceAttempts.map(\.answeredAt).max() ?? word.updatedAt)
             : nil
         let legacyEvidenceBoundary = word.legacyMasteryEvidenceBoundary ?? unmigratedLegacyBoundary
-        let evidenceBoundary = max(word.updatedAt, legacyEvidenceBoundary ?? .distantPast)
         var expected = RecomputedWordReviewState(
             statusRaw: word.statusRaw,
             presentationCount: word.reviewState?.presentationCount,
@@ -1347,7 +1346,11 @@ final class LearningCoordinator {
                     expected.koToEnStreak = 0
                 }
             case .correct:
-                guard attempt.answeredAt > evidenceBoundary else { continue }
+                // An answer at or after the latest headword revision is evidence. The
+                // legacy boundary is the last pre-migration answer itself, so only
+                // strictly later answers may count past it.
+                guard attempt.answeredAt >= word.updatedAt,
+                      legacyEvidenceBoundary.map({ attempt.answeredAt > $0 }) ?? true else { continue }
                 if direction == .enToKo {
                     expected.enToKoStreak += 1
                     if let meaningID = attempt.matchedMeaningID,

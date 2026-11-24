@@ -124,7 +124,10 @@ final class VocabCloudReconciliationTests: XCTestCase {
         )
         XCTAssertFalse(changes.requiresFullAudit)
         XCTAssertEqual(changes.affectedWordIDs, Set([second.id]))
-        XCTAssertTrue(changes.changedTombstoneIDs.isEmpty)
+        // A tombstone shares its record's UUID, so every changed record is a
+        // candidate for tombstone reapplication; with no tombstone it is a no-op.
+        XCTAssertEqual(changes.changedTombstoneIDs, Set([late.id]))
+        XCTAssertNil(late.deletedAt)
     }
 
     func testIncrementalImportReappliesUnchangedTombstoneToResurrectedDetachedMeaning() throws {
@@ -1025,7 +1028,9 @@ final class VocabCloudReconciliationTests: XCTestCase {
     func testOutOfOrderAttemptsRebuildDeterministicallyAcrossContexts() throws {
         let persistent = try makePersistentContainer()
         let firstContext = ModelContext(persistent.container)
-        let word = WordRecord(term: "replay")
+        // Registered before both attempts: evidence only counts after the latest
+        // headword revision, so a word created "now" would hide the 1970 attempts.
+        let word = WordRecord(term: "replay", createdAt: Date(timeIntervalSince1970: 0))
         let meaning = MeaningRecord(text: "재생")
         meaning.word = word
         word.appendMeaning(meaning)

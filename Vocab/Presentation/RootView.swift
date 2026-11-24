@@ -27,6 +27,15 @@ enum NavigationItem: String, CaseIterable, Identifiable {
     case history = "기록"
 
     var id: String { rawValue }
+
+    var section: NavigationSection {
+        switch self {
+        case .intake: .input
+        case .test, .study, .review: .learning
+        case .mastered, .library, .history: .vocabulary
+        }
+    }
+
     var symbol: String {
         switch self {
         case .intake: "square.and.pencil"
@@ -37,6 +46,19 @@ enum NavigationItem: String, CaseIterable, Identifiable {
         case .library: "books.vertical"
         case .history: "chart.bar"
         }
+    }
+}
+
+/// Sidebar sections; item order inside each section follows `NavigationItem`.
+enum NavigationSection: String, CaseIterable, Identifiable {
+    case input = "입력"
+    case learning = "학습"
+    case vocabulary = "단어"
+
+    var id: String { rawValue }
+
+    var items: [NavigationItem] {
+        NavigationItem.allCases.filter { $0.section == self }
     }
 }
 
@@ -67,16 +89,22 @@ struct RootView: View {
     @State private var backgroundActivityMessage: String?
     @State private var backgroundActivityIsRunning = false
     @State private var activityClearTask: Task<Void, Never>?
+    @State private var storeRevision = 0
 
     var body: some View {
         NavigationSplitView {
-            List(NavigationItem.allCases, selection: $selection) { item in
-                Label(item.rawValue, systemImage: item.symbol)
-                    .font(.body)
-                    .padding(.vertical, 5)
-                    .tag(item)
+            List(selection: $selection) {
+                ForEach(NavigationSection.allCases) { section in
+                    Section(section.rawValue) {
+                        ForEach(section.items) { item in
+                            Label(item.rawValue, systemImage: item.symbol)
+                                .tag(item)
+                        }
+                    }
+                }
             }
             .listStyle(.sidebar)
+            .navigationSplitViewColumnWidth(min: 180, ideal: 210)
             .navigationTitle("Vocab")
         } detail: {
             if let connectionError {
@@ -98,15 +126,21 @@ struct RootView: View {
                     description: Text(hydrationDescription)
                 )
             } else {
-                switch selection ?? .intake {
-                case .intake: TodayIntakeView()
-                case .test: TestSetupView()
-                case .study: StudyCardsView(faceStates: $studyCardFaceStates)
-                case .review: ReviewView()
-                case .mastered: MasteredView()
-                case .library: LibraryView()
-                case .history: HistoryView()
+                let item = selection ?? .intake
+                Group {
+                    switch item {
+                    case .intake: TodayIntakeView()
+                    case .test: TestSetupView()
+                    case .study: StudyCardsView(faceStates: $studyCardFaceStates)
+                    case .review: ReviewView()
+                    case .mastered: MasteredView()
+                    case .library: LibraryView()
+                    case .history: HistoryView()
+                    }
                 }
+                // One title source keeps every page named exactly like its sidebar item.
+                .navigationTitle(item.rawValue)
+                .environment(\.vocabStoreRevision, storeRevision)
             }
         }
         .frame(minWidth: 900, minHeight: 600)
@@ -169,12 +203,14 @@ struct RootView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
+            Task { @MainActor in storeRevision &+= 1 }
             Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
         }
         .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { notification in
             guard let source = notification.object as? ModelContext,
                   source.container === modelContext.container else { return }
             let changes = VocabModelContextChangeEvent.changes(from: notification, context: source)
+            Task { @MainActor in storeRevision &+= 1 }
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
                 await VocabImportedIdentifierBuffer.shared.capture(
@@ -564,14 +600,8 @@ struct SettingsView: View {
                     }
                 }
 
-                Button {
+                Button(isUploadingSnapshot ? "업로드 중" : "수동 복구 사본 업로드") {
                     showUploadConfirmation = true
-                } label: {
-                    if isUploadingSnapshot {
-                        Label("업로드 중", systemImage: "icloud.and.arrow.up")
-                    } else {
-                        Label("수동 복구 사본 업로드", systemImage: "icloud.and.arrow.up")
-                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canUploadSnapshot)
@@ -709,11 +739,8 @@ struct SettingsView: View {
     }
 
     private var mirroringButton: some View {
-        Button { showMirroringConfirmation = true } label: {
-            Label(
-                isMigratingToMirroredStore ? "전환 준비 중" : "iCloud 자동 동기화로 전환",
-                systemImage: isMigratingToMirroredStore ? "icloud.and.arrow.up" : "point.3.connected.trianglepath.dotted"
-            )
+        Button(isMigratingToMirroredStore ? "전환 준비 중" : "iCloud 자동 동기화로 전환") {
+            showMirroringConfirmation = true
         }
         .buttonStyle(.borderedProminent)
         .disabled(!canMigrateToMirroredStore)

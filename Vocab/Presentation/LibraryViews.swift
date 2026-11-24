@@ -3,46 +3,32 @@ import SwiftData
 import SwiftUI
 
 struct StudyCardsView: View {
-    @Query(
-        filter: #Predicate<WordRecord> { $0.deletedAt == nil },
-        sort: \WordRecord.createdAt,
-        order: .reverse
-    ) private var words: [WordRecord]
+    @Environment(\.modelContext) private var context
+    @Environment(\.vocabStoreRevision) private var storeRevision
     @Binding var faceStates: [UUID: Bool]
+    @State private var snapshot: StudyCardsSnapshot?
     @State private var selectedDay: String?
     @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
-    private var registrationGroups: [RegistrationDayGroup] {
-        Dictionary(grouping: words, by: \.registrationDay)
-            .map { day, words in RegistrationDayGroup(day: day, words: words) }
-            .sorted { $0.day > $1.day }
+
+    private var groups: [RegistrationDayGroup] {
+        snapshot?.groups ?? []
     }
 
-    private func effectiveSelectedDay(in groups: [RegistrationDayGroup]) -> String? {
+    private var effectiveSelectedDay: String? {
         selectedDay.flatMap { day in
             groups.contains { $0.day == day } ? day : nil
         } ?? groups.first?.day
     }
 
-    private func selectedCards(in groups: [RegistrationDayGroup], day: String?) -> [StudyCardEntry] {
-        guard let day else { return [] }
-        return (groups.first { $0.day == day }?.words ?? [])
-            .sorted {
-                if $0.word.createdAt != $1.word.createdAt { return $0.word.createdAt < $1.word.createdAt }
-                return $0.word.normalizedTerm < $1.word.normalizedTerm
-            }
-    }
-
     var body: some View {
-        let groups = registrationGroups
-        let day = effectiveSelectedDay(in: groups)
-        let cards = selectedCards(in: groups, day: day)
-        VStack(alignment: .leading, spacing: 18) {
-            Text("학습 카드")
-                .font(.largeTitle.weight(.semibold))
-            Text("단어는 최초 등록일 기준으로 묶입니다. 같은 표제어를 다시 입력하면 기존 단어에 통합되므로 그룹 수가 입력 줄 수보다 적을 수 있습니다. 카드를 클릭하거나 Return 키를 눌러 원문과 의미를 뒤집으세요.")
-                .font(.body)
+        let day = effectiveSelectedDay
+        let cards = groups.first { $0.day == day }?.words ?? []
+        let wordCount = snapshot?.wordCount ?? 0
+        VStack(alignment: .leading, spacing: 16) {
+            Text("최초 등록일별로 묶인 카드입니다. 카드를 클릭하면 원문과 의미가 뒤집히며, 학습 진도에는 영향을 주지 않습니다.")
+                .font(.callout)
                 .foregroundStyle(.secondary)
 
             if let message {
@@ -56,38 +42,50 @@ struct StudyCardsView: View {
                 .accessibilityLabel("학습 카드 상태 안내")
             }
 
-            Picker("등록일", selection: Binding(
-                get: { day },
-                set: { selectedDay = $0 }
-            )) {
-                ForEach(groups) { group in
-                    Text("\(group.day)  (최초 등록 \(group.words.count)개)")
-                        .tag(Optional(group.day))
+            HStack(spacing: 12) {
+                Picker("등록일", selection: Binding(
+                    get: { day },
+                    set: { selectedDay = $0 }
+                )) {
+                    ForEach(groups) { group in
+                        Text("\(group.day)  ·  \(group.words.count)개")
+                            .tag(Optional(group.day))
+                    }
                 }
+                .pickerStyle(.menu)
+                .controlSize(.large)
+                .frame(maxWidth: 320, alignment: .leading)
+
+                Spacer()
+
+                Text("등록일 \(groups.count)개 · 전체 \(wordCount)단어")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .accessibilityLabel("등록일 그룹은 \(groups.count)개이며 전체 단어는 \(wordCount)개입니다.")
             }
-            .pickerStyle(.menu)
-            .controlSize(.large)
-            .frame(maxWidth: 360, alignment: .leading)
 
-            Text("등록일 그룹: \(groups.count)개 · 전체 단어: \(words.count)개")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .accessibilityLabel("등록일 그룹은 \(groups.count)개이며 전체 단어는 \(words.count)개입니다.")
-
-            if cards.isEmpty {
-                ContentUnavailableView("학습할 단어가 없습니다", systemImage: "rectangle.stack")
+            if snapshot == nil {
+                PageLoadingView()
+            } else if cards.isEmpty {
+                ContentUnavailableView(
+                    "학습할 단어가 없습니다",
+                    systemImage: "rectangle.stack",
+                    description: Text("오늘 입력에서 단어를 등록하면 등록일별 카드가 만들어집니다.")
+                )
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
-                        ForEach(cards) { entry in
-                            FlipWordCard(
-                                word: entry.word,
+                    LazyVGrid(columns: VocabMetrics.cardGridColumns, spacing: VocabMetrics.cardGridSpacing) {
+                        ForEach(cards) { word in
+                            WordFlipCard(
+                                word: word,
                                 showsMeaning: Binding(
-                                    get: { faceStates[entry.id] ?? false },
-                                    set: { faceStates[entry.id] = $0 }
+                                    get: { faceStates[word.id] ?? false },
+                                    set: { faceStates[word.id] = $0 }
                                 )
                             ) {
-                                editingWord = entry.word
+                                StudyCardActions(word: word) {
+                                    openEditor(for: word)
+                                }
                             }
                         }
                     }
@@ -98,7 +96,9 @@ struct StudyCardsView: View {
             }
         }
         .padding(28)
-        .navigationTitle("학습 카드")
+        .task(id: storeRevision) {
+            await reload()
+        }
         .sheet(item: $editingWord) { word in
             WordEditSheet(word: word) { message, isError in
                 self.message = message
@@ -107,106 +107,57 @@ struct StudyCardsView: View {
         }
     }
 
-}
+    private func reload() async {
+        // Grouping depends only on membership and the immutable creation date, so
+        // it is rebuilt per store change, off the main actor, never per render.
+        guard await PageReloadPolicy.shouldLoad(hasSnapshot: snapshot != nil) else { return }
+        do {
+            let loaded = try await VocabLibraryReadModel.studyCards(in: context.container)
+            guard !Task.isCancelled else { return }
+            snapshot = loaded
+        } catch {
+            guard !Task.isCancelled else { return }
+            snapshot = snapshot ?? StudyCardsSnapshot(groups: [], wordCount: 0)
+            message = error.localizedDescription
+            isError = true
+        }
+    }
 
-private struct StudyCardEntry: Identifiable {
-    let id: UUID
-    let word: WordRecord
-
-    init(word: WordRecord) {
-        id = word.id
-        self.word = word
+    private func openEditor(for word: WordSummary) {
+        do {
+            editingWord = try context.activeWord(id: word.id)
+        } catch {
+            message = error.localizedDescription
+            isError = true
+        }
     }
 }
 
-private struct RegistrationDayGroup: Identifiable {
-    let day: String
-    let words: [StudyCardEntry]
-
-    var id: String { day }
-
-    init(day: String, words: [WordRecord]) {
-        self.day = day
-        self.words = words.map { StudyCardEntry(word: $0) }
-    }
-}
-
-private struct FlipWordCard: View {
-    let word: WordRecord
-    @Binding var showsMeaning: Bool
+/// Memory aid, pronunciation and edit actions shown on a Mac learning card.
+private struct StudyCardActions: View {
+    let word: WordSummary
     let onEdit: () -> Void
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
+        HStack(spacing: 6) {
+            WordMemoryAidButton(word: word)
+
             Button {
-                withAnimation(.bouncy(duration: 0.45, extraBounce: 0.12)) {
-                    showsMeaning.toggle()
-                }
+                WordPronouncer.shared.speak(headword: word.term, meanings: word.meanings)
             } label: {
-                ZStack {
-                    cardFace(title: "English", value: word.term, isBack: false)
-                        .opacity(showsMeaning ? 0 : 1)
-                        .rotation3DEffect(.degrees(showsMeaning ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.65)
-                    cardFace(title: "의미", value: word.activeMeanings.map(\.text).joined(separator: ", "), isBack: true)
-                        .opacity(showsMeaning ? 1 : 0)
-                        .rotation3DEffect(.degrees(showsMeaning ? 0 : -180), axis: (x: 0, y: 1, z: 0), perspective: 0.65)
-                }
-                .frame(maxWidth: .infinity, minHeight: 146, maxHeight: 146)
-                .shadow(color: showsMeaning ? .accentColor.opacity(0.20) : .black.opacity(0.08), radius: 10, y: 5)
-                .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                Image(systemName: "speaker.wave.2.fill")
             }
-            .buttonStyle(.plain)
+            .help("원문과 의미 읽기")
+            .accessibilityLabel("\(word.term) 원문과 의미 읽기")
 
-            HStack(spacing: 8) {
-                WordMemoryAidButton(word: word)
-
-                Button {
-                    WordPronouncer.shared.speak(headword: word.term, meanings: word.activeMeanings.map(\.text))
-                } label: {
-                    Image(systemName: "speaker.wave.2.fill")
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .help("원문과 의미 읽기")
-                .accessibilityLabel("\(word.term) 원문과 의미 읽기")
-
-                Button("수정") { onEdit() }
-                    .font(.caption.weight(.semibold))
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
+            Button(action: onEdit) {
+                Image(systemName: "pencil")
             }
-            .padding(8)
+            .help("단어 수정")
+            .accessibilityLabel("\(word.term) 수정")
         }
-        .frame(maxWidth: .infinity, minHeight: 146, maxHeight: 146)
-        .accessibilityLabel(word.term)
-        .accessibilityValue(showsMeaning ? word.activeMeanings.map(\.text).joined(separator: ", ") : "영단어 앞면")
-        .accessibilityHint("눌러서 카드 앞뒤를 전환합니다")
-    }
-
-    private func cardFace(title: String, value: String, isBack: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(LinearGradient(
-                colors: isBack ? [Color.accentColor.opacity(0.24), Color.green.opacity(0.10)] : [Color.primary.opacity(0.06), Color.secondary.opacity(0.08)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(isBack ? Color.accentColor.opacity(0.45) : Color.secondary.opacity(0.22), lineWidth: 1.2)
-            }
-            .overlay {
-                VStack(spacing: 10) {
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(value)
-                        .font(isBack ? .body.weight(.medium) : .title2.weight(.bold))
-                        .multilineTextAlignment(.center)
-                        .foregroundStyle(.primary)
-                }
-                .padding(18)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .buttonStyle(.bordered)
+        .controlSize(.small)
     }
 }
 
@@ -252,24 +203,46 @@ private final class WordPronouncer {
 }
 
 struct ReviewView: View {
-    @Query private var states: [ReviewStateRecord]
-
-    private var candidates: [WordRecord] {
-        states
-            .compactMap(\.word)
-            .filter { $0.deletedAt == nil && $0.statusRaw == "active" && ($0.reviewState?.activePriority ?? 0) > 0 }
-            .sorted(by: reviewFirst)
-    }
+    @Environment(\.modelContext) private var context
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    @State private var loadedCandidates: [WordSummary]?
+    @State private var loadError: String?
 
     var body: some View {
-        Group {
-            if candidates.isEmpty {
-                ContentUnavailableView("우선 복습할 단어가 없습니다", systemImage: "checkmark.circle")
+        let candidates = loadedCandidates ?? []
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("복습 우선도가 높은 단어부터 보여 줍니다. 테스트의 복습·혼합 모드가 이 단어들을 먼저 출제합니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !candidates.isEmpty {
+                    Text("\(candidates.count)단어")
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if let loadError {
+                FeedbackPanel(items: [
+                    FeedbackItem(text: loadError, systemImage: "exclamationmark.triangle", color: .red)
+                ])
+                .accessibilityLabel("복습 상태 안내")
+            }
+            if loadedCandidates == nil {
+                PageLoadingView()
+            } else if candidates.isEmpty {
+                ContentUnavailableView(
+                    "우선 복습할 단어가 없습니다",
+                    systemImage: "checkmark.circle",
+                    description: Text("테스트에서 틀리거나 모름으로 답한 단어가 여기에 모입니다.")
+                )
             } else {
                 ScrollView {
-                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 210), spacing: 16)], spacing: 16) {
+                    LazyVGrid(columns: VocabMetrics.cardGridColumns, spacing: VocabMetrics.cardGridSpacing) {
                         ForEach(candidates) { word in
-                            ReviewWordCard(word: word)
+                            ReviewWordCard(word: word) {
+                                WordMemoryAidButton(word: word)
+                            }
                         }
                     }
                     .padding(.vertical, 4)
@@ -277,98 +250,86 @@ struct ReviewView: View {
             }
         }
         .padding(28)
-        .navigationTitle("복습")
-    }
-
-    private func reviewFirst(_ lhs: WordRecord, _ rhs: WordRecord) -> Bool {
-        let lhsState = lhs.reviewState
-        let rhsState = rhs.reviewState
-
-        if (lhsState?.activePriority ?? 0) != (rhsState?.activePriority ?? 0) {
-            return (lhsState?.activePriority ?? 0) > (rhsState?.activePriority ?? 0)
-        }
-        if (lhsState?.failureCheck ?? 0) != (rhsState?.failureCheck ?? 0) {
-            return (lhsState?.failureCheck ?? 0) > (rhsState?.failureCheck ?? 0)
-        }
-        if (lhsState?.lastPresentedAt ?? .distantPast) != (rhsState?.lastPresentedAt ?? .distantPast) {
-            return (lhsState?.lastPresentedAt ?? .distantPast) < (rhsState?.lastPresentedAt ?? .distantPast)
-        }
-        if lhs.createdAt != rhs.createdAt {
-            return lhs.createdAt > rhs.createdAt
-        }
-        return lhs.term.localizedCaseInsensitiveCompare(rhs.term) == .orderedAscending
-    }
-}
-
-private struct ReviewWordCard: View {
-    let word: WordRecord
-
-    private var meaning: String {
-        word.activeMeanings.map(\.text).joined(separator: ", ")
-    }
-
-    private var failureCheck: Int {
-        word.reviewState?.failureCheck ?? 0
-    }
-
-    private var activePriority: Int {
-        word.reviewState?.activePriority ?? 0
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 10) {
-                Text(word.term)
-                    .font(.title3.weight(.semibold))
-                Spacer(minLength: 0)
-                WordMemoryAidButton(word: word)
+        // Ordering reads mutable review fields, which change only on save, so the
+        // list is rebuilt per store change off the main actor.
+        .task(id: storeRevision) {
+            guard await PageReloadPolicy.shouldLoad(hasSnapshot: loadedCandidates != nil) else { return }
+            do {
+                let loaded = try await VocabLibraryReadModel.reviewCandidates(in: context.container)
+                guard !Task.isCancelled else { return }
+                loadedCandidates = loaded
+                loadError = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                loadedCandidates = loadedCandidates ?? []
+                loadError = error.localizedDescription
             }
-
-            Text(meaning)
-                .font(.body)
-                .foregroundStyle(.secondary)
-
-            HStack(spacing: 12) {
-                Label("체크 \(failureCheck)", systemImage: "checkmark.circle")
-                Label("우선도 \(activePriority)", systemImage: "arrow.clockwise.circle")
-            }
-            .font(.caption.weight(.medium))
-            .foregroundStyle(.secondary)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(18)
-        .background {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.primary.opacity(0.06))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(Color.secondary.opacity(0.22), lineWidth: 1.2)
-        }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("원문 \(word.term), 의미 \(meaning), 체크 \(failureCheck), 우선도 \(activePriority)")
     }
 }
 
 struct LibraryView: View {
     @Environment(\.modelContext) private var context
     @State private var searchText = ""
-    @State private var displayedWords: [WordRecord] = []
+    @State private var displayedWords: [WordSummary] = []
     @State private var selection = Set<UUID>()
     @State private var showingDeleteConfirmation = false
     @State private var showingAddWord = false
     @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
-    @State private var batch = 0
+    @State private var nextOffset = 0
     @State private var canLoadMore = true
-    @State private var isLoadingWords = false
+    @State private var isLoadingWords = true
+    @State private var hasLoadedOnce = false
     @State private var matchedSearchWordIDs: [UUID]?
+    /// The search the shown rows belong to; a reload for the same search keeps
+    /// every page already loaded instead of jumping back to the first.
+    @State private var loadedSearchText: String?
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    /// Bumped after this page edits the library; with the search text and the
+    /// store revision it keys the reload task, so a newer reload cancels an older one.
+    @State private var reloadToken = 0
+    /// Identifies the current list so a page fetched for an older list is dropped.
+    @State private var listGeneration = 0
 
     private let batchSize = 150
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        List(selection: $selection) {
+            ForEach(displayedWords) { word in
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(word.term)
+                                .font(.title3.weight(.semibold))
+                            StatusBadge(title: word.status.koreanTitle, tint: word.status.tint)
+                        }
+                        Text(word.meaningsText)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    WordMemoryAidButton(word: word)
+                    Button {
+                        openEditor(for: word)
+                    } label: {
+                        Label("수정", systemImage: "pencil")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 5)
+                .tag(word.id)
+                .contextMenu {
+                    Button("수정", systemImage: "pencil") { openEditor(for: word) }
+                }
+            }
+
+            libraryLoadingFooter
+        }
+        // The status panel rides above the list instead of sharing a VStack with
+        // it, so the List alone sizes to the window.
+        .safeAreaInset(edge: .top) {
             if let message {
                 FeedbackPanel(items: [
                     FeedbackItem(
@@ -378,50 +339,41 @@ struct LibraryView: View {
                     )
                 ])
                 .padding(.horizontal)
+                .padding(.top, 8)
                 .accessibilityLabel("단어장 상태 안내")
-            }
-
-            List(selection: $selection) {
-                ForEach(displayedWords) { word in
-                    HStack {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(word.term).font(.title3.weight(.semibold))
-                            Text(word.activeMeanings.map(\.text).joined(separator: ", "))
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                            Text(word.learningStatusTitle)
-                                .font(.caption)
-                                .foregroundStyle(word.learningStatus == .active ? Color.secondary : Color.green)
-                        }
-                        Spacer()
-                        WordMemoryAidButton(word: word)
-                        Button("수정") { editingWord = word }
-                            .controlSize(.large)
-                    }
-                    .padding(.vertical, 5)
-                    .tag(word.id)
-                }
-
-                libraryLoadingFooter
             }
         }
         .searchable(text: $searchText, prompt: "영단어 또는 의미 검색")
-        .navigationTitle("단어장")
-        .task {
-            reloadWordList()
+        .overlay {
+            if displayedWords.isEmpty, !canLoadMore, !isLoadingWords {
+                if searchText.isEmpty {
+                    ContentUnavailableView(
+                        "등록된 단어가 없습니다",
+                        systemImage: "books.vertical",
+                        description: Text("오늘 입력 또는 단어 등록으로 단어를 추가하세요.")
+                    )
+                } else {
+                    ContentUnavailableView.search(text: searchText)
+                }
+            }
         }
-        .onChange(of: searchText) {
-            reloadWordList()
+        .task(id: LibraryListKey(searchText: searchText, reloadToken: reloadToken, storeRevision: storeRevision)) {
+            await reloadWordList()
         }
         .toolbar {
             ToolbarItemGroup {
-                Button("단어 등록") {
+                Button {
                     showingAddWord = true
+                } label: {
+                    Label("단어 등록", systemImage: "plus")
                 }
-                .controlSize(.large)
-                Button("선택 단어 삭제", role: .destructive) {
+                .help("단어 등록")
+                Button(role: .destructive) {
                     showingDeleteConfirmation = true
+                } label: {
+                    Label(selection.isEmpty ? "선택 단어 삭제" : "\(selection.count)개 삭제", systemImage: "trash")
                 }
+                .help("선택한 단어 삭제")
                 .disabled(selection.isEmpty)
             }
         }
@@ -441,14 +393,14 @@ struct LibraryView: View {
             WordEditSheet(word: word) { message, isError in
                 self.message = message
                 self.isError = isError
-                reloadWordList()
+                reloadToken += 1
             }
         }
         .sheet(isPresented: $showingAddWord) {
             VocabularyRegistrationSheet { message, isError in
                 self.message = message
                 self.isError = isError
-                reloadWordList()
+                reloadToken += 1
             }
         }
     }
@@ -466,12 +418,11 @@ struct LibraryView: View {
                     Text("더 불러오는 중...")
                         .foregroundStyle(.secondary)
                 }
-                .onAppear {
-                    loadNextWordBatch()
+                .task {
+                    await loadNextWordBatch()
                 }
             } else if displayedWords.isEmpty {
-                Text("표시할 단어가 없습니다.")
-                    .foregroundStyle(.secondary)
+                EmptyView()
             } else {
                 Text("표시된 단어 \(displayedWords.count)개")
                     .foregroundStyle(.secondary)
@@ -497,72 +448,91 @@ struct LibraryView: View {
             selection.removeAll()
             message = "\(targets.count)개 단어를 삭제했습니다."
             isError = false
-            reloadWordList()
+            reloadToken += 1
         } catch {
             message = error.localizedDescription
             isError = true
         }
     }
 
-    private func reloadWordList() {
-        batch = 0
-        canLoadMore = true
-        selection.removeAll()
-        displayedWords = []
+    private func openEditor(for word: WordSummary) {
         do {
-            matchedSearchWordIDs = try WordLibrarySearch(context: context).resolveWordIDs(for: searchText)
-            loadNextWordBatch()
+            editingWord = try context.activeWord(id: word.id)
         } catch {
-            matchedSearchWordIDs = []
-            canLoadMore = false
             message = error.localizedDescription
             isError = true
         }
     }
 
-    private func loadNextWordBatch() {
+    /// Replaces the list for the current search. A new search starts from the
+    /// first page; a refresh of the same search (store change or this page's
+    /// own edit) refetches every row already shown. The old rows stay visible
+    /// until the new ones arrive, and typing restarts this task, so only the
+    /// settled query is searched.
+    private func reloadWordList() async {
+        guard await PageReloadPolicy.shouldLoad(hasSnapshot: hasLoadedOnce) else { return }
+        listGeneration += 1
+        let generation = listGeneration
+        let query = searchText
+        let isRefresh = query == loadedSearchText
+        let limit = isRefresh ? max(nextOffset, batchSize) : batchSize
+        isLoadingWords = true
+        let container = context.container
+        do {
+            let searchIDs = try await VocabLibraryReadModel.librarySearchIDs(for: query, in: container)
+            let rows = try await VocabLibraryReadModel.libraryWords(
+                matching: searchIDs,
+                offset: 0,
+                limit: limit,
+                in: container
+            )
+            guard !Task.isCancelled, generation == listGeneration else { return }
+            matchedSearchWordIDs = searchIDs
+            displayedWords = rows
+            nextOffset = limit
+            canLoadMore = rows.count == limit
+            if isRefresh {
+                let shownIDs = Set(rows.map(\.id))
+                selection = selection.filter { shownIDs.contains($0) }
+            } else {
+                selection.removeAll()
+            }
+        } catch {
+            guard !Task.isCancelled, generation == listGeneration else { return }
+            matchedSearchWordIDs = []
+            displayedWords = []
+            canLoadMore = false
+            selection.removeAll()
+            message = error.localizedDescription
+            isError = true
+        }
+        loadedSearchText = query
+        isLoadingWords = false
+        hasLoadedOnce = true
+    }
+
+    private func loadNextWordBatch() async {
         guard !isLoadingWords, canLoadMore else { return }
         isLoadingWords = true
-        defer { isLoadingWords = false }
-
+        let generation = listGeneration
         do {
-            let fetched = try fetchWordBatch(batch: batch)
-            if fetched.count < batchSize {
-                canLoadMore = false
-            }
-            batch += 1
+            let fetched = try await VocabLibraryReadModel.libraryWords(
+                matching: matchedSearchWordIDs,
+                offset: nextOffset,
+                limit: batchSize,
+                in: context.container
+            )
+            guard generation == listGeneration else { return }
             displayedWords.append(contentsOf: fetched)
+            nextOffset += batchSize
+            canLoadMore = fetched.count == batchSize
         } catch {
+            guard generation == listGeneration else { return }
             message = error.localizedDescription
             isError = true
             canLoadMore = false
         }
-    }
-
-    private func fetchWordBatch(batch: Int) throws -> [WordRecord] {
-        if let matchedSearchWordIDs {
-            let start = batch * batchSize
-            guard start < matchedSearchWordIDs.count else { return [] }
-
-            let end = min(start + batchSize, matchedSearchWordIDs.count)
-            let batchIDs = Array(matchedSearchWordIDs[start..<end])
-            let descriptor = FetchDescriptor<WordRecord>(
-                predicate: #Predicate { word in
-                    batchIDs.contains(word.id) && word.deletedAt == nil
-                }
-            )
-            let fetched = try context.fetch(descriptor)
-            let wordsByID = Dictionary(uniqueKeysWithValues: fetched.map { ($0.id, $0) })
-            return batchIDs.compactMap { wordsByID[$0] }
-        } else {
-            var descriptor = FetchDescriptor<WordRecord>(
-                predicate: #Predicate { $0.deletedAt == nil },
-                sortBy: [SortDescriptor(\.normalizedTerm)]
-            )
-            descriptor.fetchLimit = batchSize
-            descriptor.fetchOffset = batch * batchSize
-            return try context.fetch(descriptor)
-        }
+        isLoadingWords = false
     }
 
     private func fetchWords(ids: Set<UUID>) throws -> [WordRecord] {
@@ -577,54 +547,93 @@ struct LibraryView: View {
 
 }
 
+private struct LibraryListKey: Equatable {
+    let searchText: String
+    let reloadToken: Int
+    let storeRevision: Int
+}
+
 struct HistoryView: View {
     @Environment(\.modelContext) private var context
-    @Query(
-        filter: #Predicate<AttemptRecord> { $0.deletedAt == nil },
-        sort: \AttemptRecord.answeredAt,
-        order: .reverse
-    ) private var attempts: [AttemptRecord]
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    @State private var attempts: [AttemptSummary] = []
+    @State private var totalCount = 0
+    @State private var hasLoadedOnce = false
+    @State private var isLoadingPage = false
+    @State private var listGeneration = 0
+    /// Set when a page fetch fails, so the footer stops retrying until the next refresh.
+    @State private var pageLoadFailed = false
     @State private var notice: String?
 
+    private let pageSize = 200
+
+    private var canLoadMore: Bool {
+        attempts.count < totalCount
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("상세 로그는 학습 품질 계산용 요약 상태와 별개입니다. 최근 기록은 유지하고, 오래된 정답과 만료된 오답/모름은 정리해 앱 크기 증가를 제한합니다.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            if let notice {
-                FeedbackPanel(items: [
-                    FeedbackItem(
-                        text: notice,
-                        systemImage: "checkmark.circle",
-                        color: .secondary
-                    )
-                ])
-                .accessibilityLabel("학습 기록 상태 안내")
-            }
-            List(attempts) { attempt in
-            HStack {
-                VStack(alignment: .leading) {
-                    Text(attempt.prompt)
-                        .font(.body)
-                    Text(attempt.directionRaw)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        // One List owns all scrolling, as in MasteredView.
+        List {
+            Section {
+                Text("최근 답안 기록입니다. 학습 상태 계산은 별도 요약으로 유지되므로, 오래된 기록을 정리해도 진도는 바뀌지 않습니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                if let notice {
+                    FeedbackPanel(items: [
+                        FeedbackItem(
+                            text: notice,
+                            systemImage: "checkmark.circle",
+                            color: .secondary
+                        )
+                    ])
+                    .accessibilityLabel("학습 기록 상태 안내")
                 }
-                Spacer()
-                if attempt.automaticJudgementRaw != attempt.finalJudgementRaw {
-                    Text("보정됨")
-                        .foregroundStyle(.orange)
-                }
-                Text(attempt.finalJudgementRaw)
             }
-            .padding(.vertical, 5)
+            if !hasLoadedOnce {
+                PageLoadingView()
+            } else if attempts.isEmpty {
+                ContentUnavailableView(
+                    "학습 기록이 없습니다",
+                    systemImage: "chart.bar",
+                    description: Text("테스트에서 답안을 확정하면 기록이 쌓입니다.")
+                )
+            } else {
+                Section("\(totalCount)건") {
+                    ForEach(attempts) { attempt in
+                        HistoryAttemptRow(attempt: attempt)
+                    }
+                    if canLoadMore, !pageLoadFailed {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("더 불러오는 중...")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.callout)
+                        .frame(maxWidth: .infinity)
+                        // Restarts when a page finishes, so a page dropped by a
+                        // concurrent refresh is requested again while the footer shows.
+                        .task(id: isLoadingPage) {
+                            await loadNextPage()
+                        }
+                    }
+                }
+            }
         }
+        // Rebuilds what is already shown, so a save or import never drops the
+        // pages the user has scrolled through.
+        .task(id: storeRevision) {
+            guard await PageReloadPolicy.shouldLoad(hasSnapshot: hasLoadedOnce) else { return }
+            await refreshShownAttempts()
         }
-        .navigationTitle("학습 기록")
         .toolbar {
             ToolbarItem {
-                Button("오래된 기록 정리") { compactHistory() }
-                    .controlSize(.large)
+                Button {
+                    compactHistory()
+                } label: {
+                    Label("오래된 기록 정리", systemImage: "archivebox")
+                }
+                .help("오래된 정답과 만료된 오답·모름 기록 정리")
             }
         }
     }
@@ -636,6 +645,91 @@ struct HistoryView: View {
         } catch {
             notice = error.localizedDescription
         }
+    }
+
+    /// Replaces the list with as many newest rows as are shown now. A page that
+    /// was in flight belongs to the old list and is dropped (`listGeneration`).
+    private func refreshShownAttempts() async {
+        listGeneration += 1
+        let generation = listGeneration
+        do {
+            let page = try await VocabLibraryReadModel.attemptHistory(
+                offset: 0,
+                limit: max(attempts.count, pageSize),
+                in: context.container
+            )
+            guard !Task.isCancelled, generation == listGeneration else { return }
+            attempts = page.attempts
+            totalCount = page.totalCount
+            pageLoadFailed = false
+        } catch {
+            guard !Task.isCancelled, generation == listGeneration else { return }
+            notice = error.localizedDescription
+        }
+        hasLoadedOnce = true
+    }
+
+    private func loadNextPage() async {
+        guard !isLoadingPage, canLoadMore, !pageLoadFailed else { return }
+        isLoadingPage = true
+        defer { isLoadingPage = false }
+        let generation = listGeneration
+        do {
+            let page = try await VocabLibraryReadModel.attemptHistory(
+                offset: attempts.count,
+                limit: pageSize,
+                in: context.container
+            )
+            guard generation == listGeneration else { return }
+            // New answers shift offsets between pages; skip rows already shown.
+            let shownIDs = Set(attempts.map(\.id))
+            attempts += page.attempts.filter { !shownIDs.contains($0.id) }
+            totalCount = page.totalCount
+        } catch {
+            guard generation == listGeneration else { return }
+            pageLoadFailed = true
+            notice = error.localizedDescription
+        }
+    }
+}
+
+private struct HistoryAttemptRow: View {
+    let attempt: AttemptSummary
+
+    var body: some View {
+        let finalResult = FinalResult(rawValue: attempt.finalJudgementRaw)
+        let direction = PracticeDirection(rawValue: attempt.directionRaw)
+        HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(attempt.prompt)
+                    .font(.body.weight(.medium))
+                HStack(spacing: 6) {
+                    Text(direction?.shortTitle ?? attempt.directionRaw)
+                    if !attempt.submittedAnswer.isEmpty,
+                       attempt.questionFormatRaw == QuestionFormat.typed.rawValue {
+                        Text("·")
+                        Text("답안 \(attempt.submittedAnswer)")
+                            .lineLimit(1)
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(attempt.answeredAt.formatted(date: .abbreviated, time: .shortened))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+            if attempt.automaticJudgementRaw != attempt.finalJudgementRaw {
+                StatusBadge(title: "보정됨", systemImage: "pencil", tint: .orange)
+            }
+            if let finalResult {
+                StatusBadge(title: finalResult.title, systemImage: finalResult.systemImage, tint: finalResult.tint)
+            } else {
+                Text(attempt.finalJudgementRaw)
+                    .font(.caption)
+            }
+        }
+        .padding(.vertical, 4)
     }
 }
 
@@ -659,7 +753,7 @@ private struct WordEditSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("단어 직접 수정")
                 .font(.title.weight(.semibold))
-            Text("OCR 오인식이나 오입력된 단어를 수정합니다. 이 값은 단어장의 단일 진실 공급원(SOT)을 직접 바꾸며, 장기정착 단어를 수정하면 다시 학습 중으로 돌아갑니다.")
+            Text("OCR 오인식이나 오입력을 바로잡습니다. 단어장 원본이 바뀌며, 장기정착 단어를 수정하면 다시 학습 중으로 돌아갑니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             TextField("영단어", text: $term)
@@ -683,7 +777,7 @@ private struct WordEditSheet: View {
                 Spacer()
                 Button("취소") { dismiss() }
                     .controlSize(.large)
-                Button("SOT 수정 저장") { save() }
+                Button("수정 저장") { save() }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.large)
                     .keyboardShortcut(.return, modifiers: .command)
@@ -726,7 +820,7 @@ private struct VocabularyRegistrationSheet: View {
         VStack(alignment: .leading, spacing: 18) {
             Text("단어 등록")
                 .font(.title.weight(.semibold))
-            Text("단어장 SOT에 저장합니다. 기존 표제어에는 아직 없는 뜻만 병합합니다.")
+            Text("단어장에 저장합니다. 이미 있는 표제어에는 새 뜻만 합쳐집니다.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             Picker("추가 방식", selection: $mode) {
@@ -756,7 +850,7 @@ private struct VocabularyRegistrationSheet: View {
             }
             Text(mode == .single
                  ? "쉼표 또는 슬래시로 여러 의미를 구분합니다. 괄호 안 쉼표는 한 의미로 보존됩니다."
-                 : "한 줄에 한 단어씩 붙여넣으세요. 중복 표제어는 별도 단어를 만들지 않고 SOT에 병합됩니다.")
+                 : "한 줄에 한 단어씩 붙여넣으세요. 중복 표제어는 별도 단어를 만들지 않고 기존 단어에 합쳐집니다.")
             .font(.caption)
             .foregroundStyle(.secondary)
             if let error {

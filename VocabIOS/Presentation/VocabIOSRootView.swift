@@ -2,22 +2,23 @@ import CoreData
 import SwiftData
 import SwiftUI
 
+/// Tabs mirror the Mac sidebar's learning section in name, symbol and order.
 private enum VocabIOSTab: String, CaseIterable, Identifiable {
-    case sets = "단어장"
-    case review = "복습"
     case test = "테스트"
+    case study = "학습 카드"
+    case review = "복습"
     case settings = "설정"
 
     var id: String { rawValue }
 
     var symbol: String {
         switch self {
-        case .sets:
+        case .test:
+            "checkmark.rectangle"
+        case .study:
             "rectangle.stack"
         case .review:
             "arrow.clockwise.circle"
-        case .test:
-            "checkmark.rectangle"
         case .settings:
             "gearshape"
         }
@@ -46,6 +47,7 @@ struct VocabIOSRootView: View {
     @State private var backgroundActivityMessage: String?
     @State private var backgroundActivityIsRunning = false
     @State private var activityClearTask: Task<Void, Never>?
+    @State private var storeRevision = 0
 
     var body: some View {
         TabView {
@@ -54,26 +56,19 @@ struct VocabIOSRootView: View {
                     content(for: tab)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .navigationTitle(tab.rawValue)
-                        .toolbar {
+                        .environment(\.vocabStoreRevision, storeRevision)
+                        // A bottom banner keeps long status text readable instead of
+                        // squeezing it into the navigation bar.
+                        .safeAreaInset(edge: .bottom) {
                             if let backgroundActivityMessage {
-                                ToolbarItem(placement: .topBarTrailing) {
-                                    HStack(spacing: 6) {
-                                        if backgroundActivityIsRunning {
-                                            ProgressView()
-                                                .controlSize(.small)
-                                        } else {
-                                            Image(systemName: "checkmark.circle")
-                                                .foregroundStyle(.secondary)
-                                        }
-                                        Text(backgroundActivityMessage)
-                                            .font(.caption)
-                                            .foregroundStyle(.secondary)
-                                            .lineLimit(1)
-                                    }
-                                    .accessibilityElement(children: .combine)
-                                }
+                                VocabIOSActivityBanner(
+                                    message: backgroundActivityMessage,
+                                    isRunning: backgroundActivityIsRunning
+                                )
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
                             }
                         }
+                        .animation(.easeInOut(duration: 0.25), value: backgroundActivityMessage)
                 }
                 .tabItem {
                     Label(tab.rawValue, systemImage: tab.symbol)
@@ -109,6 +104,7 @@ struct VocabIOSRootView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
+            Task { @MainActor in storeRevision &+= 1 }
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
             }
@@ -117,6 +113,7 @@ struct VocabIOSRootView: View {
             guard let source = notification.object as? ModelContext,
                   source.container === modelContext.container else { return }
             let changes = VocabModelContextChangeEvent.changes(from: notification, context: source)
+            Task { @MainActor in storeRevision &+= 1 }
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
                 await VocabImportedIdentifierBuffer.shared.capture(
@@ -259,13 +256,13 @@ struct VocabIOSRootView: View {
             )
         } else {
             switch tab {
-        case .sets:
-            VocabIOSSetListView()
-        case .review:
-            VocabIOSReviewListView()
-        case .test:
-            VocabIOSTestSetupView()
-        case .settings:
+            case .test:
+                VocabIOSTestSetupView()
+            case .study:
+                VocabIOSStudyDayListView()
+            case .review:
+                VocabIOSReviewListView()
+            case .settings:
                 VocabIOSConnectionStatusView(
                     connectionError: connectionError,
                     cloudKitState: cloudKitState,
@@ -478,136 +475,164 @@ private struct VocabIOSConnectionStatusView: View {
 
 }
 
-private struct CompactEmptyState: View {
-    let title: String
-    let systemImage: String
-    let description: String
+private struct VocabIOSActivityBanner: View {
+    let message: String
+    let isRunning: Bool
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .font(.system(size: 28, weight: .semibold))
-                .foregroundStyle(.secondary)
-
-            Text(title)
-                .font(.callout.weight(.semibold))
-                .multilineTextAlignment(.center)
-
-            Text(description)
+        HStack(spacing: 8) {
+            if isRunning {
+                ProgressView()
+                    .controlSize(.small)
+            } else {
+                Image(systemName: "checkmark.circle")
+                    .foregroundStyle(.secondary)
+            }
+            Text(message)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-                .multilineTextAlignment(.center)
-                .lineLimit(nil)
-                .fixedSize(horizontal: false, vertical: true)
+                .lineLimit(2)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 18)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .padding(.bottom, 8)
+        .accessibilityElement(children: .combine)
     }
 }
 
-private struct VocabIOSSetListView: View {
-    @Query(
-        filter: #Predicate<WordRecord> { $0.deletedAt == nil },
-        sort: \WordRecord.createdAt,
-        order: .reverse
-    ) private var words: [WordRecord]
-
-    private var registrationGroups: [VocabIOSRegistrationGroup] {
-        Dictionary(grouping: words, by: \.registrationDay)
-            .map { day, words in VocabIOSRegistrationGroup(day: day, words: words) }
-            .sorted { $0.day > $1.day }
-    }
+private struct VocabIOSStudyDayListView: View {
+    @Environment(\.modelContext) private var context
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    @State private var snapshot: StudyCardsSnapshot?
+    @State private var loadError: String?
 
     var body: some View {
-        let groups = registrationGroups
+        let groups = snapshot?.groups ?? []
         List {
-            if groups.isEmpty {
-                CompactEmptyState(
-                    title: "등록된 단어 없음",
-                    systemImage: "rectangle.stack",
-                    description: "macOS 단어장이 iCloud로 동기화되면 여기서 볼 수 있습니다."
-                )
-            } else {
+            Section {
                 ForEach(groups) { group in
                     NavigationLink {
-                        VocabIOSSetDetailView(
-                            registrationDay: group.day,
-                            words: group.words
-                        )
+                        VocabIOSStudyDayDetailView(group: group)
                     } label: {
-                        VStack(alignment: .leading, spacing: 6) {
+                        HStack {
                             Text(group.day)
-                                .font(.headline)
-                            Text("\(group.words.count)개 단어")
-                                .font(.subheadline)
+                                .font(.headline.monospacedDigit())
+                            Spacer()
+                            Text("\(group.words.count)개")
+                                .font(.subheadline.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
                         .padding(.vertical, 4)
                     }
                 }
+            } footer: {
+                if let loadError {
+                    Text(loadError)
+                } else if let snapshot, !groups.isEmpty {
+                    Text("최초 등록일별로 묶인 카드입니다. 등록일 \(groups.count)개 · 전체 \(snapshot.wordCount)단어")
+                }
+            }
+        }
+        .overlay {
+            if snapshot == nil {
+                PageLoadingView()
+            } else if groups.isEmpty {
+                ContentUnavailableView(
+                    "학습할 단어가 없습니다",
+                    systemImage: "rectangle.stack",
+                    description: Text("Mac 단어장이 iCloud로 동기화되면 여기서 볼 수 있습니다.")
+                )
+            }
+        }
+        // Grouping depends only on membership and the immutable creation date, so
+        // it is rebuilt per store change, off the main actor, never per render.
+        .task(id: storeRevision) {
+            guard await PageReloadPolicy.shouldLoad(hasSnapshot: snapshot != nil) else { return }
+            do {
+                let loaded = try await VocabLibraryReadModel.studyCards(in: context.container)
+                guard !Task.isCancelled else { return }
+                snapshot = loaded
+                loadError = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                snapshot = snapshot ?? StudyCardsSnapshot(groups: [], wordCount: 0)
+                loadError = error.localizedDescription
             }
         }
     }
-
 }
 
-private struct VocabIOSRegistrationGroup: Identifiable {
-    let day: String
-    let words: [WordRecord]
-    var id: String { day }
-}
-
-private struct VocabIOSSetDetailView: View {
-    let registrationDay: String
-    let words: [WordRecord]
+private struct VocabIOSStudyDayDetailView: View {
+    let group: RegistrationDayGroup
     @State private var faceStates: [UUID: Bool] = [:]
 
     var body: some View {
         ScrollView {
-            LazyVStack(spacing: 8) {
-                ForEach(sortedWords) { word in
-                    VocabIOSFlipWordCard(
+            LazyVGrid(columns: VocabMetrics.cardGridColumns, spacing: VocabMetrics.cardGridSpacing) {
+                ForEach(group.words) { word in
+                    WordFlipCard(
                         word: word,
                         showsMeaning: Binding(
                             get: { faceStates[word.id] ?? false },
                             set: { faceStates[word.id] = $0 }
-                        )
+                        ),
+                        height: 132
                     )
                 }
             }
-            .padding(12)
+            .padding(16)
         }
-        .navigationTitle(registrationDay)
-    }
-
-    private var sortedWords: [WordRecord] {
-        words.sorted { lhs, rhs in
-            if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
-            return lhs.normalizedTerm < rhs.normalizedTerm
-        }
+        .navigationTitle(group.day)
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 private struct VocabIOSReviewListView: View {
-    @Query(
-        filter: #Predicate<ReviewStateRecord> { $0.activePriority > 0 },
-        sort: \ReviewStateRecord.activePriority,
-        order: .reverse
-    ) private var reviewStates: [ReviewStateRecord]
+    @Environment(\.modelContext) private var context
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    @State private var loadedCandidates: [WordSummary]?
+    @State private var loadError: String?
 
     var body: some View {
-        List {
-            if reviewStates.isEmpty {
-                CompactEmptyState(
-                    title: "복습 대상 없음",
-                    systemImage: "checkmark.circle",
-                    description: "복습이 필요한 단어가 생기면 여기에 표시됩니다."
-                )
-            } else {
-                ForEach(reviewStates.compactMap(\.word).filter { $0.deletedAt == nil }) { word in
-                    VocabIOSWordSummaryRow(word: word)
+        // Same candidates and order as the Mac review page, rebuilt per store
+        // change off the main actor.
+        let candidates = loadedCandidates ?? []
+        ScrollView {
+            if let loadError {
+                Label(loadError, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 16)
+            }
+            LazyVGrid(columns: VocabMetrics.cardGridColumns, spacing: VocabMetrics.cardGridSpacing) {
+                ForEach(candidates) { word in
+                    ReviewWordCard(word: word)
                 }
+            }
+            .padding(16)
+        }
+        .overlay {
+            if loadedCandidates == nil {
+                PageLoadingView()
+            } else if candidates.isEmpty {
+                ContentUnavailableView(
+                    "우선 복습할 단어가 없습니다",
+                    systemImage: "checkmark.circle",
+                    description: Text("테스트에서 틀리거나 모름으로 답한 단어가 여기에 모입니다.")
+                )
+            }
+        }
+        .task(id: storeRevision) {
+            guard await PageReloadPolicy.shouldLoad(hasSnapshot: loadedCandidates != nil) else { return }
+            do {
+                let loaded = try await VocabLibraryReadModel.reviewCandidates(in: context.container)
+                guard !Task.isCancelled else { return }
+                loadedCandidates = loaded
+                loadError = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                loadedCandidates = loadedCandidates ?? []
+                loadError = error.localizedDescription
             }
         }
     }
@@ -625,24 +650,25 @@ private struct VocabIOSTestSetupView: View {
     var body: some View {
         List {
             Section {
-                Text("Mac과 동일한 세션 생성, 자동 채점, 최종 보정, 복습 기록 갱신 규칙으로 20문항 테스트를 진행합니다.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Section("테스트 설정") {
                 Picker("모드", selection: $mode) {
                     ForEach(SessionMode.allCases) { mode in
                         Text(mode.rawValue).tag(mode)
                     }
                 }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("모드")
+            } footer: {
+                Text(mode.setupDescription)
+            }
 
+            Section {
                 Picker("방향", selection: $direction) {
                     ForEach(PracticeDirection.allCases) { direction in
-                        Text(direction.rawValue).tag(direction)
+                        Text(direction.shortTitle).tag(direction)
                     }
                 }
+                .pickerStyle(.segmented)
 
                 Picker("시험 방식", selection: $format) {
                     ForEach(QuestionFormat.allCases) { format in
@@ -650,12 +676,10 @@ private struct VocabIOSTestSetupView: View {
                     }
                 }
                 .pickerStyle(.segmented)
-
-                Text(format == .multipleChoice ? "4개의 선택지 중 정답을 고르는 쉬운 복습 모드입니다." : "정답을 직접 입력하는 기본 테스트 모드입니다.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-
+            } header: {
+                Text("방향 · 시험 방식")
+            } footer: {
+                Text("\(format.setupDescription) 한 회차는 최대 20개의 고유 단어로 구성됩니다.")
             }
 
             if let error {
@@ -667,10 +691,12 @@ private struct VocabIOSTestSetupView: View {
             }
 
             Section {
+                // Prominent buttons stay text-only on both platforms: inside a List
+                // row the symbol takes the accent tint and disappears into the fill.
                 Button {
                     start()
                 } label: {
-                    Label(format == .multipleChoice ? "4지선택형 테스트 시작" : "직접 입력 테스트 시작", systemImage: "play.fill")
+                    Text(format.startButtonTitle)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -730,97 +756,6 @@ private struct VocabIOSTestRun: Identifiable {
     var id: UUID { session.id }
 }
 
-private struct VocabIOSWordCard: View {
-    let word: WordRecord
-    var showsMeaning = true
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(word.term)
-                .font(.system(size: 28, weight: .bold, design: .rounded))
-                .minimumScaleFactor(0.72)
-            if showsMeaning {
-                Text(meaningsText)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-            } else {
-                Text("탭해서 의미 보기")
-                    .font(.callout)
-                    .foregroundStyle(.tertiary)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-    }
-
-    private var meaningsText: String {
-        word.activeMeanings.map(\.text).joined(separator: ", ")
-    }
-}
-
-private struct VocabIOSFlipWordCard: View {
-    let word: WordRecord
-    @Binding var showsMeaning: Bool
-
-    var body: some View {
-        Button {
-            withAnimation(.bouncy(duration: 0.42, extraBounce: 0.10)) {
-                showsMeaning.toggle()
-            }
-        } label: {
-            ZStack {
-                cardFace(title: "English", value: word.term, isBack: false)
-                    .opacity(showsMeaning ? 0 : 1)
-                    .rotation3DEffect(.degrees(showsMeaning ? 180 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.65)
-                cardFace(title: "의미", value: meaningsText, isBack: true)
-                    .opacity(showsMeaning ? 1 : 0)
-                    .rotation3DEffect(.degrees(showsMeaning ? 0 : -180), axis: (x: 0, y: 1, z: 0), perspective: 0.65)
-            }
-            .frame(maxWidth: .infinity, minHeight: 132, maxHeight: 132)
-            .shadow(color: showsMeaning ? .accentColor.opacity(0.16) : .black.opacity(0.06), radius: 8, y: 4)
-            .contentShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel(word.term)
-        .accessibilityValue(showsMeaning ? meaningsText : "영단어 앞면")
-        .accessibilityHint("눌러서 카드 앞뒤를 전환합니다")
-    }
-
-    private var meaningsText: String {
-        word.activeMeanings.map(\.text).joined(separator: ", ")
-    }
-
-    private func cardFace(title: String, value: String, isBack: Bool) -> some View {
-        RoundedRectangle(cornerRadius: 18, style: .continuous)
-            .fill(LinearGradient(
-                colors: isBack
-                    ? [Color.accentColor.opacity(0.24), Color.green.opacity(0.10)]
-                    : [Color.primary.opacity(0.06), Color.secondary.opacity(0.08)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ))
-            .overlay {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .stroke(isBack ? Color.accentColor.opacity(0.45) : Color.secondary.opacity(0.22), lineWidth: 1.2)
-            }
-            .overlay {
-                VStack(spacing: 8) {
-                    Text(title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(value)
-                        .font(isBack ? .callout.weight(.medium) : .title2.weight(.bold))
-                        .multilineTextAlignment(.center)
-                        .lineLimit(4)
-                        .minimumScaleFactor(0.72)
-                        .foregroundStyle(.primary)
-                }
-                .padding(14)
-            }
-    }
-}
-
 private struct VocabIOSTestRunnerView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -832,6 +767,8 @@ private struct VocabIOSTestRunnerView: View {
     @State private var chosenResult: FinalResult?
     @State private var correctedMeaningID: UUID?
     @State private var notice: String?
+    @State private var tally = TestSessionTally()
+    @State private var isCompleted = false
     @FocusState private var answerFocused: Bool
 
     private var question: SessionQuestion? {
@@ -839,32 +776,20 @@ private struct VocabIOSTestRunnerView: View {
     }
 
     var body: some View {
-        if let question {
+        if isCompleted {
+            TestCompletionView(modeTitle: run.session.modeRaw, tally: tally) { dismiss() }
+                .navigationTitle("테스트")
+                .navigationBarTitleDisplayMode(.inline)
+        } else if let question {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    HStack {
-                        Text(run.session.modeRaw)
-                            .font(.headline)
-                        Spacer()
-                        Text("\(index + 1) / \(run.questions.count)")
-                            .font(.callout.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                    }
-
-                    ProgressView(value: Double(index), total: Double(run.questions.count))
-
-                    Text(question.direction.rawValue)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    Text(question.format.title)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                    Text(question.prompt)
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .frame(maxWidth: .infinity, minHeight: 96, alignment: .center)
-                        .padding()
-                        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                    TestProgressHeader(
+                        modeTitle: run.session.modeRaw,
+                        index: index,
+                        total: run.questions.count,
+                        reducedQuestionCount: run.session.wasReduced ? run.questions.count : nil
+                    )
+                    TestPromptCard(question: question)
 
                     if question.format == .multipleChoice {
                         multipleChoiceOptions(question)
@@ -872,6 +797,8 @@ private struct VocabIOSTestRunnerView: View {
                         TextField("답안을 입력하세요", text: $answer)
                             .textFieldStyle(.roundedBorder)
                             .font(.title3)
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
                             .focused($answerFocused)
                             .submitLabel(.done)
                             .onSubmit(submitForJudgement)
@@ -881,24 +808,32 @@ private struct VocabIOSTestRunnerView: View {
                     if let judgeResult {
                         resultPanel(judgeResult, question: question)
                     } else {
-                        HStack {
-                            Button("제출", action: submitForJudgement)
+                        HStack(spacing: 12) {
+                            if question.format == .typed {
+                                Button(action: submitForJudgement) {
+                                    Text("제출").frame(maxWidth: .infinity)
+                                }
                                 .buttonStyle(.borderedProminent)
-                            Button("모름", action: markUnknown)
-                                .buttonStyle(.bordered)
+                            }
+                            Button(action: markUnknown) {
+                                Text("모름").frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.bordered)
                         }
                         .controlSize(.large)
                     }
 
                     if let notice {
-                        Text(notice)
+                        Label(notice, systemImage: "info.circle")
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
                 }
                 .padding(16)
             }
+            .scrollDismissesKeyboard(.interactively)
             .navigationTitle("테스트")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("닫기") { dismiss() }
@@ -906,10 +841,10 @@ private struct VocabIOSTestRunnerView: View {
             }
             .onAppear { answerFocused = question.format == .typed }
         } else {
-            CompactEmptyState(
-                title: "출제 문항이 없습니다",
+            ContentUnavailableView(
+                "출제 문항이 없습니다",
                 systemImage: "exclamationmark.triangle",
-                description: "테스트할 단어가 동기화된 뒤 다시 시도하세요."
+                description: Text("테스트할 단어가 동기화된 뒤 다시 시도하세요.")
             )
         }
     }
@@ -918,24 +853,13 @@ private struct VocabIOSTestRunnerView: View {
     private func multipleChoiceOptions(_ question: SessionQuestion) -> some View {
         VStack(spacing: 10) {
             ForEach(Array(question.choices.enumerated()), id: \.element.id) { offset, option in
-                Button {
+                ChoiceOptionButton(
+                    number: offset + 1,
+                    label: option.label,
+                    appearance: .resolve(option: option, selectedAnswer: answer, isJudged: judgeResult != nil)
+                ) {
                     selectChoice(option)
-                } label: {
-                    HStack(alignment: .top, spacing: 12) {
-                        Text("\(offset + 1)")
-                            .font(.headline.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: 24)
-                        Text(option.label)
-                            .font(.headline)
-                            .multilineTextAlignment(.leading)
-                        Spacer(minLength: 0)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 64, alignment: .leading)
-                    .padding(14)
-                    .background(choiceBackground(option), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
                 }
-                .buttonStyle(.plain)
                 .disabled(judgeResult != nil)
             }
         }
@@ -944,27 +868,18 @@ private struct VocabIOSTestRunnerView: View {
     @ViewBuilder
     private func resultPanel(_ result: JudgeResult, question: SessionQuestion) -> some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label("자동 판정: \(display(result.automaticResult))", systemImage: result.automaticResult == .correct ? "checkmark.circle" : "exclamationmark.circle")
-                .foregroundStyle(result.automaticResult == .correct ? .green : .orange)
+            JudgementBanner(result: result)
 
             if result.automaticResult != .unknown {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("원문: \(question.word.term)")
-                    Text("등록 의미: \(question.word.activeMeanings.map(\.text).joined(separator: ", "))")
-                    Text("입력 답안: \(displayedAnswer(for: question))")
-                    if question.format == .multipleChoice {
-                        Text("정답: \(question.choices.first(where: \.isCorrect)?.label ?? "")")
-                    }
-                }
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
+                AnswerComparisonView(question: question, submittedAnswer: displayedAnswer(for: question))
             }
 
+            Divider()
+
             Picker("최종 판정", selection: Binding(get: { chosenResult ?? result.automaticResult }, set: { chosenResult = $0 })) {
-                Text("정답").tag(FinalResult.correct)
-                Text("오답").tag(FinalResult.incorrect)
-                Text("모름").tag(FinalResult.unknown)
+                ForEach(FinalResult.judgementOrder, id: \.self) { judgement in
+                    Text(judgement.title).tag(judgement)
+                }
             }
             .pickerStyle(.segmented)
 
@@ -981,12 +896,19 @@ private struct VocabIOSTestRunnerView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Button(index + 1 == run.questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
+            Button(action: commitAndAdvance) {
+                Text(index + 1 == run.questions.count ? "완료" : "확정 후 다음")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
         }
-        .padding(12)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .padding(14)
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: VocabMetrics.panelCornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: VocabMetrics.panelCornerRadius, style: .continuous)
+                .stroke((chosenResult ?? result.automaticResult).tint.opacity(0.35), lineWidth: 1)
+        }
     }
 
     private func submitForJudgement() {
@@ -1013,11 +935,6 @@ private struct VocabIOSTestRunnerView: View {
         answer = option.id.uuidString
         notice = nil
         submitForJudgement()
-    }
-
-    private func choiceBackground(_ option: MultipleChoiceOption) -> Color {
-        guard answer == option.id.uuidString else { return Color.secondary.opacity(0.10) }
-        return Color.accentColor.opacity(0.18)
     }
 
     private func displayedAnswer(for question: SessionQuestion) -> String {
@@ -1050,9 +967,11 @@ private struct VocabIOSTestRunnerView: View {
                 session: run.session,
                 correction: final == judgeResult.automaticResult ? nil : "oneTimeCorrection"
             )
+            tally.record(final, forQuestionAt: index)
             if index + 1 == run.questions.count {
                 try coordinator.completeSession(run.session)
-                dismiss()
+                answerFocused = false
+                isCompleted = true
             } else {
                 index += 1
                 answer = ""
@@ -1066,31 +985,5 @@ private struct VocabIOSTestRunnerView: View {
         } catch {
             notice = error.localizedDescription
         }
-    }
-
-    private func display(_ result: FinalResult) -> String {
-        switch result {
-        case .correct:
-            "정답"
-        case .incorrect:
-            "오답"
-        case .unknown:
-            "모름"
-        }
-    }
-}
-
-private struct VocabIOSWordSummaryRow: View {
-    let word: WordRecord
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(word.term)
-                .font(.headline)
-            Text(word.activeMeanings.map(\.text).joined(separator: ", "))
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 4)
     }
 }
