@@ -63,7 +63,9 @@ paths:
 ## Lifecycle
 
 - Evidence: one success per Seoul date; any mode, direction or format; only
-  dates after the latest wrong/unknown (or SOT revision) count.
+  dates after the latest wrong/unknown count. A correct answer counts when
+  answered at or after the latest SOT revision (`word.updatedAt`), but only
+  strictly after a legacy mastery boundary (the last pre-migration answer).
 - `consolidating` (`장기정착`): two eligible dates; one date makes the word
   promotion-due from the next day. Excluded from ordinary rotation;
   maintenance after 7/14/30/45 days (2/3/4/5+ dates). Wrong/unknown returns
