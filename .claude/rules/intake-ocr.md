@@ -39,3 +39,10 @@ Release build, fixture of 10,000 words × ~3 meanings, 200,000 attempts,
 | Main-thread block during interaction | none > 100 ms |
 | 100-line paste parse / status update | p95 ≤ 10 ms / ≤ 150 ms |
 | 100-row OCR fixture recall | ≥ 98 rows |
+
+## Pitfalls
+
+- Vision's `usesLanguageCorrection` changes which Hangul glyphs come back
+  per OS model: `false` (aea6a01) misreads 머뭇 as 머붓 on the macOS 27
+  revision-3 model, `true` reads the reference fixture exactly. Re-check the
+  reference image test when the OS changes; never loosen it to pass.

@@ -468,10 +468,17 @@ enum OCRVocabularyFormatter {
     ) -> Bool {
         let normalized = pronunciation.lowercased().filter(\.isLetter)
         let headwordLength = headword.filter(\.isLetter).count
+        // `[` misread as `i`/`l` brackets the transcription at both ends; a lone
+        // capital `I` after a lowercase headword marks it even when Vision drops
+        // the closing bracket. A lowercase `i…` word without a closing artifact
+        // stays part of the headword (e.g. `make inroads`).
+        let hasClosingArtifact = normalized.last == "i" || normalized.last == "l"
+        let hasCapitalOpeningArtifact = pronunciation.first == "I" &&
+            headword.first?.isLowercase == true
         guard normalized.count >= 4,
               headwordLength >= 4,
               normalized.first == "i",
-              normalized.last == "i" || normalized.last == "l" else {
+              hasClosingArtifact || hasCapitalOpeningArtifact else {
             return false
         }
         let lengthRatio = Double(normalized.count) / Double(headwordLength)

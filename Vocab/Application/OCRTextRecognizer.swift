@@ -10,7 +10,10 @@ enum OCRTextRecognizer {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = ["ko-KR", "en-US"]
-        request.usesLanguageCorrection = false
+        // On the macOS 27 revision-3 model, correction is what keeps Hangul
+        // meanings exact (e.g. 머뭇 vs 머붓); headwords are unchanged and
+        // pronunciation tokens it alters are stripped by the formatter.
+        request.usesLanguageCorrection = true
         let handler = VNImageRequestHandler(cgImage: cgImage)
         try handler.perform([request])
         return (request.results ?? []).compactMap { observation in
