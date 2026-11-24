@@ -47,6 +47,7 @@ struct VocabIOSRootView: View {
     @State private var backgroundActivityMessage: String?
     @State private var backgroundActivityIsRunning = false
     @State private var activityClearTask: Task<Void, Never>?
+    @State private var storeRevision = 0
 
     var body: some View {
         TabView {
@@ -55,6 +56,7 @@ struct VocabIOSRootView: View {
                     content(for: tab)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .navigationTitle(tab.rawValue)
+                        .environment(\.vocabStoreRevision, storeRevision)
                         // A bottom banner keeps long status text readable instead of
                         // squeezing it into the navigation bar.
                         .safeAreaInset(edge: .bottom) {
@@ -102,6 +104,7 @@ struct VocabIOSRootView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
+            Task { @MainActor in storeRevision &+= 1 }
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
             }
@@ -110,6 +113,7 @@ struct VocabIOSRootView: View {
             guard let source = notification.object as? ModelContext,
                   source.container === modelContext.container else { return }
             let changes = VocabModelContextChangeEvent.changes(from: notification, context: source)
+            Task { @MainActor in storeRevision &+= 1 }
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
                 await VocabImportedIdentifierBuffer.shared.capture(
@@ -498,14 +502,13 @@ private struct VocabIOSActivityBanner: View {
 }
 
 private struct VocabIOSStudyDayListView: View {
-    @Query(
-        filter: #Predicate<WordRecord> { $0.deletedAt == nil },
-        sort: \WordRecord.createdAt,
-        order: .reverse
-    ) private var words: [WordRecord]
-    @State private var groups: [RegistrationDayGroup] = []
+    @Environment(\.modelContext) private var context
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    @State private var snapshot: StudyCardsSnapshot?
+    @State private var loadError: String?
 
     var body: some View {
+        let groups = snapshot?.groups ?? []
         List {
             Section {
                 ForEach(groups) { group in
@@ -524,13 +527,17 @@ private struct VocabIOSStudyDayListView: View {
                     }
                 }
             } footer: {
-                if !groups.isEmpty {
-                    Text("최초 등록일별로 묶인 카드입니다. 등록일 \(groups.count)개 · 전체 \(words.count)단어")
+                if let loadError {
+                    Text(loadError)
+                } else if let snapshot, !groups.isEmpty {
+                    Text("최초 등록일별로 묶인 카드입니다. 등록일 \(groups.count)개 · 전체 \(snapshot.wordCount)단어")
                 }
             }
         }
         .overlay {
-            if groups.isEmpty {
+            if snapshot == nil {
+                PageLoadingView()
+            } else if groups.isEmpty {
                 ContentUnavailableView(
                     "학습할 단어가 없습니다",
                     systemImage: "rectangle.stack",
@@ -539,9 +546,19 @@ private struct VocabIOSStudyDayListView: View {
             }
         }
         // Grouping depends only on membership and the immutable creation date, so
-        // it is rebuilt per library change rather than per render.
-        .onChange(of: words, initial: true) { _, newWords in
-            groups = RegistrationDayGroup.groups(from: newWords)
+        // it is rebuilt per store change, off the main actor, never per render.
+        .task(id: storeRevision) {
+            guard await PageReloadPolicy.shouldLoad(hasSnapshot: snapshot != nil) else { return }
+            do {
+                let loaded = try await VocabLibraryReadModel.studyCards(in: context.container)
+                guard !Task.isCancelled else { return }
+                snapshot = loaded
+                loadError = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                snapshot = snapshot ?? StudyCardsSnapshot(groups: [], wordCount: 0)
+                loadError = error.localizedDescription
+            }
         }
     }
 }
@@ -572,14 +589,21 @@ private struct VocabIOSStudyDayDetailView: View {
 }
 
 private struct VocabIOSReviewListView: View {
-    @Query(filter: #Predicate<ReviewStateRecord> { $0.activePriority > 0 })
-    private var reviewStates: [ReviewStateRecord]
+    @Environment(\.modelContext) private var context
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    @State private var loadedCandidates: [WordSummary]?
+    @State private var loadError: String?
 
     var body: some View {
-        // Same candidates and order as the Mac review page; ordering reads mutable
-        // review fields, so it is derived per render from the filtered query.
-        let candidates = ReviewCandidateList.words(from: reviewStates)
+        // Same candidates and order as the Mac review page, rebuilt per store
+        // change off the main actor.
+        let candidates = loadedCandidates ?? []
         ScrollView {
+            if let loadError {
+                Label(loadError, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 16)
+            }
             LazyVGrid(columns: VocabMetrics.cardGridColumns, spacing: VocabMetrics.cardGridSpacing) {
                 ForEach(candidates) { word in
                     ReviewWordCard(word: word)
@@ -588,12 +612,27 @@ private struct VocabIOSReviewListView: View {
             .padding(16)
         }
         .overlay {
-            if candidates.isEmpty {
+            if loadedCandidates == nil {
+                PageLoadingView()
+            } else if candidates.isEmpty {
                 ContentUnavailableView(
                     "우선 복습할 단어가 없습니다",
                     systemImage: "checkmark.circle",
                     description: Text("테스트에서 틀리거나 모름으로 답한 단어가 여기에 모입니다.")
                 )
+            }
+        }
+        .task(id: storeRevision) {
+            guard await PageReloadPolicy.shouldLoad(hasSnapshot: loadedCandidates != nil) else { return }
+            do {
+                let loaded = try await VocabLibraryReadModel.reviewCandidates(in: context.container)
+                guard !Task.isCancelled else { return }
+                loadedCandidates = loaded
+                loadError = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                loadedCandidates = loadedCandidates ?? []
+                loadError = error.localizedDescription
             }
         }
     }

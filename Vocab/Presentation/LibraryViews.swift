@@ -3,17 +3,18 @@ import SwiftData
 import SwiftUI
 
 struct StudyCardsView: View {
-    @Query(
-        filter: #Predicate<WordRecord> { $0.deletedAt == nil },
-        sort: \WordRecord.createdAt,
-        order: .reverse
-    ) private var words: [WordRecord]
+    @Environment(\.modelContext) private var context
+    @Environment(\.vocabStoreRevision) private var storeRevision
     @Binding var faceStates: [UUID: Bool]
-    @State private var groups: [RegistrationDayGroup] = []
+    @State private var snapshot: StudyCardsSnapshot?
     @State private var selectedDay: String?
     @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
+
+    private var groups: [RegistrationDayGroup] {
+        snapshot?.groups ?? []
+    }
 
     private var effectiveSelectedDay: String? {
         selectedDay.flatMap { day in
@@ -24,6 +25,7 @@ struct StudyCardsView: View {
     var body: some View {
         let day = effectiveSelectedDay
         let cards = groups.first { $0.day == day }?.words ?? []
+        let wordCount = snapshot?.wordCount ?? 0
         VStack(alignment: .leading, spacing: 16) {
             Text("최초 등록일별로 묶인 카드입니다. 카드를 클릭하면 원문과 의미가 뒤집히며, 학습 진도에는 영향을 주지 않습니다.")
                 .font(.callout)
@@ -56,13 +58,15 @@ struct StudyCardsView: View {
 
                 Spacer()
 
-                Text("등록일 \(groups.count)개 · 전체 \(words.count)단어")
+                Text("등록일 \(groups.count)개 · 전체 \(wordCount)단어")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
-                    .accessibilityLabel("등록일 그룹은 \(groups.count)개이며 전체 단어는 \(words.count)개입니다.")
+                    .accessibilityLabel("등록일 그룹은 \(groups.count)개이며 전체 단어는 \(wordCount)개입니다.")
             }
 
-            if cards.isEmpty {
+            if snapshot == nil {
+                PageLoadingView()
+            } else if cards.isEmpty {
                 ContentUnavailableView(
                     "학습할 단어가 없습니다",
                     systemImage: "rectangle.stack",
@@ -80,7 +84,7 @@ struct StudyCardsView: View {
                                 )
                             ) {
                                 StudyCardActions(word: word) {
-                                    editingWord = word
+                                    openEditor(for: word)
                                 }
                             }
                         }
@@ -92,8 +96,8 @@ struct StudyCardsView: View {
             }
         }
         .padding(28)
-        .onChange(of: words, initial: true) { _, newWords in
-            groups = RegistrationDayGroup.groups(from: newWords)
+        .task(id: storeRevision) {
+            await reload()
         }
         .sheet(item: $editingWord) { word in
             WordEditSheet(word: word) { message, isError in
@@ -103,11 +107,35 @@ struct StudyCardsView: View {
         }
     }
 
+    private func reload() async {
+        // Grouping depends only on membership and the immutable creation date, so
+        // it is rebuilt per store change, off the main actor, never per render.
+        guard await PageReloadPolicy.shouldLoad(hasSnapshot: snapshot != nil) else { return }
+        do {
+            let loaded = try await VocabLibraryReadModel.studyCards(in: context.container)
+            guard !Task.isCancelled else { return }
+            snapshot = loaded
+        } catch {
+            guard !Task.isCancelled else { return }
+            snapshot = snapshot ?? StudyCardsSnapshot(groups: [], wordCount: 0)
+            message = error.localizedDescription
+            isError = true
+        }
+    }
+
+    private func openEditor(for word: WordSummary) {
+        do {
+            editingWord = try context.activeWord(id: word.id)
+        } catch {
+            message = error.localizedDescription
+            isError = true
+        }
+    }
 }
 
 /// Memory aid, pronunciation and edit actions shown on a Mac learning card.
 private struct StudyCardActions: View {
-    let word: WordRecord
+    let word: WordSummary
     let onEdit: () -> Void
 
     var body: some View {
@@ -115,7 +143,7 @@ private struct StudyCardActions: View {
             WordMemoryAidButton(word: word)
 
             Button {
-                WordPronouncer.shared.speak(headword: word.term, meanings: word.activeMeanings.map(\.text))
+                WordPronouncer.shared.speak(headword: word.term, meanings: word.meanings)
             } label: {
                 Image(systemName: "speaker.wave.2.fill")
             }
@@ -175,13 +203,13 @@ private final class WordPronouncer {
 }
 
 struct ReviewView: View {
-    @Query(filter: #Predicate<ReviewStateRecord> { $0.activePriority > 0 })
-    private var states: [ReviewStateRecord]
+    @Environment(\.modelContext) private var context
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    @State private var loadedCandidates: [WordSummary]?
+    @State private var loadError: String?
 
     var body: some View {
-        // Ordering reads mutable review fields, so it is derived per render from the
-        // already-filtered priority query rather than cached by membership.
-        let candidates = ReviewCandidateList.words(from: states)
+        let candidates = loadedCandidates ?? []
         VStack(alignment: .leading, spacing: 16) {
             HStack(alignment: .firstTextBaseline) {
                 Text("복습 우선도가 높은 단어부터 보여 줍니다. 테스트의 복습·혼합 모드가 이 단어들을 먼저 출제합니다.")
@@ -194,7 +222,15 @@ struct ReviewView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            if candidates.isEmpty {
+            if let loadError {
+                FeedbackPanel(items: [
+                    FeedbackItem(text: loadError, systemImage: "exclamationmark.triangle", color: .red)
+                ])
+                .accessibilityLabel("복습 상태 안내")
+            }
+            if loadedCandidates == nil {
+                PageLoadingView()
+            } else if candidates.isEmpty {
                 ContentUnavailableView(
                     "우선 복습할 단어가 없습니다",
                     systemImage: "checkmark.circle",
@@ -214,23 +250,48 @@ struct ReviewView: View {
             }
         }
         .padding(28)
+        // Ordering reads mutable review fields, which change only on save, so the
+        // list is rebuilt per store change off the main actor.
+        .task(id: storeRevision) {
+            guard await PageReloadPolicy.shouldLoad(hasSnapshot: loadedCandidates != nil) else { return }
+            do {
+                let loaded = try await VocabLibraryReadModel.reviewCandidates(in: context.container)
+                guard !Task.isCancelled else { return }
+                loadedCandidates = loaded
+                loadError = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                loadedCandidates = loadedCandidates ?? []
+                loadError = error.localizedDescription
+            }
+        }
     }
 }
 
 struct LibraryView: View {
     @Environment(\.modelContext) private var context
     @State private var searchText = ""
-    @State private var displayedWords: [WordRecord] = []
+    @State private var displayedWords: [WordSummary] = []
     @State private var selection = Set<UUID>()
     @State private var showingDeleteConfirmation = false
     @State private var showingAddWord = false
     @State private var editingWord: WordRecord?
     @State private var message: String?
     @State private var isError = false
-    @State private var batch = 0
+    @State private var nextOffset = 0
     @State private var canLoadMore = true
-    @State private var isLoadingWords = false
+    @State private var isLoadingWords = true
+    @State private var hasLoadedOnce = false
     @State private var matchedSearchWordIDs: [UUID]?
+    /// The search the shown rows belong to; a reload for the same search keeps
+    /// every page already loaded instead of jumping back to the first.
+    @State private var loadedSearchText: String?
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    /// Bumped after this page edits the library; with the search text and the
+    /// store revision it keys the reload task, so a newer reload cancels an older one.
+    @State private var reloadToken = 0
+    /// Identifies the current list so a page fetched for an older list is dropped.
+    @State private var listGeneration = 0
 
     private let batchSize = 150
 
@@ -242,16 +303,16 @@ struct LibraryView: View {
                         HStack(spacing: 8) {
                             Text(word.term)
                                 .font(.title3.weight(.semibold))
-                            StatusBadge(title: word.learningStatusTitle, tint: word.learningStatus.tint)
+                            StatusBadge(title: word.status.koreanTitle, tint: word.status.tint)
                         }
-                        Text(word.meaningsDisplayText)
+                        Text(word.meaningsText)
                             .font(.body)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
                     WordMemoryAidButton(word: word)
                     Button {
-                        editingWord = word
+                        openEditor(for: word)
                     } label: {
                         Label("수정", systemImage: "pencil")
                     }
@@ -260,7 +321,7 @@ struct LibraryView: View {
                 .padding(.vertical, 5)
                 .tag(word.id)
                 .contextMenu {
-                    Button("수정", systemImage: "pencil") { editingWord = word }
+                    Button("수정", systemImage: "pencil") { openEditor(for: word) }
                 }
             }
 
@@ -296,11 +357,8 @@ struct LibraryView: View {
                 }
             }
         }
-        .task {
-            reloadWordList()
-        }
-        .onChange(of: searchText) {
-            reloadWordList()
+        .task(id: LibraryListKey(searchText: searchText, reloadToken: reloadToken, storeRevision: storeRevision)) {
+            await reloadWordList()
         }
         .toolbar {
             ToolbarItemGroup {
@@ -335,14 +393,14 @@ struct LibraryView: View {
             WordEditSheet(word: word) { message, isError in
                 self.message = message
                 self.isError = isError
-                reloadWordList()
+                reloadToken += 1
             }
         }
         .sheet(isPresented: $showingAddWord) {
             VocabularyRegistrationSheet { message, isError in
                 self.message = message
                 self.isError = isError
-                reloadWordList()
+                reloadToken += 1
             }
         }
     }
@@ -360,8 +418,8 @@ struct LibraryView: View {
                     Text("더 불러오는 중...")
                         .foregroundStyle(.secondary)
                 }
-                .onAppear {
-                    loadNextWordBatch()
+                .task {
+                    await loadNextWordBatch()
                 }
             } else if displayedWords.isEmpty {
                 EmptyView()
@@ -390,72 +448,91 @@ struct LibraryView: View {
             selection.removeAll()
             message = "\(targets.count)개 단어를 삭제했습니다."
             isError = false
-            reloadWordList()
+            reloadToken += 1
         } catch {
             message = error.localizedDescription
             isError = true
         }
     }
 
-    private func reloadWordList() {
-        batch = 0
-        canLoadMore = true
-        selection.removeAll()
-        displayedWords = []
+    private func openEditor(for word: WordSummary) {
         do {
-            matchedSearchWordIDs = try WordLibrarySearch(context: context).resolveWordIDs(for: searchText)
-            loadNextWordBatch()
+            editingWord = try context.activeWord(id: word.id)
         } catch {
-            matchedSearchWordIDs = []
-            canLoadMore = false
             message = error.localizedDescription
             isError = true
         }
     }
 
-    private func loadNextWordBatch() {
+    /// Replaces the list for the current search. A new search starts from the
+    /// first page; a refresh of the same search (store change or this page's
+    /// own edit) refetches every row already shown. The old rows stay visible
+    /// until the new ones arrive, and typing restarts this task, so only the
+    /// settled query is searched.
+    private func reloadWordList() async {
+        guard await PageReloadPolicy.shouldLoad(hasSnapshot: hasLoadedOnce) else { return }
+        listGeneration += 1
+        let generation = listGeneration
+        let query = searchText
+        let isRefresh = query == loadedSearchText
+        let limit = isRefresh ? max(nextOffset, batchSize) : batchSize
+        isLoadingWords = true
+        let container = context.container
+        do {
+            let searchIDs = try await VocabLibraryReadModel.librarySearchIDs(for: query, in: container)
+            let rows = try await VocabLibraryReadModel.libraryWords(
+                matching: searchIDs,
+                offset: 0,
+                limit: limit,
+                in: container
+            )
+            guard !Task.isCancelled, generation == listGeneration else { return }
+            matchedSearchWordIDs = searchIDs
+            displayedWords = rows
+            nextOffset = limit
+            canLoadMore = rows.count == limit
+            if isRefresh {
+                let shownIDs = Set(rows.map(\.id))
+                selection = selection.filter { shownIDs.contains($0) }
+            } else {
+                selection.removeAll()
+            }
+        } catch {
+            guard !Task.isCancelled, generation == listGeneration else { return }
+            matchedSearchWordIDs = []
+            displayedWords = []
+            canLoadMore = false
+            selection.removeAll()
+            message = error.localizedDescription
+            isError = true
+        }
+        loadedSearchText = query
+        isLoadingWords = false
+        hasLoadedOnce = true
+    }
+
+    private func loadNextWordBatch() async {
         guard !isLoadingWords, canLoadMore else { return }
         isLoadingWords = true
-        defer { isLoadingWords = false }
-
+        let generation = listGeneration
         do {
-            let fetched = try fetchWordBatch(batch: batch)
-            if fetched.count < batchSize {
-                canLoadMore = false
-            }
-            batch += 1
+            let fetched = try await VocabLibraryReadModel.libraryWords(
+                matching: matchedSearchWordIDs,
+                offset: nextOffset,
+                limit: batchSize,
+                in: context.container
+            )
+            guard generation == listGeneration else { return }
             displayedWords.append(contentsOf: fetched)
+            nextOffset += batchSize
+            canLoadMore = fetched.count == batchSize
         } catch {
+            guard generation == listGeneration else { return }
             message = error.localizedDescription
             isError = true
             canLoadMore = false
         }
-    }
-
-    private func fetchWordBatch(batch: Int) throws -> [WordRecord] {
-        if let matchedSearchWordIDs {
-            let start = batch * batchSize
-            guard start < matchedSearchWordIDs.count else { return [] }
-
-            let end = min(start + batchSize, matchedSearchWordIDs.count)
-            let batchIDs = Array(matchedSearchWordIDs[start..<end])
-            let descriptor = FetchDescriptor<WordRecord>(
-                predicate: #Predicate { word in
-                    batchIDs.contains(word.id) && word.deletedAt == nil
-                }
-            )
-            let fetched = try context.fetch(descriptor)
-            let wordsByID = Dictionary(uniqueKeysWithValues: fetched.map { ($0.id, $0) })
-            return batchIDs.compactMap { wordsByID[$0] }
-        } else {
-            var descriptor = FetchDescriptor<WordRecord>(
-                predicate: #Predicate { $0.deletedAt == nil },
-                sortBy: [SortDescriptor(\.normalizedTerm)]
-            )
-            descriptor.fetchLimit = batchSize
-            descriptor.fetchOffset = batch * batchSize
-            return try context.fetch(descriptor)
-        }
+        isLoadingWords = false
     }
 
     private func fetchWords(ids: Set<UUID>) throws -> [WordRecord] {
@@ -470,14 +547,29 @@ struct LibraryView: View {
 
 }
 
+private struct LibraryListKey: Equatable {
+    let searchText: String
+    let reloadToken: Int
+    let storeRevision: Int
+}
+
 struct HistoryView: View {
     @Environment(\.modelContext) private var context
-    @Query(
-        filter: #Predicate<AttemptRecord> { $0.deletedAt == nil },
-        sort: \AttemptRecord.answeredAt,
-        order: .reverse
-    ) private var attempts: [AttemptRecord]
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    @State private var attempts: [AttemptSummary] = []
+    @State private var totalCount = 0
+    @State private var hasLoadedOnce = false
+    @State private var isLoadingPage = false
+    @State private var listGeneration = 0
+    /// Set when a page fetch fails, so the footer stops retrying until the next refresh.
+    @State private var pageLoadFailed = false
     @State private var notice: String?
+
+    private let pageSize = 200
+
+    private var canLoadMore: Bool {
+        attempts.count < totalCount
+    }
 
     var body: some View {
         // One List owns all scrolling, as in MasteredView.
@@ -497,19 +589,42 @@ struct HistoryView: View {
                     .accessibilityLabel("학습 기록 상태 안내")
                 }
             }
-            if attempts.isEmpty {
+            if !hasLoadedOnce {
+                PageLoadingView()
+            } else if attempts.isEmpty {
                 ContentUnavailableView(
                     "학습 기록이 없습니다",
                     systemImage: "chart.bar",
                     description: Text("테스트에서 답안을 확정하면 기록이 쌓입니다.")
                 )
             } else {
-                Section("\(attempts.count)건") {
+                Section("\(totalCount)건") {
                     ForEach(attempts) { attempt in
                         HistoryAttemptRow(attempt: attempt)
                     }
+                    if canLoadMore, !pageLoadFailed {
+                        HStack(spacing: 8) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("더 불러오는 중...")
+                                .foregroundStyle(.secondary)
+                        }
+                        .font(.callout)
+                        .frame(maxWidth: .infinity)
+                        // Restarts when a page finishes, so a page dropped by a
+                        // concurrent refresh is requested again while the footer shows.
+                        .task(id: isLoadingPage) {
+                            await loadNextPage()
+                        }
+                    }
                 }
             }
+        }
+        // Rebuilds what is already shown, so a save or import never drops the
+        // pages the user has scrolled through.
+        .task(id: storeRevision) {
+            guard await PageReloadPolicy.shouldLoad(hasSnapshot: hasLoadedOnce) else { return }
+            await refreshShownAttempts()
         }
         .toolbar {
             ToolbarItem {
@@ -531,10 +646,55 @@ struct HistoryView: View {
             notice = error.localizedDescription
         }
     }
+
+    /// Replaces the list with as many newest rows as are shown now. A page that
+    /// was in flight belongs to the old list and is dropped (`listGeneration`).
+    private func refreshShownAttempts() async {
+        listGeneration += 1
+        let generation = listGeneration
+        do {
+            let page = try await VocabLibraryReadModel.attemptHistory(
+                offset: 0,
+                limit: max(attempts.count, pageSize),
+                in: context.container
+            )
+            guard !Task.isCancelled, generation == listGeneration else { return }
+            attempts = page.attempts
+            totalCount = page.totalCount
+            pageLoadFailed = false
+        } catch {
+            guard !Task.isCancelled, generation == listGeneration else { return }
+            notice = error.localizedDescription
+        }
+        hasLoadedOnce = true
+    }
+
+    private func loadNextPage() async {
+        guard !isLoadingPage, canLoadMore, !pageLoadFailed else { return }
+        isLoadingPage = true
+        defer { isLoadingPage = false }
+        let generation = listGeneration
+        do {
+            let page = try await VocabLibraryReadModel.attemptHistory(
+                offset: attempts.count,
+                limit: pageSize,
+                in: context.container
+            )
+            guard generation == listGeneration else { return }
+            // New answers shift offsets between pages; skip rows already shown.
+            let shownIDs = Set(attempts.map(\.id))
+            attempts += page.attempts.filter { !shownIDs.contains($0.id) }
+            totalCount = page.totalCount
+        } catch {
+            guard generation == listGeneration else { return }
+            pageLoadFailed = true
+            notice = error.localizedDescription
+        }
+    }
 }
 
 private struct HistoryAttemptRow: View {
-    let attempt: AttemptRecord
+    let attempt: AttemptSummary
 
     var body: some View {
         let finalResult = FinalResult(rawValue: attempt.finalJudgementRaw)

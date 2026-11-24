@@ -123,13 +123,13 @@ struct StatusBadge: View {
 /// A learning card that flips between the headword and its meanings. Flipping
 /// only changes presentation; it never records progress.
 struct WordFlipCard<Accessory: View>: View {
-    let word: WordRecord
+    let word: WordSummary
     @Binding var showsMeaning: Bool
     var height: CGFloat = 146
     @ViewBuilder var accessory: () -> Accessory
 
     var body: some View {
-        let meanings = word.meaningsDisplayText
+        let meanings = word.meaningsText
         Button {
             withAnimation(.bouncy(duration: 0.45, extraBounce: 0.10)) {
                 showsMeaning.toggle()
@@ -187,20 +187,20 @@ struct WordFlipCard<Accessory: View>: View {
 }
 
 extension WordFlipCard where Accessory == EmptyView {
-    init(word: WordRecord, showsMeaning: Binding<Bool>, height: CGFloat = 146) {
+    init(word: WordSummary, showsMeaning: Binding<Bool>, height: CGFloat = 146) {
         self.init(word: word, showsMeaning: showsMeaning, height: height) { EmptyView() }
     }
 }
 
 /// A static review card. Meanings are never truncated (learning policy).
 struct ReviewWordCard<Accessory: View>: View {
-    let word: WordRecord
+    let word: WordSummary
     @ViewBuilder var accessory: () -> Accessory
 
     var body: some View {
-        let meanings = word.meaningsDisplayText
-        let failureCheck = word.reviewState?.failureCheck ?? 0
-        let activePriority = word.reviewState?.activePriority ?? 0
+        let meanings = word.meaningsText
+        let failureCheck = word.failureCheck
+        let activePriority = word.activePriority
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
                 Text(word.term)
@@ -230,55 +230,38 @@ struct ReviewWordCard<Accessory: View>: View {
 }
 
 extension ReviewWordCard where Accessory == EmptyView {
-    init(word: WordRecord) {
+    init(word: WordSummary) {
         self.init(word: word) { EmptyView() }
     }
 }
 
-/// Builds the review list shown on both platforms: active, nondeleted words with
-/// a positive review priority, most urgent first.
-enum ReviewCandidateList {
-    static func words(from states: [ReviewStateRecord]) -> [WordRecord] {
-        states
-            .compactMap(\.word)
-            .filter { $0.deletedAt == nil && $0.learningStatus == .active && ($0.reviewState?.activePriority ?? 0) > 0 }
-            .sorted(by: isOrderedBefore)
-    }
+extension EnvironmentValues {
+    /// Bumped by the root view on every save or import into the store, so pages
+    /// that render prepared snapshots know when to rebuild them.
+    @Entry var vocabStoreRevision = 0
+}
 
-    static func isOrderedBefore(_ lhs: WordRecord, _ rhs: WordRecord) -> Bool {
-        let lhsPriority = lhs.reviewState?.activePriority ?? 0
-        let rhsPriority = rhs.reviewState?.activePriority ?? 0
-        if lhsPriority != rhsPriority { return lhsPriority > rhsPriority }
-        let lhsFailures = lhs.reviewState?.failureCheck ?? 0
-        let rhsFailures = rhs.reviewState?.failureCheck ?? 0
-        if lhsFailures != rhsFailures { return lhsFailures > rhsFailures }
-        let lhsPresented = lhs.reviewState?.lastPresentedAt ?? .distantPast
-        let rhsPresented = rhs.reviewState?.lastPresentedAt ?? .distantPast
-        if lhsPresented != rhsPresented { return lhsPresented < rhsPresented }
-        if lhs.createdAt != rhs.createdAt { return lhs.createdAt > rhs.createdAt }
-        return lhs.term.localizedCaseInsensitiveCompare(rhs.term) == .orderedAscending
+/// When a page rebuilds its snapshot after a store change.
+enum PageReloadPolicy {
+    static let coalescingDelay: Duration = .milliseconds(200)
+
+    /// The first load runs at once; a reload waits briefly so a burst of saves
+    /// or imports, which restarts the page's `task(id:)`, rebuilds only once.
+    static func shouldLoad(hasSnapshot: Bool) async -> Bool {
+        if hasSnapshot {
+            // Sleep only throws on cancellation, which the return value reports.
+            try? await Task.sleep(for: coalescingDelay)
+        }
+        return !Task.isCancelled
     }
 }
 
-/// Words grouped by their first-registration Seoul day, newest day first, with
-/// each day's words in registration order. Built once per library change so
-/// flipping a card never regroups the library.
-struct RegistrationDayGroup: Identifiable {
-    let day: String
-    let words: [WordRecord]
-
-    var id: String { day }
-
-    static func groups(from words: [WordRecord]) -> [RegistrationDayGroup] {
-        Dictionary(grouping: words, by: \.registrationDay)
-            .map { day, words in
-                RegistrationDayGroup(day: day, words: words.sorted(by: isRegisteredBefore))
-            }
-            .sorted { $0.day > $1.day }
-    }
-
-    private static func isRegisteredBefore(_ lhs: WordRecord, _ rhs: WordRecord) -> Bool {
-        if lhs.createdAt != rhs.createdAt { return lhs.createdAt < rhs.createdAt }
-        return lhs.normalizedTerm < rhs.normalizedTerm
+/// Placeholder shown while a page snapshot is prepared off the main actor.
+struct PageLoadingView: View {
+    var body: some View {
+        ProgressView()
+            .controlSize(.regular)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .accessibilityLabel("불러오는 중")
     }
 }

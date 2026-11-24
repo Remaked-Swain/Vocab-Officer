@@ -28,6 +28,8 @@
 		C00000000000000000000003 /* Vocab/Domain/SessionPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = C00000000000000000000013 /* Vocab/Domain/SessionPolicy.swift */; };
 		D00000000000000000000001 /* Vocab/Presentation/Shared/VocabDesignSystem.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000011 /* Vocab/Presentation/Shared/VocabDesignSystem.swift */; };
 		D00000000000000000000002 /* Vocab/Presentation/Shared/TestSessionComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000012 /* Vocab/Presentation/Shared/TestSessionComponents.swift */; };
+		D00000000000000000000003 /* Vocab/Application/VocabLibraryReadModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000013 /* Vocab/Application/VocabLibraryReadModel.swift */; };
+		D00000000000000000000004 /* Vocab/Application/WordLibrarySearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000014 /* Vocab/Application/WordLibrarySearch.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -65,6 +67,8 @@
 		C00000000000000000000013 /* Vocab/Domain/SessionPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Domain/SessionPolicy.swift; sourceTree = "<group>"; };
 		D00000000000000000000011 /* Vocab/Presentation/Shared/VocabDesignSystem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Presentation/Shared/VocabDesignSystem.swift; sourceTree = "<group>"; };
 		D00000000000000000000012 /* Vocab/Presentation/Shared/TestSessionComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Presentation/Shared/TestSessionComponents.swift; sourceTree = "<group>"; };
+		D00000000000000000000013 /* Vocab/Application/VocabLibraryReadModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabLibraryReadModel.swift; sourceTree = "<group>"; };
+		D00000000000000000000014 /* Vocab/Application/WordLibrarySearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/WordLibrarySearch.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -147,6 +151,8 @@
 				C00000000000000000000013 /* Vocab/Domain/SessionPolicy.swift */,
 				D00000000000000000000011 /* Vocab/Presentation/Shared/VocabDesignSystem.swift */,
 				D00000000000000000000012 /* Vocab/Presentation/Shared/TestSessionComponents.swift */,
+				D00000000000000000000013 /* Vocab/Application/VocabLibraryReadModel.swift */,
+				D00000000000000000000014 /* Vocab/Application/WordLibrarySearch.swift */,
 			);
 			name = "Shared For iOS";
 			sourceTree = "<group>";
@@ -323,6 +329,8 @@
 				C00000000000000000000003 /* Vocab/Domain/SessionPolicy.swift in Sources */,
 				D00000000000000000000001 /* Vocab/Presentation/Shared/VocabDesignSystem.swift in Sources */,
 				D00000000000000000000002 /* Vocab/Presentation/Shared/TestSessionComponents.swift in Sources */,
+				D00000000000000000000003 /* Vocab/Application/VocabLibraryReadModel.swift in Sources */,
+				D00000000000000000000004 /* Vocab/Application/WordLibrarySearch.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

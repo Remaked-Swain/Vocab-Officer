@@ -1,13 +1,16 @@
 import SwiftUI
 
 struct WordMemoryAidButton: View {
-    let word: WordRecord
+    let word: WordSummary
 
-    @State private var isPresented = false
+    @Environment(\.modelContext) private var context
+    @State private var presentedWord: WordRecord?
 
     var body: some View {
         Button {
-            isPresented = true
+            // The sheet generates from the live record, so it is fetched only on
+            // demand instead of for every rendered row.
+            presentedWord = try? context.activeWord(id: word.id)
         } label: {
             Image(systemName: "sparkles")
         }
@@ -15,7 +18,7 @@ struct WordMemoryAidButton: View {
         .controlSize(.small)
         .help("암기 도움 보기")
         .accessibilityLabel("\(word.term) 암기 도움 보기")
-        .sheet(isPresented: $isPresented) {
+        .sheet(item: $presentedWord) { word in
             WordMemoryAidSheet(word: word)
         }
     }

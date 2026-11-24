@@ -2,14 +2,13 @@ import SwiftData
 import SwiftUI
 
 struct MasteredView: View {
-    @Query(filter: #Predicate<WordRecord> { $0.deletedAt == nil }) private var words: [WordRecord]
-
-    private var consolidating: [WordRecord] {
-        words.filter { $0.learningStatus == .consolidating }
-    }
+    @Environment(\.modelContext) private var context
+    @Environment(\.vocabStoreRevision) private var storeRevision
+    @State private var loadedWords: [WordSummary]?
+    @State private var loadError: String?
 
     var body: some View {
-        let consolidating = consolidating
+        let consolidating = loadedWords ?? []
         // One List owns all scrolling: with a header stacked above the List in a
         // VStack, this page shifted the whole Mac window content upward.
         List {
@@ -22,9 +21,17 @@ struct MasteredView: View {
                         .foregroundStyle(.secondary)
                 }
                 .padding(.vertical, 6)
+                if let loadError {
+                    FeedbackPanel(items: [
+                        FeedbackItem(text: loadError, systemImage: "exclamationmark.triangle", color: .red)
+                    ])
+                    .accessibilityLabel("장기정착 상태 안내")
+                }
             }
 
-            if consolidating.isEmpty {
+            if loadedWords == nil {
+                PageLoadingView()
+            } else if consolidating.isEmpty {
                 // Inside the List, not an overlay, so it never covers the explanation.
                 ContentUnavailableView(
                     "장기정착 단어가 없습니다",
@@ -38,7 +45,7 @@ struct MasteredView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(word.term)
                                     .font(.title3.weight(.semibold))
-                                Text(word.meaningsDisplayText)
+                                Text(word.meaningsText)
                                     .font(.body)
                                     .foregroundStyle(.secondary)
                             }
@@ -52,6 +59,19 @@ struct MasteredView: View {
                         .padding(.vertical, 5)
                     }
                 }
+            }
+        }
+        .task(id: storeRevision) {
+            guard await PageReloadPolicy.shouldLoad(hasSnapshot: loadedWords != nil) else { return }
+            do {
+                let loaded = try await VocabLibraryReadModel.consolidatingWords(in: context.container)
+                guard !Task.isCancelled else { return }
+                loadedWords = loaded
+                loadError = nil
+            } catch {
+                guard !Task.isCancelled else { return }
+                loadedWords = loadedWords ?? []
+                loadError = error.localizedDescription
             }
         }
     }

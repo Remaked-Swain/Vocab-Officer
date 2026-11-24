@@ -56,7 +56,7 @@ final class SharedPresentationTests: XCTestCase {
         let previousDay = makeWord(term: "older", createdAt: base.addingTimeInterval(-86_400), context: context)
         try context.save()
 
-        let groups = RegistrationDayGroup.groups(from: [later, previousDay, earlier])
+        let groups = RegistrationDayGroup.groups(from: [later, previousDay, earlier].map(WordSummary.init))
 
         XCTAssertEqual(groups.count, 2)
         XCTAssertEqual(groups[0].words.map(\.term), ["earlier", "later"])

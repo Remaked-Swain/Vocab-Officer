@@ -89,6 +89,7 @@ struct RootView: View {
     @State private var backgroundActivityMessage: String?
     @State private var backgroundActivityIsRunning = false
     @State private var activityClearTask: Task<Void, Never>?
+    @State private var storeRevision = 0
 
     var body: some View {
         NavigationSplitView {
@@ -139,6 +140,7 @@ struct RootView: View {
                 }
                 // One title source keeps every page named exactly like its sidebar item.
                 .navigationTitle(item.rawValue)
+                .environment(\.vocabStoreRevision, storeRevision)
             }
         }
         .frame(minWidth: 900, minHeight: 600)
@@ -201,12 +203,14 @@ struct RootView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
+            Task { @MainActor in storeRevision &+= 1 }
             Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
         }
         .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { notification in
             guard let source = notification.object as? ModelContext,
                   source.container === modelContext.container else { return }
             let changes = VocabModelContextChangeEvent.changes(from: notification, context: source)
+            Task { @MainActor in storeRevision &+= 1 }
             Task {
                 await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
                 await VocabImportedIdentifierBuffer.shared.capture(

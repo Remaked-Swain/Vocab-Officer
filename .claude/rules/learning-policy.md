@@ -3,6 +3,7 @@ paths:
   - "Vocab/Domain/**"
   - "Vocab/Application/LearningCoordinator.swift"
   - "Vocab/Application/WordLibrarySearch.swift"
+  - "Vocab/Application/VocabLibraryReadModel.swift"
   - "Vocab/Presentation/TestViews.swift"
   - "Vocab/Presentation/FeedbackPanel.swift"
   - "Vocab/Presentation/LibraryViews.swift"
@@ -11,6 +12,7 @@ paths:
   - "VocabIOS/Presentation/**"
   - "VocabTests/Domain/**"
   - "VocabTests/Application/LearningCoordinatorTests.swift"
+  - "VocabTests/Application/VocabLibraryReadModelTests.swift"
 ---
 
 # Learning Policy
@@ -92,6 +94,12 @@ paths:
   nondeleted words with positive priority, by priority, failure checks, then
   oldest presentation. Registration-day grouping is rebuilt per library
   change, never per render.
+- Library pages (learning cards, review, 장기정착, 단어장, 학습 기록) never
+  `@Query` the library. They render `Sendable` snapshots built by
+  `VocabLibraryReadModel` on a fresh background context and reload in
+  `task(id:)` on `vocabStoreRevision`, which the root bumps on every save or
+  import (`PageReloadPolicy` coalesces bursts). 단어장 and 학습 기록 load in
+  pages; an action that needs the live record fetches it by ID on demand.
 - iOS tabs mirror the Mac learning section (테스트, 학습 카드, 복습) in name,
   symbol and order; page titles come from the navigation item name.
 - A finished test shows a completion summary before closing; the tally is
