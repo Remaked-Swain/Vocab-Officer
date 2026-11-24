@@ -25,6 +25,13 @@ struct MasteredView: View {
             }
             .padding(.horizontal)
 
+            if !consolidating.isEmpty {
+                Text("장기정착 \(consolidating.count)단어")
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+            }
+
             List(consolidating) { word in
                 HStack(spacing: 12) {
                     VStack(alignment: .leading, spacing: 4) {
@@ -54,6 +61,5 @@ struct MasteredView: View {
             }
         }
         .padding(.top, 12)
-        .navigationSubtitle(consolidating.isEmpty ? "" : "\(consolidating.count)단어")
     }
 }

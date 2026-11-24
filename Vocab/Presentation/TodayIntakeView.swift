@@ -163,10 +163,8 @@ struct TodayIntakeView: View {
                 .font(.title2.monospacedDigit().weight(.semibold))
                 .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
             Spacer()
-            Button {
+            Button(title) {
                 save(pasteAnalysis.drafts)
-            } label: {
-                Label(title, systemImage: "tray.and.arrow.down")
             }
             .keyboardShortcut(.return, modifiers: .command)
             .controlSize(.large)
@@ -217,10 +215,8 @@ struct TodayIntakeView: View {
                 }
                 .controlSize(.large)
                 Spacer()
-                Button {
+                Button("입력한 단어 저장") {
                     save(drafts)
-                } label: {
-                    Label("입력한 단어 저장", systemImage: "tray.and.arrow.down")
                 }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)

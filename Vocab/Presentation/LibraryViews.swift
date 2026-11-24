@@ -183,9 +183,17 @@ struct ReviewView: View {
         // already-filtered priority query rather than cached by membership.
         let candidates = ReviewCandidateList.words(from: states)
         VStack(alignment: .leading, spacing: 16) {
-            Text("복습 우선도가 높은 단어부터 보여 줍니다. 테스트의 복습·혼합 모드가 이 단어들을 먼저 출제합니다.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
+            HStack(alignment: .firstTextBaseline) {
+                Text("복습 우선도가 높은 단어부터 보여 줍니다. 테스트의 복습·혼합 모드가 이 단어들을 먼저 출제합니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !candidates.isEmpty {
+                    Text("\(candidates.count)단어")
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
             if candidates.isEmpty {
                 ContentUnavailableView(
                     "우선 복습할 단어가 없습니다",
@@ -206,7 +214,6 @@ struct ReviewView: View {
             }
         }
         .padding(28)
-        .navigationSubtitle(candidates.isEmpty ? "" : "\(candidates.count)단어")
     }
 }
 
@@ -472,10 +479,18 @@ struct HistoryView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("최근 답안 기록입니다. 학습 상태 계산은 별도 요약으로 유지되므로, 오래된 기록을 정리해도 진도는 바뀌지 않습니다.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .padding(.horizontal)
+            HStack(alignment: .firstTextBaseline) {
+                Text("최근 답안 기록입니다. 학습 상태 계산은 별도 요약으로 유지되므로, 오래된 기록을 정리해도 진도는 바뀌지 않습니다.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if !attempts.isEmpty {
+                    Text("\(attempts.count)건")
+                        .font(.callout.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal)
             if let notice {
                 FeedbackPanel(items: [
                     FeedbackItem(
@@ -501,7 +516,6 @@ struct HistoryView: View {
             }
         }
         .padding(.top, 12)
-        .navigationSubtitle(attempts.isEmpty ? "" : "\(attempts.count)건")
         .toolbar {
             ToolbarItem {
                 Button {

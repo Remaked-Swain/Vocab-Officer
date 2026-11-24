@@ -61,9 +61,9 @@ struct TestSetupView: View {
                     .foregroundStyle(.red)
             }
             HStack(spacing: 12) {
-                Button(action: start) {
-                    Label(format.startButtonTitle, systemImage: "play.fill")
-                }
+                // Prominent Mac buttons stay text-only: a symbol inside them can take
+                // the accent fill color and vanish while the button is enabled.
+                Button(format.startButtonTitle, action: start)
                 .keyboardShortcut(.return, modifiers: .command)
                 .help("⌘Return")
                 .buttonStyle(.borderedProminent)
@@ -313,12 +313,7 @@ struct TestRunnerView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Button(action: commitAndAdvance) {
-                    Label(
-                        index + 1 == run.questions.count ? "완료" : "확정 후 다음",
-                        systemImage: index + 1 == run.questions.count ? "checkmark" : "arrow.right"
-                    )
-                }
+                Button(index + 1 == run.questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
                 .keyboardShortcut(.defaultAction)
