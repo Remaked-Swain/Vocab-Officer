@@ -64,11 +64,11 @@ struct TestSetupView: View {
                 // Prominent Mac buttons stay text-only: a symbol inside them can take
                 // the accent fill color and vanish while the button is enabled.
                 Button(format.startButtonTitle, action: start)
-                .keyboardShortcut(.return, modifiers: .command)
-                .help("⌘Return")
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .disabled(isStarting || activeRun != nil)
+                    .keyboardShortcut(.return, modifiers: .command)
+                    .help("⌘Return")
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .disabled(isStarting || activeRun != nil)
                 if isStarting {
                     ProgressView()
                         .controlSize(.small)
@@ -314,10 +314,10 @@ struct TestRunnerView: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 Button(index + 1 == run.questions.count ? "완료" : "확정 후 다음", action: commitAndAdvance)
-                .buttonStyle(.borderedProminent)
-                .controlSize(.large)
-                .keyboardShortcut(.defaultAction)
-                .focused($focus, equals: .advance)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .keyboardShortcut(.defaultAction)
+                    .focused($focus, equals: .advance)
             }
         }
         .padding(16)

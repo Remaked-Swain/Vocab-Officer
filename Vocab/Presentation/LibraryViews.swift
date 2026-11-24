@@ -235,7 +235,40 @@ struct LibraryView: View {
     private let batchSize = 150
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        List(selection: $selection) {
+            ForEach(displayedWords) { word in
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text(word.term)
+                                .font(.title3.weight(.semibold))
+                            StatusBadge(title: word.learningStatusTitle, tint: word.learningStatus.tint)
+                        }
+                        Text(word.meaningsDisplayText)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    WordMemoryAidButton(word: word)
+                    Button {
+                        editingWord = word
+                    } label: {
+                        Label("수정", systemImage: "pencil")
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .padding(.vertical, 5)
+                .tag(word.id)
+                .contextMenu {
+                    Button("수정", systemImage: "pencil") { editingWord = word }
+                }
+            }
+
+            libraryLoadingFooter
+        }
+        // The status panel rides above the list instead of sharing a VStack with
+        // it, so the List alone sizes to the window.
+        .safeAreaInset(edge: .top) {
             if let message {
                 FeedbackPanel(items: [
                     FeedbackItem(
@@ -245,39 +278,8 @@ struct LibraryView: View {
                     )
                 ])
                 .padding(.horizontal)
+                .padding(.top, 8)
                 .accessibilityLabel("단어장 상태 안내")
-            }
-
-            List(selection: $selection) {
-                ForEach(displayedWords) { word in
-                    HStack(alignment: .center, spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 8) {
-                                Text(word.term)
-                                    .font(.title3.weight(.semibold))
-                                StatusBadge(title: word.learningStatusTitle, tint: word.learningStatus.tint)
-                            }
-                            Text(word.meaningsDisplayText)
-                                .font(.body)
-                                .foregroundStyle(.secondary)
-                        }
-                        Spacer()
-                        WordMemoryAidButton(word: word)
-                        Button {
-                            editingWord = word
-                        } label: {
-                            Label("수정", systemImage: "pencil")
-                        }
-                        .buttonStyle(.bordered)
-                    }
-                    .padding(.vertical, 5)
-                    .tag(word.id)
-                    .contextMenu {
-                        Button("수정", systemImage: "pencil") { editingWord = word }
-                    }
-                }
-
-                libraryLoadingFooter
             }
         }
         .searchable(text: $searchText, prompt: "영단어 또는 의미 검색")
@@ -478,44 +480,37 @@ struct HistoryView: View {
     @State private var notice: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .firstTextBaseline) {
+        // One List owns all scrolling, as in MasteredView.
+        List {
+            Section {
                 Text("최근 답안 기록입니다. 학습 상태 계산은 별도 요약으로 유지되므로, 오래된 기록을 정리해도 진도는 바뀌지 않습니다.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
-                Spacer()
-                if !attempts.isEmpty {
-                    Text("\(attempts.count)건")
-                        .font(.callout.monospacedDigit())
-                        .foregroundStyle(.secondary)
+                if let notice {
+                    FeedbackPanel(items: [
+                        FeedbackItem(
+                            text: notice,
+                            systemImage: "checkmark.circle",
+                            color: .secondary
+                        )
+                    ])
+                    .accessibilityLabel("학습 기록 상태 안내")
                 }
             }
-            .padding(.horizontal)
-            if let notice {
-                FeedbackPanel(items: [
-                    FeedbackItem(
-                        text: notice,
-                        systemImage: "checkmark.circle",
-                        color: .secondary
-                    )
-                ])
-                .padding(.horizontal)
-                .accessibilityLabel("학습 기록 상태 안내")
-            }
-            List(attempts) { attempt in
-                HistoryAttemptRow(attempt: attempt)
-            }
-            .overlay {
-                if attempts.isEmpty {
-                    ContentUnavailableView(
-                        "학습 기록이 없습니다",
-                        systemImage: "chart.bar",
-                        description: Text("테스트에서 답안을 확정하면 기록이 쌓입니다.")
-                    )
+            if attempts.isEmpty {
+                ContentUnavailableView(
+                    "학습 기록이 없습니다",
+                    systemImage: "chart.bar",
+                    description: Text("테스트에서 답안을 확정하면 기록이 쌓입니다.")
+                )
+            } else {
+                Section("\(attempts.count)건") {
+                    ForEach(attempts) { attempt in
+                        HistoryAttemptRow(attempt: attempt)
+                    }
                 }
             }
         }
-        .padding(.top, 12)
         .toolbar {
             ToolbarItem {
                 Button {

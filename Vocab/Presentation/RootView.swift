@@ -596,14 +596,8 @@ struct SettingsView: View {
                     }
                 }
 
-                Button {
+                Button(isUploadingSnapshot ? "업로드 중" : "수동 복구 사본 업로드") {
                     showUploadConfirmation = true
-                } label: {
-                    if isUploadingSnapshot {
-                        Label("업로드 중", systemImage: "icloud.and.arrow.up")
-                    } else {
-                        Label("수동 복구 사본 업로드", systemImage: "icloud.and.arrow.up")
-                    }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(!canUploadSnapshot)
@@ -741,11 +735,8 @@ struct SettingsView: View {
     }
 
     private var mirroringButton: some View {
-        Button { showMirroringConfirmation = true } label: {
-            Label(
-                isMigratingToMirroredStore ? "전환 준비 중" : "iCloud 자동 동기화로 전환",
-                systemImage: isMigratingToMirroredStore ? "icloud.and.arrow.up" : "point.3.connected.trianglepath.dotted"
-            )
+        Button(isMigratingToMirroredStore ? "전환 준비 중" : "iCloud 자동 동기화로 전환") {
+            showMirroringConfirmation = true
         }
         .buttonStyle(.borderedProminent)
         .disabled(!canMigrateToMirroredStore)

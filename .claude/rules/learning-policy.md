@@ -96,3 +96,16 @@ paths:
   symbol and order; page titles come from the navigation item name.
 - A finished test shows a completion summary before closing; the tally is
   display-only and never feeds grading.
+- Each page has exactly one scroll container; put headers and status panels
+  inside the List (a Section) or in a safe-area inset, never in a VStack
+  above it. Prominent (`borderedProminent`) buttons are text-only on both
+  platforms.
+
+## Pitfalls
+
+- 장기정착 (a GroupBox above a long List in a VStack) shifted the whole Mac
+  window content, sidebar included, upward; removing `navigationSubtitle`
+  did not fix it (bab9067). The cause is unconfirmed, so keep one scroll
+  container per page.
+- SF Symbols inside prominent buttons took the accent fill color (iOS List
+  rows, Mac) and were invisible while enabled (7bb9e2a).

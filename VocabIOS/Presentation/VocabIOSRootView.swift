@@ -652,10 +652,12 @@ private struct VocabIOSTestSetupView: View {
             }
 
             Section {
+                // Prominent buttons stay text-only on both platforms: inside a List
+                // row the symbol takes the accent tint and disappears into the fill.
                 Button {
                     start()
                 } label: {
-                    Label(format.startButtonTitle, systemImage: "play.fill")
+                    Text(format.startButtonTitle)
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
@@ -856,11 +858,8 @@ private struct VocabIOSTestRunnerView: View {
             }
 
             Button(action: commitAndAdvance) {
-                Label(
-                    index + 1 == run.questions.count ? "완료" : "확정 후 다음",
-                    systemImage: index + 1 == run.questions.count ? "checkmark" : "arrow.right"
-                )
-                .frame(maxWidth: .infinity)
+                Text(index + 1 == run.questions.count ? "완료" : "확정 후 다음")
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
