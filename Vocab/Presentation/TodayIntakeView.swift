@@ -10,6 +10,14 @@ struct TodayIntakeView: View {
         case manual = "직접 입력"
 
         var id: String { rawValue }
+
+        var symbol: String {
+            switch self {
+            case .paste: "doc.on.clipboard"
+            case .image: "text.viewfinder"
+            case .manual: "tablecells"
+            }
+        }
     }
 
     @Environment(\.modelContext) private var context
@@ -28,29 +36,25 @@ struct TodayIntakeView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            HStack {
-                VStack(alignment: .leading) {
-                    Text("오늘 입력")
-                        .font(.largeTitle.weight(.semibold))
-                    Text("필요한 만큼 등록하세요. 같은 표제어는 새 뜻만 합쳐지고 최초 등록일은 유지됩니다.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                Picker("입력 방법", selection: $mode) {
+                    ForEach(IntakeMode.allCases) { mode in
+                        Label(mode.rawValue, systemImage: mode.symbol).tag(mode)
+                    }
                 }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.large)
+                .frame(maxWidth: 430)
                 Spacer()
             }
+            Text("필요한 만큼 등록하세요. 같은 표제어는 새 뜻만 합쳐지고 최초 등록일은 유지됩니다.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
 
             FeedbackPanel(items: feedbackItems)
                 .accessibilityLabel("입력 상태 안내")
-
-            Picker("입력 방법", selection: $mode) {
-                ForEach(IntakeMode.allCases) { mode in
-                    Text(mode.rawValue).tag(mode)
-                }
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.large)
-            .frame(maxWidth: 430)
 
             switch mode {
             case .paste:
@@ -64,14 +68,16 @@ struct TodayIntakeView: View {
         .padding(28)
         .toolbar {
             ToolbarItem {
-                Button("입력 내용 비우기") {
+                Button {
                     pastedText = ""
                     pasteAnalysis = .empty
                     drafts = (0..<20).map { _ in WordDraft() }
                     message = nil
                     ocrSuspectedMissingNumbers = []
+                } label: {
+                    Label("입력 내용 비우기", systemImage: "eraser")
                 }
-                .controlSize(.large)
+                .help("입력 내용 비우기")
             }
         }
         .onChange(of: pastedText) {
@@ -93,8 +99,10 @@ struct TodayIntakeView: View {
                         .font(.body)
                         .foregroundStyle(.secondary)
                     HStack {
-                        Button(isRecognizingText ? "텍스트 추출 중..." : "이미지 선택") {
+                        Button {
                             isImportingImage = true
+                        } label: {
+                            Label(isRecognizingText ? "텍스트 추출 중..." : "이미지 선택", systemImage: "photo.on.rectangle")
                         }
                         .controlSize(.large)
                         .disabled(isRecognizingText)
@@ -103,34 +111,12 @@ struct TodayIntakeView: View {
                                 .controlSize(.small)
                         }
                     }
-                    TextEditor(text: $pastedText)
-                        .font(.system(.title3, design: .monospaced))
-                        .scrollContentBackground(.hidden)
-                        .padding(10)
-                        .frame(minHeight: 320)
-                        .background(.background, in: RoundedRectangle(cornerRadius: 10))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(.quaternary, lineWidth: 1)
-                        }
-                        .accessibilityLabel("OCR 추출 결과 검수 입력창")
+                    intakeTextEditor(accessibilityLabel: "OCR 추출 결과 검수 입력창")
                 }
                 .padding(10)
             }
 
-            HStack {
-                Text("\(pasteAnalysis.drafts.count)개")
-                    .font(.title2.monospacedDigit().weight(.semibold))
-                    .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
-                Spacer()
-                Button("검수한 단어 저장") {
-                    save(pasteAnalysis.drafts)
-                }
-                .keyboardShortcut(.return, modifiers: .command)
-                .controlSize(.large)
-                .buttonStyle(.borderedProminent)
-                .disabled(!pasteAnalysis.isReady)
-            }
+            parsedSaveBar(title: "검수한 단어 저장")
         }
         .fileImporter(
             isPresented: $isImportingImage,
@@ -148,34 +134,45 @@ struct TodayIntakeView: View {
                     Text("형식: 0001-well-known-널리 알려진 또는 sample<TAB>표본, 예시")
                         .font(.body)
                         .foregroundStyle(.secondary)
-                    TextEditor(text: $pastedText)
-                        .font(.system(.title3, design: .monospaced))
-                        .scrollContentBackground(.hidden)
-                        .padding(10)
-                        .frame(minHeight: 320)
-                        .background(.background, in: RoundedRectangle(cornerRadius: 10))
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 10)
-                                .stroke(.quaternary, lineWidth: 1)
-                        }
-                        .accessibilityLabel("단어 일괄 붙여넣기 입력창")
+                    intakeTextEditor(accessibilityLabel: "단어 일괄 붙여넣기 입력창")
                 }
                 .padding(10)
             }
 
-            HStack {
-                Text("\(pasteAnalysis.drafts.count)개")
-                    .font(.title2.monospacedDigit().weight(.semibold))
-                    .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
-                Spacer()
-                Button("붙여넣은 단어 저장") {
-                    save(pasteAnalysis.drafts)
-                }
-                .keyboardShortcut(.return, modifiers: .command)
-                .controlSize(.large)
-                .buttonStyle(.borderedProminent)
-                .disabled(!pasteAnalysis.isReady)
+            parsedSaveBar(title: "붙여넣은 단어 저장")
+        }
+    }
+
+    private func intakeTextEditor(accessibilityLabel: String) -> some View {
+        TextEditor(text: $pastedText)
+            .font(.system(.title3, design: .monospaced))
+            .scrollContentBackground(.hidden)
+            .padding(10)
+            .frame(minHeight: 320)
+            .background(.background, in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(.quaternary, lineWidth: 1)
             }
+            .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func parsedSaveBar(title: String) -> some View {
+        HStack {
+            Text("\(pasteAnalysis.drafts.count)개")
+                .font(.title2.monospacedDigit().weight(.semibold))
+                .accessibilityLabel("인식된 신규 단어 \(pasteAnalysis.drafts.count)개")
+            Spacer()
+            Button {
+                save(pasteAnalysis.drafts)
+            } label: {
+                Label(title, systemImage: "tray.and.arrow.down")
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+            .controlSize(.large)
+            .buttonStyle(.borderedProminent)
+            .disabled(!pasteAnalysis.isReady)
+            .help("⌘Return")
         }
     }
 
@@ -220,8 +217,10 @@ struct TodayIntakeView: View {
                 }
                 .controlSize(.large)
                 Spacer()
-                Button("입력한 단어 저장") {
+                Button {
                     save(drafts)
+                } label: {
+                    Label("입력한 단어 저장", systemImage: "tray.and.arrow.down")
                 }
                 .controlSize(.large)
                 .buttonStyle(.borderedProminent)

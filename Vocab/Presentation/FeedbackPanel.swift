@@ -38,12 +38,12 @@ struct FeedbackPanel: View {
                     .foregroundStyle(item.color)
             }
         }
-        .frame(maxWidth: .infinity, minHeight: 68, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.background.secondary, in: RoundedRectangle(cornerRadius: VocabMetrics.panelCornerRadius, style: .continuous))
         .overlay {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
+            RoundedRectangle(cornerRadius: VocabMetrics.panelCornerRadius, style: .continuous)
                 .stroke(.quaternary, lineWidth: 1)
         }
         .accessibilityElement(children: .contain)

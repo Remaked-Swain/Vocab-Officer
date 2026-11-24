@@ -9,40 +9,51 @@ struct MasteredView: View {
     }
 
     var body: some View {
+        let consolidating = consolidating
         VStack(alignment: .leading, spacing: 12) {
-            GroupBox("장기정착이란?") {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("서로 다른 날짜에 두 번 이상 맞혀 일반 출제에서 잠시 제외되고, 장기 기억 여부를 간격을 두고 다시 확인하는 단어입니다.")
+            GroupBox {
+                VStack(alignment: .leading, spacing: 6) {
+                    Label("서로 다른 날짜에 두 번 이상 맞힌 단어입니다. 일반 출제에서 잠시 빠지고, 간격을 두고 기억을 다시 확인합니다.", systemImage: "graduationcap")
                         .font(.body.weight(.medium))
-                    Text("7일, 14일, 30일 간격의 점검을 거쳐 서로 다른 5일에 맞히고, 첫 성공부터 45일 이상이면서 마지막 두 성공 사이가 30일 이상이면 암기완료로 판정되어 자동 정리됩니다. 오답이나 모름이면 다시 학습 중으로 돌아갑니다.")
+                    Text("7·14·30일 간격 점검을 거쳐 서로 다른 5일에 맞히고, 첫 성공부터 45일 이상이면서 마지막 두 성공 사이가 30일 이상이면 암기완료로 자동 정리됩니다. 오답이나 모름이면 다시 학습 중으로 돌아갑니다.")
                         .font(.callout)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .padding(6)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(4)
             }
             .padding(.horizontal)
 
             List(consolidating) { word in
-                HStack {
-                    VStack(alignment: .leading) {
-                        Text(word.term).font(.title3.weight(.semibold))
-                        Text(word.activeMeanings.map(\.text).joined(separator: ", "))
+                HStack(spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(word.term)
+                            .font(.title3.weight(.semibold))
+                        Text(word.meaningsDisplayText)
                             .font(.body)
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Text("장기정착")
-                        .font(.callout.weight(.semibold))
-                        .foregroundStyle(.green)
+                    StatusBadge(
+                        title: VocabularyLearningStatus.consolidating.koreanTitle,
+                        systemImage: "graduationcap",
+                        tint: VocabularyLearningStatus.consolidating.tint
+                    )
                 }
                 .padding(.vertical, 5)
             }
             .overlay {
                 if consolidating.isEmpty {
-                    ContentUnavailableView("장기정착 단어가 없습니다", systemImage: "graduationcap")
+                    ContentUnavailableView(
+                        "장기정착 단어가 없습니다",
+                        systemImage: "graduationcap",
+                        description: Text("서로 다른 날짜에 두 번 맞힌 단어가 여기로 옮겨집니다.")
+                    )
                 }
             }
         }
-        .navigationTitle("장기정착")
+        .padding(.top, 12)
+        .navigationSubtitle(consolidating.isEmpty ? "" : "\(consolidating.count)단어")
     }
 }

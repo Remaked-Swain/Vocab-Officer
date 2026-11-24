@@ -7,6 +7,7 @@ paths:
   - "Vocab/Presentation/FeedbackPanel.swift"
   - "Vocab/Presentation/LibraryViews.swift"
   - "Vocab/Presentation/MasteredView.swift"
+  - "Vocab/Presentation/Shared/**"
   - "VocabIOS/Presentation/**"
   - "VocabTests/Domain/**"
   - "VocabTests/Application/LearningCoordinatorTests.swift"
@@ -79,3 +80,17 @@ paths:
   without changing progress. Review grid cards are static, adaptive
   (min 210 pt, 16 pt spacing), never truncate meanings, and carry
   accessibility labels.
+
+## Shared Presentation
+
+- `Vocab/Presentation/Shared/` compiles into both targets (iOS lists each
+  file in the project); macOS and iOS compose its cards, test components and
+  display mappings instead of duplicating them. It holds display only.
+- Review lists on both platforms come from `ReviewCandidateList`: active,
+  nondeleted words with positive priority, by priority, failure checks, then
+  oldest presentation. Registration-day grouping is rebuilt per library
+  change, never per render.
+- iOS tabs mirror the Mac learning section (테스트, 학습 카드, 복습) in name,
+  symbol and order; page titles come from the navigation item name.
+- A finished test shows a completion summary before closing; the tally is
+  display-only and never feeds grading.
