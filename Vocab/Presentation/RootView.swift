@@ -219,19 +219,9 @@ struct RootView: View {
     @MainActor
     private func handle(_ event: VocabStoreChangeEvent) {
         switch event {
-        case .storeChanged(let changes):
+        case .localSave, .remoteChange:
             storeRevision &+= 1
-            // Fire-and-forget, as before: neither waits for the other or for
-            // the next event.
-            Task {
-                await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
-                if let changes {
-                    await VocabImportedIdentifierBuffer.shared.capture(
-                        changes.records,
-                        requiresFullAudit: changes.requiresFullAudit
-                    )
-                }
-            }
+            Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
         case .successfulImport:
             Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
             scheduleHydrationRefresh(reason: .successfulImport)
@@ -426,7 +416,7 @@ struct RootView: View {
             if reason == .successfulImport {
                 let result = try await worker.reconcileImportedChanges(
                     syncMode: syncMode,
-                    source: .trustedLocalIdentifiers,
+                    source: .persistentHistory,
                     allowsFullAudit: !localContentIsUsable
                 )
                 hydrationState = result.state

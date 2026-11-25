@@ -31,6 +31,7 @@
 		D00000000000000000000003 /* Vocab/Application/VocabLibraryReadModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000013 /* Vocab/Application/VocabLibraryReadModel.swift */; };
 		D00000000000000000000004 /* Vocab/Application/WordLibrarySearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000014 /* Vocab/Application/WordLibrarySearch.swift */; };
 		D00000000000000000000005 /* Vocab/App/VocabStoreChangeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000015 /* Vocab/App/VocabStoreChangeMonitor.swift */; };
+		D00000000000000000000006 /* Vocab/Application/VocabImportHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000016 /* Vocab/Application/VocabImportHistory.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +72,7 @@
 		D00000000000000000000013 /* Vocab/Application/VocabLibraryReadModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabLibraryReadModel.swift; sourceTree = "<group>"; };
 		D00000000000000000000014 /* Vocab/Application/WordLibrarySearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/WordLibrarySearch.swift; sourceTree = "<group>"; };
 		D00000000000000000000015 /* Vocab/App/VocabStoreChangeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabStoreChangeMonitor.swift; sourceTree = "<group>"; };
+		D00000000000000000000016 /* Vocab/Application/VocabImportHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabImportHistory.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -156,6 +158,7 @@
 				D00000000000000000000013 /* Vocab/Application/VocabLibraryReadModel.swift */,
 				D00000000000000000000014 /* Vocab/Application/WordLibrarySearch.swift */,
 				D00000000000000000000015 /* Vocab/App/VocabStoreChangeMonitor.swift */,
+				D00000000000000000000016 /* Vocab/Application/VocabImportHistory.swift */,
 			);
 			name = "Shared For iOS";
 			sourceTree = "<group>";
@@ -335,6 +338,7 @@
 				D00000000000000000000003 /* Vocab/Application/VocabLibraryReadModel.swift in Sources */,
 				D00000000000000000000004 /* Vocab/Application/WordLibrarySearch.swift in Sources */,
 				D00000000000000000000005 /* Vocab/App/VocabStoreChangeMonitor.swift in Sources */,
+				D00000000000000000000006 /* Vocab/Application/VocabImportHistory.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

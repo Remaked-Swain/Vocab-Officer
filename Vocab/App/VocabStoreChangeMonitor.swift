@@ -4,9 +4,12 @@ import SwiftData
 
 /// A store notification, reduced to `Sendable` values the root views act on.
 enum VocabStoreChangeEvent: Sendable {
-    /// The store may have changed. A save into the observed container carries
-    /// the IDs it changed; a remote change carries none.
-    case storeChanged(VocabImportedIdentifierBatch?)
+    /// A context saved into the observed container.
+    case localSave
+    /// Another coordinator (a CloudKit import, another process or store)
+    /// changed the store. Which records changed is read later from
+    /// persistent history, not from the notification.
+    case remoteChange
     /// CloudKit finished a successful import.
     case successfulImport
     /// The coordinator asked for mastery cleanup after a learning save.
@@ -18,9 +21,8 @@ enum VocabStoreChangeEvent: Sendable {
 /// SwiftData, Core Data and CloudKit post these notifications on whichever
 /// thread saved or imported. Subscribing in a view with `.onReceive` made
 /// SwiftUI process them off the main thread ("Publishing changes from
-/// background threads"). The monitor instead observes on the posting thread,
-/// where a save's source context may still be read to resolve its changed
-/// IDs, and yields `Sendable` events; the views iterate the stream in `.task`,
+/// background threads"). The monitor instead observes on the posting thread
+/// and yields `Sendable` events; the views iterate the stream in `.task`,
 /// so their state changes only on the main actor. Ending the iteration
 /// removes the observers.
 enum VocabStoreChangeMonitor {
@@ -29,14 +31,12 @@ enum VocabStoreChangeMonitor {
             let center = NotificationCenter.default
             let observers = VocabNotificationObservers([
                 center.addObserver(forName: .NSPersistentStoreRemoteChange, object: nil, queue: nil) { _ in
-                    continuation.yield(.storeChanged(nil))
+                    continuation.yield(.remoteChange)
                 },
                 center.addObserver(forName: ModelContext.didSave, object: nil, queue: nil) { notification in
                     guard let source = notification.object as? ModelContext,
                           source.container === container else { return }
-                    // Resolved here, on the saving context's own thread.
-                    let changes = VocabModelContextChangeEvent.changes(from: notification, context: source)
-                    continuation.yield(.storeChanged(changes))
+                    continuation.yield(.localSave)
                 },
                 center.addObserver(
                     forName: NSPersistentCloudKitContainer.eventChangedNotification,

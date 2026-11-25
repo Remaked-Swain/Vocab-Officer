@@ -2406,7 +2406,8 @@ struct VocabImportedChangeSet {
 }
 
 enum VocabImportedChangeSource: Equatable, Sendable {
-    case trustedLocalIdentifiers
+    /// Reconcile the records changed in persistent history since the cursor.
+    case persistentHistory
     case cloudImportWithoutIdentifiers
 }
 
@@ -2416,114 +2417,18 @@ struct VocabChangedRecordID: Codable, Hashable, Sendable {
         case word
         case meaning
         case tombstone
+        /// Derived per word; changes are not diffed against the index but
+        /// always recheck the word and the record's own tombstone.
+        case reviewState
+        case memoryAid
     }
 
     let kind: Kind
     let id: UUID
 
-    init?(_ model: any PersistentModel) {
-        switch model {
-        case let record as AttemptRecord: kind = .attempt; id = record.id
-        case let record as WordRecord: kind = .word; id = record.id
-        case let record as MeaningRecord: kind = .meaning; id = record.id
-        case let record as RecordTombstone: kind = .tombstone; id = record.id
-        default: return nil
-        }
-    }
-
     init(kind: Kind, id: UUID) {
         self.kind = kind
         self.id = id
-    }
-}
-
-struct VocabImportedIdentifierBatch: Codable, Equatable, Sendable {
-    var records: Set<VocabChangedRecordID>
-    var requiresFullAudit: Bool
-
-    static let empty = VocabImportedIdentifierBatch(records: [], requiresFullAudit: false)
-}
-
-actor VocabImportedIdentifierBuffer {
-    static let shared = VocabImportedIdentifierBuffer()
-
-    private let url: URL?
-    private var pending: VocabImportedIdentifierBatch
-
-    init(url: URL? = nil) {
-        let resolvedURL = url ?? (try? Self.defaultURL())
-        self.url = resolvedURL
-        if let resolvedURL,
-           let data = try? Data(contentsOf: resolvedURL),
-           let decoded = try? JSONDecoder().decode(VocabImportedIdentifierBatch.self, from: data) {
-            pending = decoded
-        } else {
-            pending = .empty
-        }
-    }
-
-    func capture(_ records: Set<VocabChangedRecordID>, requiresFullAudit: Bool = false) {
-        guard !records.isEmpty || requiresFullAudit else { return }
-        pending.records.formUnion(records)
-        pending.requiresFullAudit = pending.requiresFullAudit || requiresFullAudit
-        persist()
-    }
-
-    func snapshot() -> VocabImportedIdentifierBatch { pending }
-
-    func acknowledge(_ batch: VocabImportedIdentifierBatch) {
-        pending.records.subtract(batch.records)
-        if batch.requiresFullAudit { pending.requiresFullAudit = false }
-        persist()
-    }
-
-    private func persist() {
-        guard let url else { return }
-        try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
-        if pending == .empty {
-            try? FileManager.default.removeItem(at: url)
-        } else if let data = try? JSONEncoder().encode(pending) {
-            try? data.write(to: url, options: .atomic)
-        }
-    }
-
-    private static func defaultURL(fileManager: FileManager = .default) throws -> URL {
-        try fileManager.url(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask,
-            appropriateFor: nil,
-            create: true
-        ).appendingPathComponent("Vocab/SyncRuntime/imported-identifiers-v1.json")
-    }
-}
-
-enum VocabModelContextChangeEvent {
-    static func changes(
-        from notification: Notification,
-        context: ModelContext
-    ) -> VocabImportedIdentifierBatch {
-        func identifiers(for key: ModelContext.NotificationKey) -> Set<PersistentIdentifier> {
-            if let values = notification.userInfo?[key.rawValue] as? Set<PersistentIdentifier> {
-                return values
-            } else if let values = notification.userInfo?[key] as? Set<PersistentIdentifier> {
-                return values
-            }
-            return []
-        }
-        let resolvableIdentifiers = identifiers(for: .insertedIdentifiers)
-            .union(identifiers(for: .updatedIdentifiers))
-        let deletedIdentifiers = identifiers(for: .deletedIdentifiers)
-        var records = Set<VocabChangedRecordID>()
-        var unresolved = !deletedIdentifiers.isEmpty
-        for identifier in resolvableIdentifiers {
-            let model = context.model(for: identifier)
-            guard let record = VocabChangedRecordID(model) else {
-                unresolved = true
-                continue
-            }
-            records.insert(record)
-        }
-        return VocabImportedIdentifierBatch(records: records, requiresFullAudit: unresolved)
     }
 }
 
@@ -2622,8 +2527,26 @@ enum VocabImportedChangeDiscovery {
                     changedTombstoneIDs.insert(record.id)
                     next.tombstones[key] = entry
                 }
+            } else if changedRecord.kind == .reviewState {
+                // A peer may overwrite a derived state without an attempt
+                // change: recompute it from the word's attempts.
+                let recordID = changedRecord.id
+                guard let record = try context.fetch(FetchDescriptor<ReviewStateRecord>(predicate: #Predicate { $0.id == recordID })).first else {
+                    hasUnresolvedIdentifier = true
+                    continue
+                }
+                if let wordID = record.word?.id { affectedWordIDs.insert(wordID) }
+            } else if changedRecord.kind == .memoryAid {
+                let recordID = changedRecord.id
+                guard let record = try context.fetch(FetchDescriptor<MemoryAidCacheRecord>(predicate: #Predicate { $0.id == recordID })).first else {
+                    hasUnresolvedIdentifier = true
+                    continue
+                }
+                affectedWordIDs.insert(record.wordID)
             }
         }
+        // A tombstone's ID is its target's ID: every changed record rechecks
+        // its own tombstone, so an older peer cannot resurrect it.
         changedTombstoneIDs.formUnion(changedRecords.compactMap { changedRecord in
             changedRecord.kind == .tombstone ? nil : changedRecord.id
         })
@@ -3564,7 +3487,8 @@ actor VocabCloudReconciliationWorker {
         syncMode: VocabSyncMode,
         now: Date = .now,
         indexURL: URL? = nil,
-        auditReceiptURL: URL? = nil
+        auditReceiptURL: URL? = nil,
+        historyCursorURL: URL? = nil
     ) async throws -> VocabHydrationStatus {
         let validationEpoch = syncMode == .cloudKitPrivate
             ? VocabMutationAuthorityRuntime.prepareForMaintenanceAudit(
@@ -3574,6 +3498,11 @@ actor VocabCloudReconciliationWorker {
             : nil
         _ = await VocabSyncWorkBarrier.shared.beginReconciliation()
         do {
+            // Read before the audit, so changes committed during it are
+            // reconciled again from the saved cursor.
+            let auditedHistoryToken = syncMode == .cloudKitPrivate
+                ? try VocabImportHistoryReader.latestToken(context: modelContext)
+                : nil
             let result = try await reconcileFullCooperatively(syncMode: syncMode, now: now)
             if syncMode == .cloudKitPrivate {
                 let index = try await fullImportIndexCooperatively()
@@ -3608,6 +3537,12 @@ actor VocabCloudReconciliationWorker {
                     validationEpoch: validationEpoch!
                 )
                 await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted(at: now)
+                if let auditedHistoryToken {
+                    try VocabImportHistoryCursorStore.save(
+                        auditedHistoryToken,
+                        to: try historyCursorURL ?? VocabImportHistoryCursorStore.defaultURL()
+                    )
+                }
             }
             await VocabSyncWorkBarrier.shared.finishReconciliation()
             return result
@@ -3630,7 +3565,7 @@ actor VocabCloudReconciliationWorker {
         now: Date = .now,
         indexURL: URL? = nil,
         auditReceiptURL: URL? = nil,
-        identifierBuffer: VocabImportedIdentifierBuffer = .shared,
+        historyCursorURL: URL? = nil,
         source: VocabImportedChangeSource = .cloudImportWithoutIdentifiers,
         allowsFullAudit: Bool = true,
         runtimeStateStore: VocabSyncRuntimeStateStore = .shared
@@ -3644,7 +3579,23 @@ actor VocabCloudReconciliationWorker {
         }
         let resolvedURL = try indexURL ?? VocabImportedChangeIndexStore.defaultURL()
         let previous = try? VocabImportedChangeIndexStore.load(from: resolvedURL)
-        let pendingChanges = await identifierBuffer.snapshot()
+        let resolvedCursorURL = try historyCursorURL ?? VocabImportHistoryCursorStore.defaultURL()
+        // Read before any reconciliation write, so a change committed while
+        // this pass runs lies after the cursor it saves.
+        let history: VocabImportHistoryChanges
+        switch source {
+        case .persistentHistory:
+            history = try VocabImportHistoryReader.changes(
+                since: VocabImportHistoryCursorStore.load(from: resolvedCursorURL),
+                context: modelContext
+            )
+        case .cloudImportWithoutIdentifiers:
+            history = VocabImportHistoryChanges(
+                records: [],
+                requiresFullAudit: true,
+                latestToken: try VocabImportHistoryReader.latestToken(context: modelContext)
+            )
+        }
         let auditFallback = VocabImportedChangeSet(
             affectedWordIDs: [],
             changedTombstoneIDs: [],
@@ -3659,27 +3610,19 @@ actor VocabCloudReconciliationWorker {
             requiresFullAudit: true
         )
         let changes: VocabImportedChangeSet
-        switch source {
-        case .trustedLocalIdentifiers:
-            if !pendingChanges.records.isEmpty,
-               !pendingChanges.requiresFullAudit,
-               let previous,
-               previous.formatVersion == VocabImportedChangeIndex.currentFormatVersion,
-               previous.canonicalAttemptSignatureVersion == VocabAttemptCanonicalPayload.signatureVersion {
-                changes = try VocabImportedChangeDiscovery.discover(
-                    context: modelContext,
-                    previous: previous,
-                    changedRecords: pendingChanges.records
-                )
-            } else {
-                changes = auditFallback
-            }
-        case .cloudImportWithoutIdentifiers:
+        if !history.requiresFullAudit,
+           let previous,
+           previous.formatVersion == VocabImportedChangeIndex.currentFormatVersion,
+           previous.canonicalAttemptSignatureVersion == VocabAttemptCanonicalPayload.signatureVersion {
+            changes = try VocabImportedChangeDiscovery.discover(
+                context: modelContext,
+                previous: previous,
+                changedRecords: history.records
+            )
+        } else {
             changes = auditFallback
         }
-        let needsAudit = source == .cloudImportWithoutIdentifiers
-            || pendingChanges.requiresFullAudit
-            || changes.requiresFullAudit
+        let needsAudit = history.requiresFullAudit || changes.requiresFullAudit
         let result: VocabHydrationStatus
         if needsAudit {
             guard allowsFullAudit else {
@@ -3734,7 +3677,9 @@ actor VocabCloudReconciliationWorker {
         if !needsAudit {
             try VocabImportedChangeIndexStore.save(changes.nextIndex, to: resolvedURL)
         }
-        await identifierBuffer.acknowledge(pendingChanges)
+        if let latestToken = history.latestToken {
+            try VocabImportHistoryCursorStore.save(latestToken, to: resolvedCursorURL)
+        }
         await VocabSyncWorkBarrier.shared.finishReconciliation()
         return result
         } catch {
