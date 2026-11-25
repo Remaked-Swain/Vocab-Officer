@@ -383,6 +383,7 @@ struct VocabIOSRootView: View {
                 }
             }
             guard await VocabSyncRuntimeStateStore.shared.shouldRunFullAudit(),
+                  await VocabCloudSyncNetworkMonitor.deferral(forLocalWork: .fullAudit) == nil,
                   !Task.isCancelled else { return }
             do {
                 let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: container)
