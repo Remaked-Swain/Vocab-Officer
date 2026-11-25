@@ -73,6 +73,7 @@ struct RootView: View {
     @State private var hydrationMessage: String?
     @State private var cloudQuota = VocabCloudQuotaStatus.shared
     @State private var isRecoveringBootstrap = false
+    @State private var isStartingFirstUpload = false
     @State private var bootstrapRecoveryMessage = ""
     @State private var showBootstrapRestart = false
     @State private var hydrationRefreshTask: Task<Void, Never>?
@@ -116,9 +117,11 @@ struct RootView: View {
                 )
             } else if isRecoveringBootstrap {
                 ContentUnavailableView(
-                    "iCloud 전환 복구 중",
+                    isStartingFirstUpload ? "iCloud 동기화 준비 중" : "iCloud 전환 복구 중",
                     systemImage: "icloud.and.arrow.up",
-                    description: Text("검증된 기존 iCloud 전환을 중단 지점부터 재개하고 있습니다. 단어장을 안전하게 유지하기 위해 완료 전에는 편집할 수 없습니다.")
+                    description: Text(isStartingFirstUpload
+                        ? "이 Mac의 단어장을 iCloud에 처음 올리고 있습니다. 올리는 동안의 변경이 빠지지 않도록 완료 전에는 편집할 수 없습니다."
+                        : "검증된 기존 iCloud 전환을 중단 지점부터 재개하고 있습니다. 단어장을 안전하게 유지하기 위해 완료 전에는 편집할 수 없습니다.")
                 )
             } else if !localContentIsUsable && hydrationState != .localOnly && hydrationState != .ready {
                 ContentUnavailableView(
@@ -383,6 +386,7 @@ struct RootView: View {
         let container = modelContext.container
         recoveryReplicaTask = Task {
             defer { recoveryReplicaTask = nil }
+            guard await VocabCloudSyncNetworkMonitor.deferral(forLocalWork: .recoveryReplicaRefresh) == nil else { return }
             _ = try? await VocabRecoveryReplicaScheduler.refresh(
                 modelContainer: container,
                 syncMode: syncMode
@@ -404,6 +408,7 @@ struct RootView: View {
                 }
             }
             guard await VocabSyncRuntimeStateStore.shared.shouldRunFullAudit(),
+                  await VocabCloudSyncNetworkMonitor.deferral(forLocalWork: .fullAudit) == nil,
                   !Task.isCancelled else { return }
             do {
                 let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: container)
@@ -508,12 +513,20 @@ struct RootView: View {
     private func resumeBootstrapIfNeeded() async {
         guard syncMode == .localOnly,
               ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil else { return }
+        // Sync is the default: a new first upload starts by itself when the
+        // user has not opted out and the first-upload policy allows it now;
+        // otherwise only an interrupted one is resumed.
+        let allowsNewClaim = await automaticFirstUploadIsAllowed()
+        isStartingFirstUpload = allowsNewClaim
         isRecoveringBootstrap = true
-        defer { isRecoveringBootstrap = false }
+        defer {
+            isRecoveringBootstrap = false
+            isStartingFirstUpload = false
+        }
         do {
             let outcome = try await VocabBootstrapActivationService.activate(
                 localContext: modelContext,
-                allowsNewClaim: false
+                allowsNewClaim: allowsNewClaim
             )
             guard outcome.disposition == .restartRequired else { return }
             UserDefaults.standard.removeObject(forKey: "vocabBootstrapAutoRecoveryLastError")
@@ -525,6 +538,16 @@ struct RootView: View {
                 forKey: "vocabBootstrapAutoRecoveryLastError"
             )
         }
+    }
+
+    private func automaticFirstUploadIsAllowed() async -> Bool {
+        guard !UserDefaults.standard.bool(forKey: VocabSyncMode.automaticActivationDisabledKey),
+              VocabCloudEntitlementStatus.allowsCloudKitRequests() else { return false }
+        let account = await VocabCloudKitStatusService().accountStatus()
+        let environment = await VocabCloudSyncNetworkMonitor.currentSyncEnvironment(
+            isAccountAvailable: account == .available
+        )
+        return VocabSyncWorkPolicy.deferral(for: .firstUpload, in: environment) == nil
     }
 
     private func userFacingBootstrapRecoveryError(_ error: Error) -> String {
@@ -556,6 +579,8 @@ struct SettingsView: View {
     @State private var apiKeyMessage: String?
     @State private var apiKeyError = false
     @State private var cloudKitState: VocabCloudKitAccountState = .unknown
+    @AppStorage(VocabSyncMode.automaticActivationDisabledKey) private var automaticSyncDisabled = false
+    @State private var firstUploadWaitReason: String?
     @State private var isCheckingCloudKit = false
     @State private var isUploadingSnapshot = false
     @State private var isMigratingToMirroredStore = false
@@ -599,6 +624,17 @@ struct SettingsView: View {
                 if VocabCloudQuotaStatus.shared.quotaExceededSince != nil {
                     Label(VocabCloudSyncAvailability.quotaExceededMessage, systemImage: "exclamationmark.icloud")
                         .foregroundStyle(.orange)
+                }
+                Toggle("iCloud 동기화 자동 시작", isOn: Binding(
+                    get: { !automaticSyncDisabled },
+                    set: { automaticSyncDisabled = !$0 }
+                ))
+                Text("아직 iCloud로 전환하지 않았다면 다음 실행 때 조건이 맞으면 자동으로 단어장을 올립니다. 네트워크가 없거나 저데이터·저전력 모드에서는 기다립니다.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                if let firstUploadWaitReason {
+                    Label("자동 시작 대기: \(firstUploadWaitReason)", systemImage: "clock")
+                        .foregroundStyle(.secondary)
                 }
                 FeedbackPanel(items: cloudKitFeedbackItems)
                 Label("일상 동기화와 수동 복구 사본은 서로 분리되어 안전하게 관리됩니다.", systemImage: "checkmark.shield")
@@ -818,6 +854,14 @@ struct SettingsView: View {
             claimStatus: fetchedClaimStatus
         )
         let mode = VocabSyncMode.current(allowsCloudKit: true)
+        if mode == .localOnly, !automaticSyncDisabled {
+            let environment = await VocabCloudSyncNetworkMonitor.currentSyncEnvironment(
+                isAccountAvailable: await accountState == .available
+            )
+            firstUploadWaitReason = VocabSyncWorkPolicy.deferral(for: .firstUpload, in: environment)?.userFacingReason
+        } else {
+            firstUploadWaitReason = nil
+        }
         await refreshHydrationStatus(
             runFullAudit: VocabSettingsHydrationRefreshPolicy.shouldRunFullAudit(
                 syncMode: mode,

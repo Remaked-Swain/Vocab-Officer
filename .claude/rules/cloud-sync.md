@@ -54,6 +54,20 @@ paths:
   signed entitlement, verified/migrated schema, and a checkpoint
   (`Vocab.store`, `-wal`, `-shm`, `manifest.json`) or explicit user
   confirmation. Otherwise stay local and show the blocker in natural language.
+- Sync is the default (#21). iOS opens the mirrored store; the Mac starts a
+  new first upload at launch by itself unless the user turned off "iCloud
+  동기화 자동 시작" (`automaticActivationDisabledKey`) or
+  `VocabSyncWorkPolicy` defers `.firstUpload`. The upload locks editing,
+  then asks once to restart. iPhone cannot strand learning records before
+  that: it has no vocabulary and its writes stay blocked until audited.
+- App-scheduled sync work asks `VocabSyncWorkPolicy` (pure) with live
+  `VocabSyncEnvironment` conditions: incremental reconciliation always
+  runs; full audits and recovery replicas wait for thermal pressure, Low
+  Power Mode and low battery off charge; the first upload also waits for
+  account, network, quota, Low Data Mode and expensive networks. A user's
+  request overrides cost and power, never prerequisites or heat. Deferred
+  work stays due for the next lifecycle trigger; CloudKit's own mirroring is
+  scheduled by the system and not gated.
 - Bootstrap claim: fixed non-deletable private record `VocabBootstrapClaim-v1`
   (`claimed`/`seeding`/`completed` + claim/request/device/fingerprint/schema
   tuple). Transitions are conditional on the exact tuple; same-tuple retries
@@ -153,8 +167,8 @@ warning. The probe record type must exist in the Production schema.
 - Per-record mirroring is code-level approved; real-device propagation is
   unverified (Mac edit → iPhone, iPhone test → Mac attempts/review, meaning
   edit, tombstones before destructive deletes). Real CloudKit open/close is
-  opt-in via `VOCAB_RUN_CLOUDKIT_INTEGRATION=1`. Keep `localOnly` the default
-  until signing, schema compatibility and first-device migration pass.
+  opt-in via `VOCAB_RUN_CLOUDKIT_INTEGRATION=1`. Sync is now the default
+  (#21); the two-device propagation check is #21's remaining acceptance step.
 - History-based import reconciliation is test-verified only against local
   saves. Still unverified on real devices: that CloudKit import transactions
   appear in history as expected, and how much history CloudKit retains

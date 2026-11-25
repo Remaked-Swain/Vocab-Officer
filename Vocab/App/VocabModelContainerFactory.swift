@@ -6,6 +6,9 @@ enum VocabSyncMode: String, CaseIterable, Identifiable, Sendable {
     case cloudKitPrivate
 
     static let userDefaultsKey = "vocabSyncMode"
+    /// Set only by the user in Settings; absent means the Mac starts its
+    /// first iCloud upload by itself when conditions allow.
+    static let automaticActivationDisabledKey = "vocabSyncAutomaticActivationDisabled"
     static let cloudKitContainerIdentifier = "iCloud.com.swainyun.Vocab"
 
     var id: String { rawValue }

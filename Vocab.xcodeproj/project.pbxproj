@@ -48,6 +48,7 @@
 		D0000000000000000000002E /* Vocab/App/VocabSyncSnapshotService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0000000000000000000003E /* Vocab/App/VocabSyncSnapshotService.swift */; };
 		D0000000000000000000002F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0000000000000000000003F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift */; };
 		D00000000000000000000041 /* Vocab/App/VocabCloudQuota.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000042 /* Vocab/App/VocabCloudQuota.swift */; };
+		D00000000000000000000043 /* Vocab/App/VocabSyncWorkPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000044 /* Vocab/App/VocabSyncWorkPolicy.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -105,6 +106,7 @@
 		D0000000000000000000003E /* Vocab/App/VocabSyncSnapshotService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabSyncSnapshotService.swift; sourceTree = "<group>"; };
 		D0000000000000000000003F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabSyncSnapshotPayloadMapping.swift; sourceTree = "<group>"; };
 		D00000000000000000000042 /* Vocab/App/VocabCloudQuota.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudQuota.swift; sourceTree = "<group>"; };
+		D00000000000000000000044 /* Vocab/App/VocabSyncWorkPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabSyncWorkPolicy.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -207,6 +209,7 @@
 				D0000000000000000000003E /* Vocab/App/VocabSyncSnapshotService.swift */,
 				D0000000000000000000003F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift */,
 				D00000000000000000000042 /* Vocab/App/VocabCloudQuota.swift */,
+				D00000000000000000000044 /* Vocab/App/VocabSyncWorkPolicy.swift */,
 			);
 			name = "Shared For iOS";
 			sourceTree = "<group>";
@@ -403,6 +406,7 @@
 				D0000000000000000000002E /* Vocab/App/VocabSyncSnapshotService.swift in Sources */,
 				D0000000000000000000002F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift in Sources */,
 				D00000000000000000000041 /* Vocab/App/VocabCloudQuota.swift in Sources */,
+				D00000000000000000000043 /* Vocab/App/VocabSyncWorkPolicy.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
