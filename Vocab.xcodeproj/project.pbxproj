@@ -32,6 +32,21 @@
 		D00000000000000000000004 /* Vocab/Application/WordLibrarySearch.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000014 /* Vocab/Application/WordLibrarySearch.swift */; };
 		D00000000000000000000005 /* Vocab/App/VocabStoreChangeMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000015 /* Vocab/App/VocabStoreChangeMonitor.swift */; };
 		D00000000000000000000006 /* Vocab/Application/VocabImportHistory.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000016 /* Vocab/Application/VocabImportHistory.swift */; };
+		D00000000000000000000021 /* Vocab/Application/VocabularyIntake.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000031 /* Vocab/Application/VocabularyIntake.swift */; };
+		D00000000000000000000022 /* Vocab/Application/VocabMutationAuthority.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000032 /* Vocab/Application/VocabMutationAuthority.swift */; };
+		D00000000000000000000023 /* Vocab/Application/VocabHydrationStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000033 /* Vocab/Application/VocabHydrationStatus.swift */; };
+		D00000000000000000000024 /* Vocab/Application/VocabBootstrapTokenStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000034 /* Vocab/Application/VocabBootstrapTokenStore.swift */; };
+		D00000000000000000000025 /* Vocab/Application/VocabImportedChanges.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000035 /* Vocab/Application/VocabImportedChanges.swift */; };
+		D00000000000000000000026 /* Vocab/Application/VocabFullAuditReceipt.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000036 /* Vocab/Application/VocabFullAuditReceipt.swift */; };
+		D00000000000000000000027 /* Vocab/Application/VocabRecordScrubbing.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000037 /* Vocab/Application/VocabRecordScrubbing.swift */; };
+		D00000000000000000000028 /* Vocab/Application/VocabCloudReconciler.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000038 /* Vocab/Application/VocabCloudReconciler.swift */; };
+		D00000000000000000000029 /* Vocab/Application/VocabCloudReconciliationWorker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D00000000000000000000039 /* Vocab/Application/VocabCloudReconciliationWorker.swift */; };
+		D0000000000000000000002A /* Vocab/App/VocabCloudExportObserver.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0000000000000000000003A /* Vocab/App/VocabCloudExportObserver.swift */; };
+		D0000000000000000000002B /* Vocab/App/VocabSyncRuntimeState.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0000000000000000000003B /* Vocab/App/VocabSyncRuntimeState.swift */; };
+		D0000000000000000000002C /* Vocab/App/VocabBootstrapActivationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0000000000000000000003C /* Vocab/App/VocabBootstrapActivationService.swift */; };
+		D0000000000000000000002D /* Vocab/App/VocabStoreMigrationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0000000000000000000003D /* Vocab/App/VocabStoreMigrationService.swift */; };
+		D0000000000000000000002E /* Vocab/App/VocabSyncSnapshotService.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0000000000000000000003E /* Vocab/App/VocabSyncSnapshotService.swift */; };
+		D0000000000000000000002F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0000000000000000000003F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -73,6 +88,21 @@
 		D00000000000000000000014 /* Vocab/Application/WordLibrarySearch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/WordLibrarySearch.swift; sourceTree = "<group>"; };
 		D00000000000000000000015 /* Vocab/App/VocabStoreChangeMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabStoreChangeMonitor.swift; sourceTree = "<group>"; };
 		D00000000000000000000016 /* Vocab/Application/VocabImportHistory.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabImportHistory.swift; sourceTree = "<group>"; };
+		D00000000000000000000031 /* Vocab/Application/VocabularyIntake.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabularyIntake.swift; sourceTree = "<group>"; };
+		D00000000000000000000032 /* Vocab/Application/VocabMutationAuthority.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabMutationAuthority.swift; sourceTree = "<group>"; };
+		D00000000000000000000033 /* Vocab/Application/VocabHydrationStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabHydrationStatus.swift; sourceTree = "<group>"; };
+		D00000000000000000000034 /* Vocab/Application/VocabBootstrapTokenStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabBootstrapTokenStore.swift; sourceTree = "<group>"; };
+		D00000000000000000000035 /* Vocab/Application/VocabImportedChanges.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabImportedChanges.swift; sourceTree = "<group>"; };
+		D00000000000000000000036 /* Vocab/Application/VocabFullAuditReceipt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabFullAuditReceipt.swift; sourceTree = "<group>"; };
+		D00000000000000000000037 /* Vocab/Application/VocabRecordScrubbing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabRecordScrubbing.swift; sourceTree = "<group>"; };
+		D00000000000000000000038 /* Vocab/Application/VocabCloudReconciler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabCloudReconciler.swift; sourceTree = "<group>"; };
+		D00000000000000000000039 /* Vocab/Application/VocabCloudReconciliationWorker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/Application/VocabCloudReconciliationWorker.swift; sourceTree = "<group>"; };
+		D0000000000000000000003A /* Vocab/App/VocabCloudExportObserver.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabCloudExportObserver.swift; sourceTree = "<group>"; };
+		D0000000000000000000003B /* Vocab/App/VocabSyncRuntimeState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabSyncRuntimeState.swift; sourceTree = "<group>"; };
+		D0000000000000000000003C /* Vocab/App/VocabBootstrapActivationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabBootstrapActivationService.swift; sourceTree = "<group>"; };
+		D0000000000000000000003D /* Vocab/App/VocabStoreMigrationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabStoreMigrationService.swift; sourceTree = "<group>"; };
+		D0000000000000000000003E /* Vocab/App/VocabSyncSnapshotService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabSyncSnapshotService.swift; sourceTree = "<group>"; };
+		D0000000000000000000003F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Vocab/App/VocabSyncSnapshotPayloadMapping.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -159,6 +189,21 @@
 				D00000000000000000000014 /* Vocab/Application/WordLibrarySearch.swift */,
 				D00000000000000000000015 /* Vocab/App/VocabStoreChangeMonitor.swift */,
 				D00000000000000000000016 /* Vocab/Application/VocabImportHistory.swift */,
+				D00000000000000000000031 /* Vocab/Application/VocabularyIntake.swift */,
+				D00000000000000000000032 /* Vocab/Application/VocabMutationAuthority.swift */,
+				D00000000000000000000033 /* Vocab/Application/VocabHydrationStatus.swift */,
+				D00000000000000000000034 /* Vocab/Application/VocabBootstrapTokenStore.swift */,
+				D00000000000000000000035 /* Vocab/Application/VocabImportedChanges.swift */,
+				D00000000000000000000036 /* Vocab/Application/VocabFullAuditReceipt.swift */,
+				D00000000000000000000037 /* Vocab/Application/VocabRecordScrubbing.swift */,
+				D00000000000000000000038 /* Vocab/Application/VocabCloudReconciler.swift */,
+				D00000000000000000000039 /* Vocab/Application/VocabCloudReconciliationWorker.swift */,
+				D0000000000000000000003A /* Vocab/App/VocabCloudExportObserver.swift */,
+				D0000000000000000000003B /* Vocab/App/VocabSyncRuntimeState.swift */,
+				D0000000000000000000003C /* Vocab/App/VocabBootstrapActivationService.swift */,
+				D0000000000000000000003D /* Vocab/App/VocabStoreMigrationService.swift */,
+				D0000000000000000000003E /* Vocab/App/VocabSyncSnapshotService.swift */,
+				D0000000000000000000003F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift */,
 			);
 			name = "Shared For iOS";
 			sourceTree = "<group>";
@@ -339,6 +384,21 @@
 				D00000000000000000000004 /* Vocab/Application/WordLibrarySearch.swift in Sources */,
 				D00000000000000000000005 /* Vocab/App/VocabStoreChangeMonitor.swift in Sources */,
 				D00000000000000000000006 /* Vocab/Application/VocabImportHistory.swift in Sources */,
+				D00000000000000000000021 /* Vocab/Application/VocabularyIntake.swift in Sources */,
+				D00000000000000000000022 /* Vocab/Application/VocabMutationAuthority.swift in Sources */,
+				D00000000000000000000023 /* Vocab/Application/VocabHydrationStatus.swift in Sources */,
+				D00000000000000000000024 /* Vocab/Application/VocabBootstrapTokenStore.swift in Sources */,
+				D00000000000000000000025 /* Vocab/Application/VocabImportedChanges.swift in Sources */,
+				D00000000000000000000026 /* Vocab/Application/VocabFullAuditReceipt.swift in Sources */,
+				D00000000000000000000027 /* Vocab/Application/VocabRecordScrubbing.swift in Sources */,
+				D00000000000000000000028 /* Vocab/Application/VocabCloudReconciler.swift in Sources */,
+				D00000000000000000000029 /* Vocab/Application/VocabCloudReconciliationWorker.swift in Sources */,
+				D0000000000000000000002A /* Vocab/App/VocabCloudExportObserver.swift in Sources */,
+				D0000000000000000000002B /* Vocab/App/VocabSyncRuntimeState.swift in Sources */,
+				D0000000000000000000002C /* Vocab/App/VocabBootstrapActivationService.swift in Sources */,
+				D0000000000000000000002D /* Vocab/App/VocabStoreMigrationService.swift in Sources */,
+				D0000000000000000000002E /* Vocab/App/VocabSyncSnapshotService.swift in Sources */,
+				D0000000000000000000002F /* Vocab/App/VocabSyncSnapshotPayloadMapping.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

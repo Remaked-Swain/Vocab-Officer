@@ -2,6 +2,8 @@
 paths:
   - "Vocab/Domain/**"
   - "Vocab/Application/LearningCoordinator.swift"
+  - "Vocab/Application/VocabularyIntake.swift"
+  - "Vocab/Application/VocabRecordScrubbing.swift"
   - "Vocab/Application/WordLibrarySearch.swift"
   - "Vocab/Application/VocabLibraryReadModel.swift"
   - "Vocab/Presentation/TestViews.swift"
