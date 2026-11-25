@@ -52,7 +52,6 @@ example = func invalid() { DispatchQueue.main.async {} }
 [legacy-concurrency]
 message = no new GCD or lock-based coordination; use Swift Concurrency and actors
 pattern = \b(NSLock|NSRecursiveLock|NSCondition|DispatchQueue|DispatchGroup|DispatchSemaphore|os_unfair_lock)\b
-baseline = legacy-concurrency.txt
 example = func invalid() { _ = NSLock() }
 
 [domain-purity]

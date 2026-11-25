@@ -39,10 +39,9 @@ contextual rules below.
 
 ## Concurrency And UI
 
-- Modern Swift Concurrency only. No new `DispatchQueue`, `DispatchGroup`,
-  `DispatchSemaphore`, `NSLock`/unfair locks; isolate mutable state in actors.
-  Existing occurrences are a frozen backlog
-  (`.claude/lint/baselines/legacy-concurrency.txt`), not precedent.
+- Modern Swift Concurrency only. No `DispatchQueue`, `DispatchGroup`,
+  `DispatchSemaphore`, `NSLock`/unfair locks (lint `legacy-concurrency`, no
+  baseline); isolate mutable state in actors.
 - Replacements: shared state reached asynchronously → an actor (or the
   owning `@MainActor` type); a short critical section that must stay
   synchronous → `Mutex` (Synchronization); callback or delegate APIs → an

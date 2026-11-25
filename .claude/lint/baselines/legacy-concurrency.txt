@@ -1,3 +1,0 @@
-Vocab/Application/LearningCoordinator.swift:            DispatchQueue.global(qos: .utility).async {
-Vocab/Application/LearningCoordinator.swift:            DispatchQueue.global(qos: .utility).async {
-Vocab/Application/LearningCoordinator.swift:    private static let lock = NSLock()
