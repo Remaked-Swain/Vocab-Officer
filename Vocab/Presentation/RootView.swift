@@ -71,6 +71,7 @@ struct RootView: View {
     @State private var studyCardFaceStates: [UUID: Bool] = [:]
     @State private var hydrationState: VocabHydrationState = .localOnly
     @State private var hydrationMessage: String?
+    @State private var cloudQuota = VocabCloudQuotaStatus.shared
     @State private var isRecoveringBootstrap = false
     @State private var bootstrapRecoveryMessage = ""
     @State private var showBootstrapRestart = false
@@ -141,9 +142,19 @@ struct RootView: View {
                 // One title source keeps every page named exactly like its sidebar item.
                 .navigationTitle(item.rawValue)
                 .environment(\.vocabStoreRevision, storeRevision)
+                .safeAreaInset(edge: .top) {
+                    if cloudQuota.quotaExceededSince != nil {
+                        CloudQuotaBanner()
+                    }
+                }
             }
         }
         .frame(minWidth: 900, minHeight: 600)
+        .alert(VocabCloudSyncAvailability.quotaExceededTitle, isPresented: $cloudQuota.isShowingQuotaAlert) {
+            Button("확인", role: .cancel) {}
+        } message: {
+            Text(VocabCloudSyncAvailability.quotaExceededMessage)
+        }
         .toolbar {
             if let backgroundActivityMessage {
                 ToolbarItem(placement: .status) {
@@ -227,6 +238,10 @@ struct RootView: View {
             scheduleHydrationRefresh(reason: .successfulImport)
         case .masteryCleanupRequested:
             scheduleMasteryCleanupIfEligible()
+        case .quotaExceeded:
+            cloudQuota.noteQuotaExceeded()
+        case .exportSucceeded:
+            cloudQuota.noteExportSucceeded()
         }
     }
 
@@ -581,6 +596,10 @@ struct SettingsView: View {
                     Label(hydrationMessage, systemImage: hydrationState == .failed ? "exclamationmark.triangle" : "info.circle")
                         .foregroundStyle(hydrationState == .failed ? .red : .secondary)
                 }
+                if VocabCloudQuotaStatus.shared.quotaExceededSince != nil {
+                    Label(VocabCloudSyncAvailability.quotaExceededMessage, systemImage: "exclamationmark.icloud")
+                        .foregroundStyle(.orange)
+                }
                 FeedbackPanel(items: cloudKitFeedbackItems)
                 Label("일상 동기화와 수동 복구 사본은 서로 분리되어 안전하게 관리됩니다.", systemImage: "checkmark.shield")
                     .foregroundStyle(.secondary)
@@ -789,6 +808,7 @@ struct SettingsView: View {
         guard !isCheckingCloudKit else { return }
         isCheckingCloudKit = true
         defer { isCheckingCloudKit = false }
+        await VocabCloudQuotaStatus.shared.recheck()
         async let accountState = VocabCloudKitStatusService().accountStatus()
         async let claimStatus = VocabCloudKitBootstrapClaimService().fixedClaimStatus()
         let fetchedClaimStatus = await claimStatus
@@ -976,5 +996,27 @@ enum VocabSettingsHydrationRefreshPolicy {
         localContentIsUsable: Bool
     ) -> Bool {
         syncMode == .cloudKitPrivate && !localContentIsUsable
+    }
+}
+
+/// Persistent macOS warning while iCloud storage is full; local use goes on.
+private struct CloudQuotaBanner: View {
+    var body: some View {
+        Label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(VocabCloudSyncAvailability.quotaExceededTitle).font(.headline)
+                Text(VocabCloudSyncAvailability.quotaExceededMessage)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        } icon: {
+            Image(systemName: "exclamationmark.icloud")
+                .foregroundStyle(.orange)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(.bar)
+        .accessibilityElement(children: .combine)
     }
 }

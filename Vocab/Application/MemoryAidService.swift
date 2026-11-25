@@ -936,8 +936,14 @@ final class GeminiQuotaCooldownStore {
 final class GeminiAPIKeyStore {
     static let shared = GeminiAPIKeyStore()
 
-    private let service = "com.swainyun.Vocab.gemini"
+    private let service: String
     private let account = "api-key"
+
+    /// The key lives only in this device's Keychain; tests pass their own
+    /// service so they never read or write the user's key.
+    init(service: String = "com.swainyun.Vocab.gemini") {
+        self.service = service
+    }
 
     func load() throws -> String? {
         let query: [CFString: Any] = [

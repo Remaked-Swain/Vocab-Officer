@@ -31,6 +31,7 @@ struct VocabIOSRootView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var hydrationState: VocabHydrationState = .awaitingBootstrapMetadata
     @State private var hydrationMessage: String?
+    @State private var cloudQuota = VocabCloudQuotaStatus.shared
     @State private var cloudKitState: VocabCloudKitAccountState = .unknown
     @State private var claimStatus: VocabBootstrapServerClaimStatus = .unavailable("Mac 최초 동기화 상태를 아직 확인하지 않았습니다.")
     @State private var completedMetadataMissingSince: Date?
@@ -103,6 +104,13 @@ struct VocabIOSRootView: View {
                 break
             }
         }
+        // A full quota is action-required, so iPhone interrupts once; the
+        // durable state stays in Settings (no main-screen banner on iOS).
+        .alert(VocabCloudSyncAvailability.quotaExceededTitle, isPresented: $cloudQuota.isShowingQuotaAlert) {
+            Button("확인", role: .cancel) {}
+        } message: {
+            Text(VocabCloudSyncAvailability.quotaExceededMessage)
+        }
         .task(id: ObjectIdentifier(modelContext.container)) {
             // Iterated on the main actor; see VocabStoreChangeMonitor.
             for await event in VocabStoreChangeMonitor.events(for: modelContext.container) {
@@ -126,6 +134,10 @@ struct VocabIOSRootView: View {
             }
         case .masteryCleanupRequested:
             scheduleMasteryCleanupIfEligible()
+        case .quotaExceeded:
+            cloudQuota.noteQuotaExceeded()
+        case .exportSucceeded:
+            cloudQuota.noteExportSucceeded()
         }
     }
 
@@ -426,6 +438,10 @@ private struct VocabIOSConnectionStatusView: View {
                 LabeledContent("계정 상태", value: cloudKitState.message)
                 LabeledContent("Mac 최초 동기화", value: claimDescription)
                 LabeledContent("데이터 준비", value: hydrationState.connectionTitle)
+                if VocabCloudQuotaStatus.shared.quotaExceededSince != nil {
+                    Label(VocabCloudSyncAvailability.quotaExceededMessage, systemImage: "exclamationmark.icloud")
+                        .foregroundStyle(.orange)
+                }
                 if let connectionError {
                     Label(connectionError, systemImage: "exclamationmark.triangle")
                         .foregroundStyle(.red)
@@ -443,6 +459,7 @@ private struct VocabIOSConnectionStatusView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                 Button(isChecking ? "확인 중" : "동기화 상태 다시 확인") {
+                    Task { await VocabCloudQuotaStatus.shared.recheck() }
                     guard VocabHydrationDiagnosticPolicy.shouldRefresh(reason: .manual, state: hydrationState) else { return }
                     Task { await refresh() }
                 }

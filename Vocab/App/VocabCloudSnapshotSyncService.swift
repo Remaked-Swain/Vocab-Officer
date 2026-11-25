@@ -462,7 +462,7 @@ struct VocabCloudKitSnapshotStore: VocabCloudSnapshotStoring {
         let recordID = CKRecord.ID(recordName: Self.recordName)
         let record = try await existingRecord(for: recordID)
         try apply(snapshot, assetURL: assetURL, to: record)
-        _ = try await database.save(record)
+        _ = try await saveReportingQuota(record)
     }
 
     func save(
@@ -482,7 +482,7 @@ struct VocabCloudKitSnapshotStore: VocabCloudSnapshotStoring {
             let newRecord = CKRecord(recordType: Self.recordType, recordID: recordID)
             try apply(snapshot, assetURL: assetURL, to: newRecord)
             do {
-                _ = try await database.save(newRecord)
+                _ = try await saveReportingQuota(newRecord)
                 return true
             } catch let error as CKError where error.code == .serverRecordChanged {
                 return false
@@ -493,7 +493,7 @@ struct VocabCloudKitSnapshotStore: VocabCloudSnapshotStoring {
         guard currentMetadata == expectedMetadata else { return false }
         try apply(snapshot, assetURL: assetURL, to: record)
         do {
-            _ = try await database.save(record)
+            _ = try await saveReportingQuota(record)
             return true
         } catch let error as CKError where error.code == .serverRecordChanged {
             return false
@@ -558,6 +558,17 @@ struct VocabCloudKitSnapshotStore: VocabCloudSnapshotStoring {
         let url = directory.appendingPathComponent("\(UUID().uuidString).json")
         try data.write(to: url, options: .atomic)
         return url
+    }
+
+    /// Every snapshot write reports a full iCloud quota to the shared
+    /// status before rethrowing, like the claim and mirroring paths.
+    private func saveReportingQuota(_ record: CKRecord) async throws -> CKRecord {
+        do {
+            return try await database.save(record)
+        } catch {
+            VocabCloudQuotaStatus.report(error)
+            throw error
+        }
     }
 
     private func existingRecord(for recordID: CKRecord.ID) async throws -> CKRecord {

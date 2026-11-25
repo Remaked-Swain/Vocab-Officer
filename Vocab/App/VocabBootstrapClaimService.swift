@@ -314,6 +314,7 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
                     case .success:
                         continuation.resume(returning: .saved)
                     case .failure(let error):
+                        VocabCloudQuotaStatus.report(error)
                         guard let cloudError = error as? CKError else {
                             continuation.resume(returning: .unknown)
                             return
