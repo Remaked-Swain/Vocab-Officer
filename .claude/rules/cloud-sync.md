@@ -162,6 +162,12 @@ real CloudKit export succeeds. "Recheck" writes the private
 `VocabCloudHealthProbe` record; a writable probe alone never clears the
 warning. The probe record type must exist in the Production schema.
 
+## Pitfalls
+
+- A no-op write (reassigning an unchanged value) leaves the context dirty;
+  sorted `fetchOffset` pages are then evaluated in memory, so a real
+  library's full audit never finished (a397c86).
+
 ## Open Items
 
 - Per-record mirroring is code-level approved; real-device propagation is
