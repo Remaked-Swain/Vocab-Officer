@@ -70,11 +70,25 @@ paths:
 
 ## Reconciliation
 
-- Successful imports are debounced and reconcile only buffered changed IDs
-  and tombstones; an import with no captured IDs requests a deferred full
-  audit. Full audits run only while inactive/backgrounded; returning active
-  cancels cooperative maintenance. Indexes and receipts are written only after
-  success. Maintenance tasks use generation ownership.
+- Successful imports are debounced and reconcile only records changed in
+  persistent history since the saved cursor (`VocabImportHistoryReader`,
+  any author).
+  - Word, meaning, attempt and tombstone changes are diffed against the
+    import index.
+  - A review-state or memory-aid change always marks its word affected.
+  - Every changed record rechecks its own tombstone (same ID), so an older
+    peer cannot resurrect retired content.
+  - Only bootstrap metadata, export receipts, sessions and anonymous counts
+    are ignored; none of them is derived or tombstoned per record.
+  - A pass that changes nothing does not save, so reading back its own
+    writes costs one pass with no writes.
+  - No cursor, a cursor from another store, pruned history, a hard delete,
+    an unknown model, an unresolvable record or more than 2,000 changed
+    records request a deferred full audit. The cursor is read before a pass or audit writes
+  anything and saved only after it succeeds. Full audits run only while
+  inactive/backgrounded; returning active cancels cooperative maintenance.
+  Indexes, receipts and the cursor are written only after success.
+  Maintenance tasks use generation ownership.
 - macOS remote-change handling is debounced and single-flight; iOS bootstrap
   polling is foreground-only at 5/10/20/40/60 s and stops at
   ready/failed/cancel/background.
@@ -84,9 +98,11 @@ paths:
   from replay so older peers cannot resurrect retired content.
 - XCTest mutation-lease `UserDefaults` use process-scoped suites.
 - Root views receive store notifications only through
-  `VocabStoreChangeMonitor`: observers run on the posting thread (a save's
-  IDs are resolved on its own context) and yield `Sendable` events the views
-  handle on the main actor; never `.onReceive` a store notification.
+  `VocabStoreChangeMonitor`: observers run on the posting thread and yield
+  `Sendable` events the views handle on the main actor; never `.onReceive`
+  a store notification. Notifications only signal that something changed.
+  Which records changed comes from persistent history, never from
+  notification payloads.
 
 ## Status UI
 
@@ -101,10 +117,10 @@ detail-area banner is not copied to iPhone.
   edit, tombstones before destructive deletes). Real CloudKit open/close is
   opt-in via `VOCAB_RUN_CLOUDKIT_INTEGRATION=1`. Keep `localOnly` the default
   until signing, schema compatibility and first-device migration pass.
-- Known defect, pending a separate sync fix: `VocabModelContextChangeEvent`
-  reads `ModelContext.didSave` IDs as `Set<PersistentIdentifier>`, but
-  SwiftData delivers `[PersistentIdentifier]`, so every local save yields an
-  empty batch and `VocabImportedIdentifierBuffer` never receives save IDs.
+- History-based import reconciliation is test-verified only against local
+  saves. Still unverified on real devices: that CloudKit import transactions
+  appear in history as expected, and how much history CloudKit retains
+  before a cursor goes stale.
 - Undecided: array fields (`successDays`, aliases, `wordIDs`) under
   concurrent edits; whether memory-aid caches and anonymous aggregates stay
   mirrored; in-process container rebuild vs restart on store switch.

@@ -11,10 +11,9 @@ final class VocabStoreChangeMonitorTests: XCTestCase {
 
         _ = try await Self.saveWord("observed", into: container)
 
-        // The test host's own store may report remote changes (no change
-        // batch) first; a save into the observed container carries a batch.
+        // The test host's own store may report remote changes first.
         while let event = await events.next() {
-            if case .storeChanged(.some) = event { return }
+            if case .localSave = event { return }
         }
         XCTFail("the stream ended without a save")
     }
@@ -25,31 +24,30 @@ final class VocabStoreChangeMonitorTests: XCTestCase {
         _ = try await Self.saveWord("ignored", into: try makeContainer())
         await Self.post(.vocabMasteryCleanupRequested)
 
-        // Everything before the marker must be free of save batches.
+        // Everything before the marker must be free of local saves.
         while let event = await events.next() {
             switch event {
             case .masteryCleanupRequested:
                 return
-            case .storeChanged(.some):
+            case .localSave:
                 return XCTFail("a save into another container was reported")
-            case .storeChanged(.none), .successfulImport:
+            case .remoteChange, .successfulImport:
                 continue
             }
         }
         XCTFail("the stream ended before the marker")
     }
 
-    func testRemoteChangePostedOffTheMainThreadYieldsAStoreChangeWithoutRecords() async throws {
+    func testRemoteChangePostedOffTheMainThreadYieldsARemoteChange() async throws {
         var events = VocabStoreChangeMonitor.events(for: try makeContainer()).makeAsyncIterator()
 
         await Self.post(.NSPersistentStoreRemoteChange)
 
         // A stray remote change from the test host's own store is also
-        // `.storeChanged(nil)`, so the first event is the one asserted.
-        guard case .storeChanged(let changes)? = await events.next() else {
-            return XCTFail("expected a store change")
+        // `.remoteChange`, so the first event is the one asserted.
+        guard case .remoteChange? = await events.next() else {
+            return XCTFail("expected a remote change")
         }
-        XCTAssertNil(changes)
     }
 
     func testMasteryCleanupRequestYieldsItsEvent() async throws {
@@ -62,9 +60,9 @@ final class VocabStoreChangeMonitorTests: XCTestCase {
             switch event {
             case .masteryCleanupRequested:
                 return
-            case .storeChanged(.some):
+            case .localSave:
                 return XCTFail("no save was made into the observed container")
-            case .storeChanged(.none), .successfulImport:
+            case .remoteChange, .successfulImport:
                 continue
             }
         }

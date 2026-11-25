@@ -142,7 +142,7 @@ final class VocabCloudReconciliationTests: XCTestCase {
         let changes = try VocabImportedChangeDiscovery.discover(
             context: context,
             previous: baseline,
-            changedRecords: [try XCTUnwrap(VocabChangedRecordID(late))]
+            changedRecords: [VocabChangedRecordID(kind: .attempt, id: late.id)]
         )
         XCTAssertFalse(changes.requiresFullAudit)
         XCTAssertEqual(changes.affectedWordIDs, Set([second.id]))
@@ -179,7 +179,7 @@ final class VocabCloudReconciliationTests: XCTestCase {
         let changes = try VocabImportedChangeDiscovery.discover(
             context: context,
             previous: baseline,
-            changedRecords: [try XCTUnwrap(VocabChangedRecordID(meaning))]
+            changedRecords: [VocabChangedRecordID(kind: .meaning, id: meaning.id)]
         )
         XCTAssertEqual(changes.changedTombstoneIDs, Set([tombstone.id]))
 
@@ -251,7 +251,7 @@ final class VocabCloudReconciliationTests: XCTestCase {
             let changes = try VocabImportedChangeDiscovery.discover(
                 context: context,
                 previous: baseline,
-                changedRecords: [try XCTUnwrap(VocabChangedRecordID(attempt))]
+                changedRecords: [VocabChangedRecordID(kind: .attempt, id: attempt.id)]
             )
             XCTAssertTrue(changes.affectedWordIDs.contains(first.id), "Missing canonical field: \(field)")
             if field == .word {
@@ -275,32 +275,6 @@ final class VocabCloudReconciliationTests: XCTestCase {
         )
 
         XCTAssertTrue(changes.requiresFullAudit)
-    }
-
-    func testDurableIdentifierBufferCoalescesRepeatedImportNotifications() async throws {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("VocabIdentifierBuffer-\(UUID().uuidString).json")
-        defer { try? FileManager.default.removeItem(at: url) }
-        let context = try makeContext()
-        let first = WordRecord(term: "first")
-        let second = WordRecord(term: "second")
-        context.insert(first)
-        context.insert(second)
-        try context.save()
-        let buffer = VocabImportedIdentifierBuffer(url: url)
-
-        let firstID = try XCTUnwrap(VocabChangedRecordID(first))
-        let secondID = try XCTUnwrap(VocabChangedRecordID(second))
-        await buffer.capture([firstID])
-        await buffer.capture([firstID, secondID])
-        await buffer.capture([secondID])
-
-        let reloadedBuffer = VocabImportedIdentifierBuffer(url: url)
-        let pending = await reloadedBuffer.snapshot()
-        XCTAssertEqual(pending, VocabImportedIdentifierBatch(records: [firstID, secondID], requiresFullAudit: false))
-        await reloadedBuffer.acknowledge(pending)
-        let remaining = await reloadedBuffer.snapshot()
-        XCTAssertEqual(remaining, .empty)
     }
 
     func testUnresolvedDeletedIdentifierForcesFullAudit() throws {
@@ -348,7 +322,7 @@ final class VocabCloudReconciliationTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let indexURL = root.appendingPathComponent("index.json")
         let receiptURL = root.appendingPathComponent("receipt.json")
-        let buffer = VocabImportedIdentifierBuffer(url: root.appendingPathComponent("ids.json"))
+        let cursorURL = root.appendingPathComponent("cursor.json")
         let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
         try VocabImportedChangeIndexStore.save(baseline, to: indexURL)
 
@@ -356,24 +330,25 @@ final class VocabCloudReconciliationTests: XCTestCase {
         attempt.automaticJudgementRaw = FinalResult.correct.rawValue
         attempt.updatedAt = .now
         try context.save()
-        let pendingIdentifiers = await buffer.snapshot()
-        XCTAssertEqual(pendingIdentifiers, .empty)
+        let historyBeforeAudit = try XCTUnwrap(VocabImportHistoryReader.latestToken(context: context))
 
         let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
         _ = try await worker.reconcileImportedChanges(
             syncMode: .cloudKitPrivate,
             indexURL: indexURL,
             auditReceiptURL: receiptURL,
-            identifierBuffer: buffer
+            historyCursorURL: cursorURL
         )
 
         let refreshed = ModelContext(context.container)
         let refreshedState = try XCTUnwrap(refreshed.fetch(FetchDescriptor<ReviewStateRecord>()).first)
         XCTAssertEqual(refreshedState.enToKoStreak, 1)
         XCTAssertNotNil(try VocabFullAuditReceiptStore.load(from: receiptURL))
+        // The audit accounted for everything up to where it started reading.
+        XCTAssertEqual(VocabImportHistoryCursorStore.load(from: cursorURL), historyBeforeAudit)
     }
 
-    func testForegroundImportUsesChangedIdentifiersWithoutWritingFullAuditReceipt() async throws {
+    func testForegroundImportReconcilesHistoryChangesWithoutWritingFullAuditReceipt() async throws {
         let context = try makeContext()
         let word = WordRecord(term: "incremental")
         let meaning = MeaningRecord(text: "증분")
@@ -398,24 +373,37 @@ final class VocabCloudReconciliationTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let indexURL = root.appendingPathComponent("index.json")
         let receiptURL = root.appendingPathComponent("receipt.json")
-        let buffer = VocabImportedIdentifierBuffer(url: root.appendingPathComponent("ids.json"))
+        let cursorURL = root.appendingPathComponent("cursor.json")
         let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
         try VocabImportedChangeIndexStore.save(baseline, to: indexURL)
+        try VocabImportHistoryCursorStore.save(
+            try XCTUnwrap(VocabImportHistoryReader.latestToken(context: context)),
+            to: cursorURL
+        )
 
+        // Stands in for an imported attempt: history does not distinguish
+        // the author, so a local save exercises the same path.
         let attempt = makeAttempt(word: word, result: .incorrect, answeredAt: .now)
         word.appendAttempt(attempt)
         context.insert(attempt)
         try context.save()
-        await buffer.capture([try XCTUnwrap(VocabChangedRecordID(attempt))])
+        let importedThrough = try XCTUnwrap(VocabImportHistoryReader.latestToken(context: context))
+        let suiteName = "VocabIncrementalImport-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let runtimeState = VocabSyncRuntimeStateStore(defaults: defaults)
+        // A recent audit, so only a request from this pass would make one due.
+        await runtimeState.markFullAuditCompleted()
 
         let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
         let result = try await worker.reconcileImportedChanges(
             syncMode: .cloudKitPrivate,
             indexURL: indexURL,
             auditReceiptURL: receiptURL,
-            identifierBuffer: buffer,
-            source: .trustedLocalIdentifiers,
-            allowsFullAudit: false
+            historyCursorURL: cursorURL,
+            source: .persistentHistory,
+            allowsFullAudit: false,
+            runtimeStateStore: runtimeState
         )
 
         XCTAssertEqual(result.state, .ready)
@@ -423,11 +411,144 @@ final class VocabCloudReconciliationTests: XCTestCase {
         let refreshedState = try XCTUnwrap(refreshed.fetch(FetchDescriptor<ReviewStateRecord>()).first)
         XCTAssertEqual(refreshedState.failureCheck, 1)
         XCTAssertNil(try VocabFullAuditReceiptStore.load(from: receiptURL))
-        let remaining = await buffer.snapshot()
-        XCTAssertEqual(remaining, .empty)
+        XCTAssertEqual(VocabImportHistoryCursorStore.load(from: cursorURL), importedThrough)
+
+        // The pass's own writes are in history too. Reading them back must
+        // stay incremental and write nothing, so the passes settle.
+        let indexAfterFirstPass = try VocabImportedChangeIndexStore.load(from: indexURL)
+        let historyAfterFirstPass = try VocabImportHistoryReader.latestToken(context: ModelContext(context.container))
+        let nextResult = try await worker.reconcileImportedChanges(
+            syncMode: .cloudKitPrivate,
+            indexURL: indexURL,
+            auditReceiptURL: receiptURL,
+            historyCursorURL: cursorURL,
+            source: .persistentHistory,
+            allowsFullAudit: false,
+            runtimeStateStore: runtimeState
+        )
+        XCTAssertEqual(nextResult.state, .ready)
+        let auditWasRequested = await runtimeState.shouldRunFullAudit()
+        XCTAssertFalse(auditWasRequested)
+        let settled = ModelContext(context.container)
+        XCTAssertEqual(try VocabImportHistoryReader.latestToken(context: settled), historyAfterFirstPass)
+        XCTAssertEqual(VocabImportHistoryCursorStore.load(from: cursorURL), historyAfterFirstPass)
+        XCTAssertEqual(try VocabImportedChangeIndexStore.load(from: indexURL), indexAfterFirstPass)
+        XCTAssertEqual(try XCTUnwrap(settled.fetch(FetchDescriptor<ReviewStateRecord>()).first).failureCheck, 1)
+
+        // A peer overwriting the derived state alone is recomputed from the
+        // word's attempts rather than accepted.
+        reviewState.failureCheck = 3
+        try context.save()
+        _ = try await worker.reconcileImportedChanges(
+            syncMode: .cloudKitPrivate,
+            indexURL: indexURL,
+            auditReceiptURL: receiptURL,
+            historyCursorURL: cursorURL,
+            source: .persistentHistory,
+            allowsFullAudit: false,
+            runtimeStateStore: runtimeState
+        )
+        let recomputed = ModelContext(context.container)
+        XCTAssertEqual(try XCTUnwrap(recomputed.fetch(FetchDescriptor<ReviewStateRecord>()).first).failureCheck, 1)
+        let auditWasRequestedAfterOverwrite = await runtimeState.shouldRunFullAudit()
+        XCTAssertFalse(auditWasRequestedAfterOverwrite)
     }
 
-    func testForegroundImportDefersRequiredFullAuditAndPreservesPendingIdentifiers() async throws {
+    func testForegroundImportReappliesTheTombstoneOfAResurrectedMemoryAid() async throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "remembered")
+        let meaning = MeaningRecord(text: "기억된")
+        meaning.word = word
+        word.appendMeaning(meaning)
+        let reviewState = ReviewStateRecord()
+        reviewState.word = word
+        word.reviewState = reviewState
+        let retiredAt = Date(timeIntervalSince1970: 1_000_000)
+        let aid = MemoryAidCacheRecord(
+            wordID: word.id,
+            modelRaw: "",
+            promptVersion: 1,
+            contentSignature: "",
+            markdown: "",
+            generatedAt: retiredAt
+        )
+        aid.deletedAt = retiredAt
+        let tombstone = RecordTombstone(recordID: aid.id, recordType: "MemoryAidCacheRecord", deletedAt: retiredAt)
+        context.insert(word)
+        context.insert(meaning)
+        context.insert(reviewState)
+        context.insert(aid)
+        context.insert(tombstone)
+        let metadata = readyMetadata()
+        metadata.expectedWordCount = 1
+        metadata.expectedMeaningCount = 1
+        metadata.lastReconciledAt = .now
+        context.insert(metadata)
+        try context.save()
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabResurrectedAid-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let indexURL = root.appendingPathComponent("index.json")
+        let receiptURL = root.appendingPathComponent("receipt.json")
+        let cursorURL = root.appendingPathComponent("cursor.json")
+        let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
+        try VocabImportedChangeIndexStore.save(baseline, to: indexURL)
+        try VocabImportHistoryCursorStore.save(
+            try XCTUnwrap(VocabImportHistoryReader.latestToken(context: context)),
+            to: cursorURL
+        )
+        let suiteName = "VocabResurrectedAid-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let runtimeState = VocabSyncRuntimeStateStore(defaults: defaults)
+        await runtimeState.markFullAuditCompleted()
+
+        // An older peer writes the retired memory aid back.
+        aid.markdown = "resurrected"
+        aid.contentSignature = "signature"
+        aid.deletedAt = nil
+        try context.save()
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        let result = try await worker.reconcileImportedChanges(
+            syncMode: .cloudKitPrivate,
+            indexURL: indexURL,
+            auditReceiptURL: receiptURL,
+            historyCursorURL: cursorURL,
+            source: .persistentHistory,
+            allowsFullAudit: false,
+            runtimeStateStore: runtimeState
+        )
+
+        XCTAssertEqual(result.state, .ready)
+        let refreshed = ModelContext(context.container)
+        let refreshedAid = try XCTUnwrap(refreshed.fetch(FetchDescriptor<MemoryAidCacheRecord>()).first)
+        XCTAssertEqual(refreshedAid.markdown, "")
+        XCTAssertEqual(refreshedAid.contentSignature, "")
+        XCTAssertEqual(refreshedAid.deletedAt, retiredAt)
+        let auditWasRequested = await runtimeState.shouldRunFullAudit()
+        XCTAssertFalse(auditWasRequested)
+
+        // Reading back the re-applied tombstone writes nothing more.
+        let historyAfterFirstPass = try VocabImportHistoryReader.latestToken(context: refreshed)
+        _ = try await worker.reconcileImportedChanges(
+            syncMode: .cloudKitPrivate,
+            indexURL: indexURL,
+            auditReceiptURL: receiptURL,
+            historyCursorURL: cursorURL,
+            source: .persistentHistory,
+            allowsFullAudit: false,
+            runtimeStateStore: runtimeState
+        )
+        let settled = ModelContext(context.container)
+        XCTAssertEqual(try VocabImportHistoryReader.latestToken(context: settled), historyAfterFirstPass)
+        let auditWasRequestedAfterSecondPass = await runtimeState.shouldRunFullAudit()
+        XCTAssertFalse(auditWasRequestedAfterSecondPass)
+    }
+
+    func testForegroundImportWithoutIndexDefersFullAuditAndKeepsTheCursor() async throws {
         let context = try makeContext()
         let metadata = readyMetadata()
         metadata.lastReconciledAt = .now
@@ -438,8 +559,12 @@ final class VocabCloudReconciliationTests: XCTestCase {
             .appendingPathComponent("VocabDeferredAudit-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        let buffer = VocabImportedIdentifierBuffer(url: root.appendingPathComponent("ids.json"))
-        await buffer.capture([], requiresFullAudit: true)
+        let cursorURL = root.appendingPathComponent("cursor.json")
+        let cursor = try XCTUnwrap(VocabImportHistoryReader.latestToken(context: context))
+        try VocabImportHistoryCursorStore.save(cursor, to: cursorURL)
+        let word = WordRecord(term: "after-cursor")
+        context.insert(word)
+        try context.save()
         let suiteName = "VocabDeferredAudit-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
@@ -450,8 +575,8 @@ final class VocabCloudReconciliationTests: XCTestCase {
             syncMode: .cloudKitPrivate,
             indexURL: root.appendingPathComponent("missing-index.json"),
             auditReceiptURL: root.appendingPathComponent("receipt.json"),
-            identifierBuffer: buffer,
-            source: .trustedLocalIdentifiers,
+            historyCursorURL: cursorURL,
+            source: .persistentHistory,
             allowsFullAudit: false,
             runtimeStateStore: runtimeState
         )
@@ -459,11 +584,11 @@ final class VocabCloudReconciliationTests: XCTestCase {
         XCTAssertEqual(result.state, .ready)
         let auditWasRequested = await runtimeState.shouldRunFullAudit()
         XCTAssertTrue(auditWasRequested)
-        let pending = await buffer.snapshot()
-        XCTAssertTrue(pending.requiresFullAudit)
+        // Nothing was reconciled, so the change stays after the cursor.
+        XCTAssertEqual(VocabImportHistoryCursorStore.load(from: cursorURL), cursor)
     }
 
-    func testForegroundImportWithoutCapturedIdentifiersRequestsDeferredAudit() async throws {
+    func testForegroundImportWithoutHistoryCursorRequestsDeferredAudit() async throws {
         let context = try makeContext()
         let metadata = readyMetadata()
         metadata.lastReconciledAt = .now
@@ -471,14 +596,14 @@ final class VocabCloudReconciliationTests: XCTestCase {
         try context.save()
 
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("VocabMissingImportIdentifiers-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("VocabMissingHistoryCursor-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let indexURL = root.appendingPathComponent("index.json")
+        let cursorURL = root.appendingPathComponent("cursor.json")
         let baseline = try VocabImportedChangeDiscovery.discover(context: context, previous: nil).nextIndex
         try VocabImportedChangeIndexStore.save(baseline, to: indexURL)
-        let buffer = VocabImportedIdentifierBuffer(url: root.appendingPathComponent("ids.json"))
-        let suiteName = "VocabMissingImportIdentifiers-\(UUID().uuidString)"
+        let suiteName = "VocabMissingHistoryCursor-\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let runtimeState = VocabSyncRuntimeStateStore(defaults: defaults)
@@ -488,8 +613,8 @@ final class VocabCloudReconciliationTests: XCTestCase {
             syncMode: .cloudKitPrivate,
             indexURL: indexURL,
             auditReceiptURL: root.appendingPathComponent("receipt.json"),
-            identifierBuffer: buffer,
-            source: .trustedLocalIdentifiers,
+            historyCursorURL: cursorURL,
+            source: .persistentHistory,
             allowsFullAudit: false,
             runtimeStateStore: runtimeState
         )
@@ -497,6 +622,7 @@ final class VocabCloudReconciliationTests: XCTestCase {
         XCTAssertEqual(result.state, .ready)
         let auditWasRequested = await runtimeState.shouldRunFullAudit()
         XCTAssertTrue(auditWasRequested)
+        XCTAssertNil(VocabImportHistoryCursorStore.load(from: cursorURL))
     }
 
     func testFailedMaintenanceAuditInvalidatesReceiptBeforeRelaunch() async throws {
@@ -707,8 +833,8 @@ final class VocabCloudReconciliationTests: XCTestCase {
             context: context,
             previous: baseline,
             changedRecords: [
-                try XCTUnwrap(VocabChangedRecordID(first)),
-                try XCTUnwrap(VocabChangedRecordID(second))
+                VocabChangedRecordID(kind: .attempt, id: first.id),
+                VocabChangedRecordID(kind: .attempt, id: second.id)
             ]
         )
         XCTAssertThrowsError(try VocabCloudReconciler.reconcileAffected(
