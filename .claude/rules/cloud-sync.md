@@ -24,6 +24,12 @@ paths:
 - `VocabModelContainerFactory` is the single container boundary. Local mode
   opens `Vocab.store`; mirrored mode uses a separate `VocabMirrored.store`.
   Never open the local store directly as CloudKit-backed.
+- macOS runs in the App Sandbox (`Vocab.entitlements`: sandbox, network
+  client, user-selected read-only files, push). Its stores live in the app
+  container; `Vocab/container-migration.plist` moves the pre-sandbox
+  `Application Support/Vocab`, legacy `default.store*` and preferences in on
+  the first sandboxed launch. Keep that manifest in sync with any new
+  location outside `Application Support/Vocab`.
 - Local→mirrored migration checkpoints first, preserves the local store, and
   never replaces a non-empty mirrored store. Older snapshot JSON missing newer
   collections decodes them as empty. Snapshot transport is explicit
@@ -39,8 +45,11 @@ paths:
 
 ## Activation And Bootstrap
 
-- Never change bundle IDs (`com.swainyun.Vocab`, `.iOS`) or the container
-  `iCloud.com.swainyun.Vocab`; reinstall by overwriting, never by deleting.
+- Both platforms ship as one multiplatform App Store Connect record with the
+  bundle ID `com.swainyun.Vocab` (iOS moved off `.iOS` in #9; data that
+  existed only in the old iOS app is restored by iCloud sync, not migrated).
+  Never change the bundle ID or the container `iCloud.com.swainyun.Vocab`
+  again; reinstall by overwriting, never by deleting.
 - Activation requires: account available, build allows CloudKit runtime,
   signed entitlement, verified/migrated schema, and a checkpoint
   (`Vocab.store`, `-wal`, `-shm`, `manifest.json`) or explicit user
@@ -127,6 +136,17 @@ paths:
 iOS shows durable sync state in Settings only; interrupt only for
 action-required failures, conflicts or destructive confirmations. The macOS
 detail-area banner is not copied to iPhone.
+
+A full iCloud quota (`VocabCloudQuotaClassifier`: direct, partial-failure and
+wrapped errors) from mirroring events and from direct CloudKit writes (claim,
+snapshot; reported through `VocabCloudQuotaStatus.report`, never the store
+alone) is recorded device-locally with its detection time and keeps
+local use on the current store; never delete, replace or reset a store
+because of it. Both platforms alert once on the first transition; macOS also
+shows a persistent detail-area banner, and both show it in Settings until a
+real CloudKit export succeeds. "Recheck" writes the private
+`VocabCloudHealthProbe` record; a writable probe alone never clears the
+warning. The probe record type must exist in the Production schema.
 
 ## Open Items
 

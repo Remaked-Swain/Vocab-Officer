@@ -14,6 +14,10 @@ enum VocabStoreChangeEvent: Sendable {
     case successfulImport
     /// The coordinator asked for mastery cleanup after a learning save.
     case masteryCleanupRequested
+    /// A CloudKit import or export failed because iCloud storage is full.
+    case quotaExceeded
+    /// CloudKit exported local changes, so sync is flowing again.
+    case exportSucceeded
 }
 
 /// Turns store notifications into an event stream for the root views.
@@ -43,6 +47,18 @@ enum VocabStoreChangeMonitor {
                     object: nil,
                     queue: nil
                 ) { notification in
+                    if let event = notification.userInfo?[NSPersistentCloudKitContainer.eventNotificationUserInfoKey]
+                        as? NSPersistentCloudKitContainer.Event, event.endDate != nil {
+                        switch VocabCloudSyncEventOutcome.classify(
+                            isExport: event.type == .export,
+                            succeeded: event.succeeded,
+                            error: event.error
+                        ) {
+                        case .quotaExceeded: continuation.yield(.quotaExceeded)
+                        case .exportSucceeded: continuation.yield(.exportSucceeded)
+                        case .other: break
+                        }
+                    }
                     guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
                     continuation.yield(.successfulImport)
                 },

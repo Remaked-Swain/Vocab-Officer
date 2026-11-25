@@ -31,7 +31,7 @@ final class VocabStoreChangeMonitorTests: XCTestCase {
                 return
             case .localSave:
                 return XCTFail("a save into another container was reported")
-            case .remoteChange, .successfulImport:
+            case .remoteChange, .successfulImport, .quotaExceeded, .exportSucceeded:
                 continue
             }
         }
@@ -62,7 +62,7 @@ final class VocabStoreChangeMonitorTests: XCTestCase {
                 return
             case .localSave:
                 return XCTFail("no save was made into the observed container")
-            case .remoteChange, .successfulImport:
+            case .remoteChange, .successfulImport, .quotaExceeded, .exportSucceeded:
                 continue
             }
         }
