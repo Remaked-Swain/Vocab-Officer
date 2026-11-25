@@ -2,6 +2,10 @@ import Foundation
 import Network
 
 enum VocabCloudSyncNetworkMonitor {
+    /// How long to wait for the first network path before treating the
+    /// network as unknown (reported as unavailable).
+    static let pathTimeout: Duration = .seconds(1)
+
     static func currentRuntimeConditions(
         hasSyncBaseline: Bool = VocabCloudBatchSyncUserDefaultsStore().loadCursor() != nil,
         isUserInitiated: Bool = false
@@ -16,40 +20,14 @@ enum VocabCloudSyncNetworkMonitor {
         )
     }
 
+    /// The monitor's first path. Iterating `NWPathMonitor` starts it and
+    /// ending the iteration (or cancelling it at the deadline) stops it.
     private static func currentPath() async -> NWPath? {
-        await withCheckedContinuation { continuation in
-            let monitor = NWPathMonitor()
-            let queue = DispatchQueue(label: "VocabCloudSyncNetworkMonitor")
-            let gate = VocabCloudSyncContinuationGate()
-
-            let resume: @Sendable (NWPath?) -> Void = { path in
-                gate.resumeOnce {
-                    monitor.cancel()
-                    continuation.resume(returning: path)
-                }
+        await VocabAsyncDeadline.value(timeout: pathTimeout, timeoutValue: nil) {
+            for await path in NWPathMonitor() {
+                return path
             }
-
-            monitor.pathUpdateHandler = { path in
-                resume(path)
-            }
-            monitor.start(queue: queue)
-
-            queue.asyncAfter(deadline: .now() + 1) {
-                resume(nil)
-            }
+            return nil
         }
-    }
-}
-
-private final class VocabCloudSyncContinuationGate: @unchecked Sendable {
-    private let lock = NSLock()
-    private var didResume = false
-
-    func resumeOnce(_ action: () -> Void) {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !didResume else { return }
-        didResume = true
-        action()
     }
 }

@@ -166,15 +166,15 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
     }
 
     private let database: CKDatabase
-    private let timeoutNanoseconds: UInt64
+    private let timeout: Duration
     private let recordFetcher: @Sendable (CKRecord.ID) async throws -> CKRecord
 
     init(
         container: CKContainer = CKContainer(identifier: VocabSyncMode.cloudKitContainerIdentifier),
-        timeout: TimeInterval = 15
+        timeout: Duration = .seconds(15)
     ) {
         database = container.privateCloudDatabase
-        timeoutNanoseconds = UInt64(max(timeout, 0.1) * 1_000_000_000)
+        self.timeout = max(timeout, .milliseconds(100))
         recordFetcher = { try await container.privateCloudDatabase.record(for: $0) }
     }
 
@@ -261,8 +261,14 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
             group.addTask { [database] in
                 await Self.modifyAtomically(record, in: database)
             }
-            group.addTask { [timeoutNanoseconds] in
-                try? await Task.sleep(nanoseconds: timeoutNanoseconds)
+            group.addTask { [timeout] in
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    // Cancelled because the save answered first or the caller
+                    // was cancelled; never report a cancelled wait as a timeout.
+                    return .unknown
+                }
                 return .timeout
             }
             let first = await group.next() ?? .unknown
@@ -337,7 +343,7 @@ final class VocabCloudKitBootstrapClaimService: VocabBootstrapClaiming, VocabBoo
 
     private func fetchRecord(_ recordID: CKRecord.ID) async -> FetchResult {
         await VocabAsyncDeadline.value(
-            timeoutNanoseconds: timeoutNanoseconds,
+            timeout: timeout,
             timeoutValue: .unknown
         ) {
             do {
@@ -676,8 +682,8 @@ private final class VocabPersistentCloudKitExportExpectation: VocabCloudExportEx
             self.continuation = continuation
 
             Task { @MainActor [weak self] in
-                let nanoseconds = UInt64(max(timeout, 0.1) * 1_000_000_000)
-                try? await Task.sleep(nanoseconds: nanoseconds)
+                // Never cancelled; a result that arrives first makes this a no-op.
+                try? await Task.sleep(for: .seconds(max(timeout, 0.1)))
                 self?.resolve(.failure(VocabCloudExportWaitError.timedOut))
             }
         }

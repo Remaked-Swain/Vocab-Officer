@@ -43,6 +43,17 @@ contextual rules below.
   `DispatchSemaphore`, `NSLock`/unfair locks; isolate mutable state in actors.
   Existing occurrences are a frozen backlog
   (`.claude/lint/baselines/legacy-concurrency.txt`), not precedent.
+- Replacements: shared state reached asynchronously → an actor (or the
+  owning `@MainActor` type); a short critical section that must stay
+  synchronous → `Mutex` (Synchronization); callback or delegate APIs → an
+  `async` wrapper or `AsyncStream`, preferring the OS's own async API
+  (e.g. `NWPathMonitor` is an `AsyncSequence`). A timeout over cooperative
+  work races in a task group; one that must return while uncooperative
+  work is still running races through a first-value `AsyncStream`
+  (`VocabAsyncDeadline`), never a lock-guarded continuation. No
+  `@unchecked Sendable`, `Thread.isMainThread` checks, `ObservableObject`
+  or `Task.sleep(nanoseconds:)`; use isolation, `@Observable` and
+  `Duration`.
 - UI state on `@MainActor`; network, CloudKit, OCR, serialization and large
   collection work off the main actor. Structured concurrency and cancellation.
 - Lifecycle events never trigger unbounded work: coalesce, keep foreground
