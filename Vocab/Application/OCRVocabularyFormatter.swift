@@ -18,20 +18,28 @@ struct OCRVocabularyFormattingResult {
 
 enum OCRVocabularyFormatter {
     static func format(_ tokens: [OCRTextToken]) throws -> String {
-        let entries = extractEntries(from: tokens).entries
-        guard !entries.isEmpty else { throw OCRVocabularyFormatError.noVocabularyRows }
-        return format(entries)
+        try formatPagesWithDiagnostics([tokens]).text
     }
 
     static func formatPages(_ pages: [[OCRTextToken]]) throws -> String {
         try formatPagesWithDiagnostics(pages).text
     }
 
+    /// Each page is read by its printed numbers (`number-headword-meanings`);
+    /// a page without numbered rows falls back to pairing headwords with
+    /// meanings by position (`headword<TAB>meanings`). Pages keep their order.
     static func formatPagesWithDiagnostics(_ pages: [[OCRTextToken]]) throws -> OCRVocabularyFormattingResult {
         let pageExtractions = pages.map(extractEntries)
-        let entries = pageExtractions.flatMap(\.entries)
-        guard !entries.isEmpty else { throw OCRVocabularyFormatError.noVocabularyRows }
-        let text = format(entries)
+        var lines: [String] = []
+        for (page, extraction) in zip(pages, pageExtractions) {
+            if extraction.entries.isEmpty {
+                lines += OCRUnnumberedLayout.entries(from: page).map { "\($0.term)\t\($0.meaning)" }
+            } else {
+                lines += extraction.entries.map { "\($0.numberText)-\($0.term)-\($0.meaning)" }
+            }
+        }
+        guard !lines.isEmpty else { throw failureReason(for: pages) }
+        let text = lines.joined(separator: "\n")
         let rejectedNumbers = pageExtractions.flatMap {
             $0.rejectedNumberTexts + $0.boundaryMissingNumberTexts
         }
@@ -45,17 +53,24 @@ enum OCRVocabularyFormatter {
         )
     }
 
-    private static func format(_ entries: [VocabularyEntry]) -> String {
-        entries
-            .map { "\($0.numberText)-\($0.term)-\($0.meaning)" }
-            .joined(separator: "\n")
+    private static func failureReason(for pages: [[OCRTextToken]]) -> OCRVocabularyFormatError {
+        let kinds = pages.map(OCRUnnumberedLayout.contentKinds)
+        if !kinds.contains(where: \.hasHeadwords) {
+            return .noHeadwords
+        }
+        if !kinds.contains(where: \.hasMeanings) {
+            return .noMeanings
+        }
+        return .noVocabularyRows
     }
 
     private static func extractEntries(from tokens: [OCRTextToken]) -> PageExtraction {
-        let normalized = tokens.map { NormalizedToken(text: clean($0.text), boundingBox: $0.boundingBox) }
+        let normalized = tokens
+            .map { NormalizedToken(text: OCRTokenClassifier.clean($0.text), boundingBox: $0.boundingBox) }
             .filter { !$0.text.isEmpty && isContentToken($0) }
         let numbers = normalized.compactMap { token -> (token: NormalizedToken, number: Int, text: String)? in
-            guard let numberText = normalizedNumberText(token.text), let number = Int(numberText) else {
+            guard let numberText = OCRTokenClassifier.normalizedNumberText(token.text),
+                  let number = Int(numberText) else {
                 return nil
             }
             return (token, number, numberText)
@@ -155,7 +170,7 @@ enum OCRVocabularyFormatter {
             : broadRowTokens
 
         let termMatches = rowTokens.compactMap { token -> (NormalizedToken, String)? in
-            guard let term = englishTerm(from: token.text) else { return nil }
+            guard let term = OCRTokenClassifier.englishTerm(from: token.text) else { return nil }
             return (token, term)
         }
         guard let termMatch = termMatches.min(by: {
@@ -167,7 +182,7 @@ enum OCRVocabularyFormatter {
 
         let meaningTokens = nearestMeaningLine(
             in: rowTokens.filter {
-                isMeaningToken($0.text) &&
+                OCRTokenClassifier.isMeaningToken($0.text) &&
                 $0 !== termToken &&
                 !belongsToHigherRow($0, number: number.token, higherNumber: higherNumber)
             },
@@ -175,7 +190,8 @@ enum OCRVocabularyFormatter {
         )
         guard !meaningTokens.isEmpty else { return nil }
 
-        let meaning = meaningTokens.map(\.text).joined(separator: " ")
+        // Tiled recognition can report one meaning twice with shifted boxes.
+        let meaning = orderedUnique(meaningTokens.map(\.text)).joined(separator: " ")
         let score = entryScore(number: number.token, term: termToken, meanings: meaningTokens, numberText: number.text)
         return VocabularyEntry(
             number: number.number,
@@ -378,28 +394,6 @@ enum OCRVocabularyFormatter {
         token.centerY > 0.03 && token.centerY < 0.95 && token.centerX > 0.02 && token.centerX < 0.98
     }
 
-    private static func clean(_ value: String) -> String {
-        value
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .replacingOccurrences(of: #"\s*[•·]\s*"#, with: "·", options: .regularExpression)
-            .replacingOccurrences(of: "–", with: "-")
-            .replacingOccurrences(of: "—", with: "-")
-    }
-
-    private static func normalizedNumberText(_ value: String) -> String? {
-        let corrected = value
-            .replacingOccurrences(of: "O", with: "0")
-            .replacingOccurrences(of: "o", with: "0")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard corrected.range(of: #"^[0-9]{4,8}[.]?$"#, options: .regularExpression) != nil else {
-            return nil
-        }
-        let digits = corrected.filter(\.isNumber)
-        guard digits.count >= 4, digits.count <= 8 else { return nil }
-        return String(digits)
-    }
-
     private static func orderedUnique(_ values: [String]) -> [String] {
         var seen: Set<String> = []
         var result: [String] = []
@@ -409,116 +403,9 @@ enum OCRVocabularyFormatter {
         return result
     }
 
-    private static func isEnglishTerm(_ value: String) -> Bool {
-        guard value.range(of: #"^[A-Za-z][A-Za-z' -]*$"#, options: .regularExpression) != nil else { return false }
-        return !value.localizedCaseInsensitiveContains("day")
-    }
-
     private static func containsVocabularyContent(_ tokens: [NormalizedToken]) -> Bool {
-        tokens.contains { englishTerm(from: $0.text) != nil } &&
-        tokens.contains { isMeaningToken($0.text) }
-    }
-
-    private static func englishTerm(from value: String) -> String? {
-        let pronunciationSeparators = ["[", "(", "|"]
-        let prefix = pronunciationSeparators
-            .compactMap { separator in value.range(of: separator)?.lowerBound }
-            .min()
-            .map { String(value[..<$0]) } ?? value
-        let trimmed = prefix.trimmingCharacters(in: .whitespacesAndNewlines)
-        if isEnglishTerm(trimmed) {
-            let words = trimmed.split(separator: " ").map(String.init)
-            if let headword = headwordBeforeUnbracketedPronunciation(in: words) {
-                return headword
-            }
-            return trimmed
-        }
-
-        let words = trimmed.split(separator: " ").map(String.init)
-        let validPrefix = words.prefix { isEnglishTerm($0) }
-        guard !validPrefix.isEmpty, validPrefix.count < words.count else { return nil }
-        return validPrefix.joined(separator: " ")
-    }
-
-    private static func headwordBeforeUnbracketedPronunciation(in words: [String]) -> String? {
-        guard words.count >= 2, words.count <= 6 else { return nil }
-        var bestMatch: (headword: String, similarity: Double)?
-        for splitIndex in 1..<words.count {
-            let headword = words[..<splitIndex].joined(separator: " ")
-            let pronunciation = words[splitIndex...].joined()
-            let similarity = normalizedEditSimilarity(headword, pronunciation)
-            let headwordLength = headword.filter(\.isLetter).count
-            let hasBracketOCRArtifacts = hasLikelyBracketOCRArtifacts(
-                pronunciation,
-                comparedWith: headword
-            )
-            guard (headwordLength >= 6 && similarity >= 0.48) || hasBracketOCRArtifacts else {
-                continue
-            }
-            if bestMatch == nil || similarity > (bestMatch?.similarity ?? 0) {
-                bestMatch = (headword, similarity)
-            }
-        }
-        return bestMatch?.headword
-    }
-
-    private static func hasLikelyBracketOCRArtifacts(
-        _ pronunciation: String,
-        comparedWith headword: String
-    ) -> Bool {
-        let normalized = pronunciation.lowercased().filter(\.isLetter)
-        let headwordLength = headword.filter(\.isLetter).count
-        // `[` misread as `i`/`l` brackets the transcription at both ends; a lone
-        // capital `I` after a lowercase headword marks it even when Vision drops
-        // the closing bracket. A lowercase `i…` word without a closing artifact
-        // stays part of the headword (e.g. `make inroads`).
-        let hasClosingArtifact = normalized.last == "i" || normalized.last == "l"
-        let hasCapitalOpeningArtifact = pronunciation.first == "I" &&
-            headword.first?.isLowercase == true
-        guard normalized.count >= 4,
-              headwordLength >= 4,
-              normalized.first == "i",
-              hasClosingArtifact || hasCapitalOpeningArtifact else {
-            return false
-        }
-        let lengthRatio = Double(normalized.count) / Double(headwordLength)
-        return lengthRatio >= 0.6 && lengthRatio <= 1.7
-    }
-
-    private static func normalizedEditSimilarity(_ lhs: String, _ rhs: String) -> Double {
-        let left = lhs.lowercased().filter(\.isLetter)
-        let right = rhs.lowercased().filter(\.isLetter)
-        guard !left.isEmpty, !right.isEmpty else { return 0 }
-        let maximumLength = max(left.count, right.count)
-        return 1 - Double(editDistance(left, right)) / Double(maximumLength)
-    }
-
-    private static func editDistance(_ lhs: String, _ rhs: String) -> Int {
-        let left = Array(lhs)
-        let right = Array(rhs)
-        var previous = Array(0...right.count)
-        for (leftIndex, leftCharacter) in left.enumerated() {
-            var current = [leftIndex + 1]
-            for (rightIndex, rightCharacter) in right.enumerated() {
-                current.append(
-                    min(
-                        current[rightIndex] + 1,
-                        previous[rightIndex + 1] + 1,
-                        previous[rightIndex] + (leftCharacter == rightCharacter ? 0 : 1)
-                    )
-                )
-            }
-            previous = current
-        }
-        return previous.last ?? max(left.count, right.count)
-    }
-
-    private static func containsHangul(_ value: String) -> Bool {
-        value.range(of: #"[가-힣]"#, options: .regularExpression) != nil
-    }
-
-    private static func isMeaningToken(_ value: String) -> Bool {
-        containsHangul(value) && !isEnglishTerm(value) && normalizedNumberText(value) == nil
+        tokens.contains { OCRTokenClassifier.englishTerm(from: $0.text) != nil } &&
+        tokens.contains { OCRTokenClassifier.isMeaningToken($0.text) }
     }
 }
 
@@ -564,13 +451,19 @@ enum IntakeNumberSequenceAnalyzer {
     }
 }
 
-enum OCRVocabularyFormatError: LocalizedError {
+enum OCRVocabularyFormatError: LocalizedError, Equatable {
+    case noHeadwords
+    case noMeanings
     case noVocabularyRows
 
     var errorDescription: String? {
         switch self {
+        case .noHeadwords:
+            "이미지에서 영어 단어를 찾지 못했습니다. 단어가 잘리지 않고 선명하게 보이도록 캡쳐하세요."
+        case .noMeanings:
+            "이미지에서 한글 뜻을 찾지 못했습니다. 영어 단어와 한글 뜻이 함께 보이도록 캡쳐하세요."
         case .noVocabularyRows:
-            "이미지에서 단어장 행을 찾지 못했습니다. 원본 캡쳐가 선명한지 확인하세요."
+            "영어 단어와 한글 뜻을 짝짓지 못했습니다. 뜻이 단어의 오른쪽이나 바로 아래에 있는 형식인지 확인하세요."
         }
     }
 }
