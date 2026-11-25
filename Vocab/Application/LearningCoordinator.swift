@@ -2,6 +2,7 @@ import Foundation
 import CryptoKit
 import Security
 import SwiftData
+import Synchronization
 
 extension Notification.Name {
     static let vocabLearningStoreDidChange = Notification.Name("vocabLearningStoreDidChange")
@@ -265,13 +266,21 @@ enum VocabMutationAuthority: Equatable, Sendable {
 }
 
 enum VocabMutationAuthorityRuntime {
+    /// The process's validation epoch and the epoch authorized for mutation.
+    private struct Epochs {
+        var validation = UUID()
+        var authorized: UUID?
+
+        var isAuthorized: Bool { authorized == validation }
+    }
+
     private static let store = VocabMutationLeaseStore()
-    private static let lock = NSLock()
-    private static var validationEpoch = UUID()
-    private static var authorizedEpoch: UUID?
+    /// Read synchronously from mutation checks on any thread, so a `Mutex`
+    /// (short, non-suspending critical sections) rather than an actor.
+    private static let epochs = Mutex(Epochs())
 
     static var current: VocabMutationAuthority {
-        let epochIsAuthorized = lock.withLock { authorizedEpoch == validationEpoch }
+        let epochIsAuthorized = epochs.withLock { $0.isAuthorized }
         return epochIsAuthorized && store.load() != nil ? .allowed : .integrityBlocked
     }
 
@@ -280,10 +289,7 @@ enum VocabMutationAuthorityRuntime {
     }
 
     static func invalidate() {
-        lock.withLock {
-            validationEpoch = UUID()
-            authorizedEpoch = nil
-        }
+        epochs.withLock { $0 = Epochs() }
         store.invalidate()
     }
 
@@ -304,10 +310,9 @@ enum VocabMutationAuthorityRuntime {
 
     @discardableResult
     static func beginLaunchValidationEpoch() -> UUID {
-        lock.withLock {
-            validationEpoch = UUID()
-            authorizedEpoch = nil
-            return validationEpoch
+        epochs.withLock { state in
+            state = Epochs()
+            return state.validation
         }
     }
 
@@ -329,7 +334,7 @@ enum VocabMutationAuthorityRuntime {
                VocabFullAuditReceipt.storeIdentity(lease.storeIdentity, matches: storeIdentity),
                lease.bootstrapUUID == metadata.bootstrapUUID,
                lease.schemaVersion == metadata.schemaVersion {
-                lock.withLock { authorizedEpoch = validationEpoch }
+                epochs.withLock { $0.authorized = $0.validation }
                 return true
             }
             guard let receipt = try VocabFullAuditReceiptStore.load(
@@ -361,13 +366,13 @@ enum VocabMutationAuthorityRuntime {
     }
 
     static var currentValidationEpoch: UUID {
-        lock.withLock { validationEpoch }
+        epochs.withLock { $0.validation }
     }
 
     static func prepareForFullAudit() -> UUID {
-        let epoch = lock.withLock { () -> UUID in
-            authorizedEpoch = nil
-            return validationEpoch
+        let epoch = epochs.withLock { state in
+            state.authorized = nil
+            return state.validation
         }
         store.invalidate()
         return epoch
@@ -388,7 +393,7 @@ enum VocabMutationAuthorityRuntime {
         receipt: VocabFullAuditReceipt,
         validationEpoch expectedEpoch: UUID
     ) throws {
-        guard lock.withLock({ validationEpoch == expectedEpoch }) else {
+        guard epochs.withLock({ $0.validation == expectedEpoch }) else {
             store.invalidate()
             return
         }
@@ -405,14 +410,14 @@ enum VocabMutationAuthorityRuntime {
             canonicalFingerprint: receipt.canonicalFingerprint,
             issuedAt: receipt.auditedAt
         ))
-        lock.withLock {
-            if validationEpoch == expectedEpoch { authorizedEpoch = expectedEpoch }
+        epochs.withLock { state in
+            if state.validation == expectedEpoch { state.authorized = expectedEpoch }
         }
     }
 
     static func permitsMutation(container: ModelContainer, context: ModelContext) -> Bool {
         do {
-            guard lock.withLock({ authorizedEpoch == validationEpoch }) else {
+            guard epochs.withLock({ $0.isAuthorized }) else {
                 return false
             }
             guard let lease = store.load(),
@@ -3328,8 +3333,6 @@ enum VocabCloudReconciler {
 
 @ModelActor
 actor VocabMasteryCleanupWorker {
-    private let createdOnMainThread = Thread.isMainThread
-
     func run(
         syncMode: VocabSyncMode,
         now: Date = .now
@@ -3339,15 +3342,10 @@ actor VocabMasteryCleanupWorker {
             syncMode: syncMode
         ).normalizeAndRetireMasteredWords(now: now)
     }
-
-    func wasCreatedOnMainThread() -> Bool {
-        createdOnMainThread
-    }
 }
 
 @ModelActor
 actor VocabCloudReconciliationWorker {
-    private let createdOnMainThread = Thread.isMainThread
     private let auditBatchSize = 500
 
     func hydrationStatus(syncMode: VocabSyncMode) throws -> VocabHydrationStatus {
@@ -3743,10 +3741,6 @@ actor VocabCloudReconciliationWorker {
             throw error
         }
     }
-
-    func wasCreatedOnMainThread() -> Bool {
-        createdOnMainThread
-    }
 }
 
 protocol VocabStableIdentifiedRecord: AnyObject {
@@ -3867,27 +3861,20 @@ extension MemoryAidCacheRecord: VocabSoftDeletableRecord {
     }
 }
 
+/// A `@ModelActor` serializes on the thread that creates it, so creating a
+/// worker from the main actor would run its store work on the main thread.
+/// The `@concurrent` factories run the initializer on the global executor.
 enum VocabCloudReconciliationWorkerFactory {
+    @concurrent
     static func make(modelContainer: ModelContainer) async -> VocabCloudReconciliationWorker {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                continuation.resume(
-                    returning: VocabCloudReconciliationWorker(modelContainer: modelContainer)
-                )
-            }
-        }
+        VocabCloudReconciliationWorker(modelContainer: modelContainer)
     }
 }
 
 enum VocabMasteryCleanupWorkerFactory {
+    @concurrent
     static func make(modelContainer: ModelContainer) async -> VocabMasteryCleanupWorker {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                continuation.resume(
-                    returning: VocabMasteryCleanupWorker(modelContainer: modelContainer)
-                )
-            }
-        }
+        VocabMasteryCleanupWorker(modelContainer: modelContainer)
     }
 }
 

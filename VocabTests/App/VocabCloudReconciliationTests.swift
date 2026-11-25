@@ -2,8 +2,30 @@ import SwiftData
 import XCTest
 @testable import Vocab
 
+extension VocabCloudReconciliationWorker {
+    /// Runs on the actor's executor, so it reports where reconciliation runs.
+    func runsOnMainThread() -> Bool {
+        Thread.isMainThread
+    }
+}
+
+extension VocabMasteryCleanupWorker {
+    /// Runs on the actor's executor, so it reports where cleanup runs.
+    func runsOnMainThread() -> Bool {
+        Thread.isMainThread
+    }
+}
+
 @MainActor
 final class VocabCloudReconciliationTests: XCTestCase {
+    func testMasteryCleanupWorkerRunsOffTheMainThread() async throws {
+        let worker = await VocabMasteryCleanupWorkerFactory.make(modelContainer: try makeContext().container)
+
+        let runsOnMainThread = await worker.runsOnMainThread()
+
+        XCTAssertFalse(runsOnMainThread)
+    }
+
     func testCooperativeDeletionAppliesTombstonesAcrossBoundedBatches() async throws {
         let context = try makeContext()
         let deletedAt = Date(timeIntervalSince1970: 100)
@@ -846,8 +868,8 @@ final class VocabCloudReconciliationTests: XCTestCase {
         let worker = await VocabCloudReconciliationWorkerFactory.make(
             modelContainer: container
         )
-        let wasCreatedOnMainThread = await worker.wasCreatedOnMainThread()
-        XCTAssertFalse(wasCreatedOnMainThread)
+        let runsOnMainThread = await worker.runsOnMainThread()
+        XCTAssertFalse(runsOnMainThread)
 
         let heartbeat = Task { @MainActor in
             var previous = Date.now
