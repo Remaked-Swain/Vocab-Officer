@@ -1,7 +1,7 @@
 #if os(macOS)
 import CryptoKit
-import Combine
 import Foundation
+import Observation
 import SQLite3
 import SwiftData
 
@@ -708,9 +708,10 @@ actor VocabExplicitRecoveryService {
 }
 
 @MainActor
-final class VocabApplicationStoreBoundary: ObservableObject {
-    @Published private(set) var launch: VocabLaunchPlan?
-    private let reopen: () -> VocabLaunchPlan
+@Observable
+final class VocabApplicationStoreBoundary {
+    private(set) var launch: VocabLaunchPlan?
+    @ObservationIgnored private let reopen: () -> VocabLaunchPlan
 
     convenience init() {
         if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil {
@@ -1022,12 +1023,12 @@ actor VocabRecoveryReplicaWorker {
 }
 
 enum VocabRecoveryReplicaWorkerFactory {
+    /// A `@ModelActor` serializes on the thread that creates it, so creating
+    /// it from the main actor would run replica work on the main thread.
+    /// `@concurrent` runs the initializer on the global executor instead.
+    @concurrent
     static func make(modelContainer: ModelContainer) async -> VocabRecoveryReplicaWorker {
-        await withCheckedContinuation { continuation in
-            DispatchQueue.global(qos: .utility).async {
-                continuation.resume(returning: VocabRecoveryReplicaWorker(modelContainer: modelContainer))
-            }
-        }
+        VocabRecoveryReplicaWorker(modelContainer: modelContainer)
     }
 }
 #endif

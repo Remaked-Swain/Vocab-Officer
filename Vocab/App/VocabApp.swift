@@ -4,7 +4,7 @@ import SwiftUI
 
 @main
 struct VocabApp: App {
-    @StateObject private var storeBoundary = VocabApplicationStoreBoundary()
+    @State private var storeBoundary = VocabApplicationStoreBoundary()
 
     var body: some Scene {
         WindowGroup("Vocab", id: "main") {
