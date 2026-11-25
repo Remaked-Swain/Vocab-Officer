@@ -177,6 +177,43 @@ actor VocabCloudReconciliationWorker {
         )
     }
 
+    /// Records a completed full audit: a receipt for the audited content, the
+    /// mutation lease bound to it, then the runtime audit timestamp.
+    private func recordCompletedFullAudit(
+        now: Date,
+        auditReceiptURL: URL?,
+        validationEpoch: UUID,
+        runtimeStateStore: VocabSyncRuntimeStateStore
+    ) async throws {
+        let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: modelContext, exportedAt: now)
+        guard let bootstrapUUID = snapshot.syncMetadata?.bootstrapUUID else {
+            throw VocabCloudReconciliationError.hydrationNotReady(.awaitingBootstrapMetadata)
+        }
+        let receipt = VocabFullAuditReceipt(
+            formatVersion: VocabFullAuditReceipt.currentFormatVersion,
+            storeIdentity: VocabFullAuditReceipt.storeIdentity(for: modelContainer),
+            bootstrapUUID: bootstrapUUID,
+            schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
+            importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
+            canonicalFingerprint: try snapshot.contentFingerprint(),
+            expectedCounts: VocabRequiredIDDigest.counts(snapshot: snapshot),
+            requiredIDDigest: VocabRequiredIDDigest.make(snapshot: snapshot),
+            auditedAt: now
+        )
+        try VocabFullAuditReceiptStore.save(
+            receipt,
+            to: try auditReceiptURL ?? VocabFullAuditReceiptStore.defaultURL()
+        )
+        try VocabMutationAuthorityRuntime.authorize(
+            container: modelContainer,
+            context: modelContext,
+            receipt: receipt,
+            validationEpoch: validationEpoch
+        )
+        await runtimeStateStore.markFullAuditCompleted(at: now)
+    }
+
     private func forEachBatch<T: PersistentModel & VocabStableIdentifiedRecord>(
         _ type: T.Type,
         body: ([T]) throws -> Void
@@ -256,33 +293,12 @@ actor VocabCloudReconciliationWorker {
                     index,
                     to: try indexURL ?? VocabImportedChangeIndexStore.defaultURL()
                 )
-                let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: modelContext, exportedAt: now)
-                guard let bootstrapUUID = snapshot.syncMetadata?.bootstrapUUID else {
-                    throw VocabCloudReconciliationError.hydrationNotReady(.awaitingBootstrapMetadata)
-                }
-                let receipt = VocabFullAuditReceipt(
-                    formatVersion: VocabFullAuditReceipt.currentFormatVersion,
-                    storeIdentity: VocabFullAuditReceipt.storeIdentity(for: modelContainer),
-                    bootstrapUUID: bootstrapUUID,
-                    schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
-                    reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
-                    importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
-                    canonicalFingerprint: try snapshot.contentFingerprint(),
-                    expectedCounts: VocabRequiredIDDigest.counts(snapshot: snapshot),
-                    requiredIDDigest: VocabRequiredIDDigest.make(snapshot: snapshot),
-                    auditedAt: now
+                try await recordCompletedFullAudit(
+                    now: now,
+                    auditReceiptURL: auditReceiptURL,
+                    validationEpoch: validationEpoch!,
+                    runtimeStateStore: .shared
                 )
-                try VocabFullAuditReceiptStore.save(
-                    receipt,
-                    to: try auditReceiptURL ?? VocabFullAuditReceiptStore.defaultURL()
-                )
-                try VocabMutationAuthorityRuntime.authorize(
-                    container: modelContainer,
-                    context: modelContext,
-                    receipt: receipt,
-                    validationEpoch: validationEpoch!
-                )
-                await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted(at: now)
                 if let auditedHistoryToken {
                     try VocabImportHistoryCursorStore.save(
                         auditedHistoryToken,
@@ -383,33 +399,12 @@ actor VocabCloudReconciliationWorker {
             let validationEpoch = VocabMutationAuthorityRuntime.prepareForFullAudit()
             result = try await reconcileFullCooperatively(syncMode: syncMode, now: now)
             let auditedIndex = try await fullImportIndexCooperatively()
-            let snapshot = try VocabSyncSnapshotService.exportSnapshot(context: modelContext, exportedAt: now)
-            guard let bootstrapUUID = snapshot.syncMetadata?.bootstrapUUID else {
-                throw VocabCloudReconciliationError.hydrationNotReady(.awaitingBootstrapMetadata)
-            }
-            let receipt = VocabFullAuditReceipt(
-                formatVersion: VocabFullAuditReceipt.currentFormatVersion,
-                storeIdentity: VocabFullAuditReceipt.storeIdentity(for: modelContainer),
-                bootstrapUUID: bootstrapUUID,
-                schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
-                reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
-                importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
-                canonicalFingerprint: try snapshot.contentFingerprint(),
-                expectedCounts: VocabRequiredIDDigest.counts(snapshot: snapshot),
-                requiredIDDigest: VocabRequiredIDDigest.make(snapshot: snapshot),
-                auditedAt: now
+            try await recordCompletedFullAudit(
+                now: now,
+                auditReceiptURL: auditReceiptURL,
+                validationEpoch: validationEpoch,
+                runtimeStateStore: runtimeStateStore
             )
-            try VocabFullAuditReceiptStore.save(
-                receipt,
-                to: try auditReceiptURL ?? VocabFullAuditReceiptStore.defaultURL()
-            )
-            try VocabMutationAuthorityRuntime.authorize(
-                container: modelContainer,
-                context: modelContext,
-                receipt: receipt,
-                validationEpoch: validationEpoch
-            )
-            await runtimeStateStore.markFullAuditCompleted(at: now)
             try VocabImportedChangeIndexStore.save(auditedIndex, to: resolvedURL)
         } else {
             result = try VocabCloudReconciler.reconcileAffected(

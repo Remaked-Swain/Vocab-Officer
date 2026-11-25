@@ -413,6 +413,26 @@ final class LearningCoordinator {
     func generateSession(mode: SessionMode, direction: PracticeDirection, setID: UUID? = nil, date: Date = .now, format: QuestionFormat = .typed) throws -> (TestSessionRecord, [SessionQuestion]) {
         try requireLearningFactWriting()
         let day = SeoulCalendar.day(for: date)
+        let candidates = try sessionCandidates(mode: mode, setID: setID, day: day, date: date)
+        return try startSession(
+            selecting: candidates.selected,
+            from: candidates.pool,
+            mode: mode,
+            direction: direction,
+            format: format,
+            day: day,
+            date: date
+        )
+    }
+
+    /// Selects up to 20 words for `mode` under the session policy; `pool` is
+    /// every word a multiple-choice distractor may come from.
+    private func sessionCandidates(
+        mode: SessionMode,
+        setID: UUID?,
+        day: String,
+        date: Date
+    ) throws -> (selected: [WordRecord], pool: [WordRecord]) {
         let words = try activeWords()
         let maintenanceWords: [WordRecord]
         switch mode {
@@ -559,16 +579,30 @@ final class LearningCoordinator {
             )
             selected = selectedIDs.compactMap { wordsByID[$0] ?? maintenanceWordsByID[$0] }
         }
+        return (selected, words + maintenanceWords)
+    }
+
+    /// Persists a session for the questions that could be built from the
+    /// candidates; with none it throws `noSessionCandidates` and saves nothing.
+    private func startSession(
+        selecting candidates: [WordRecord],
+        from pool: [WordRecord],
+        mode: SessionMode,
+        direction: PracticeDirection,
+        format: QuestionFormat,
+        day: String,
+        date: Date
+    ) throws -> (TestSessionRecord, [SessionQuestion]) {
         let sessionID = UUID()
         let questions = makeQuestions(
-            selected: selected,
-            allWords: words + maintenanceWords,
+            selected: candidates,
+            allWords: pool,
             direction: direction,
             format: format,
             sessionID: sessionID
         )
         guard !questions.isEmpty else { throw LearningError.noSessionCandidates }
-        selected = questions.map(\.word)
+        let selected = questions.map(\.word)
         let session = TestSessionRecord(id: sessionID, directionRaw: direction.rawValue, modeRaw: mode.rawValue, seoulDay: day, wordIDs: selected.map(\.id), wasReduced: selected.count < 20, startedAt: date, questionFormatRaw: format.rawValue)
         context.insert(session)
         recordPresentation(for: selected, at: date)

@@ -106,18 +106,26 @@ enum VocabSyncSnapshotService {
         onlyInsertMissing: Bool = false
     ) throws {
         try validate(snapshot)
+        // Each importer fetches its own record type before inserting it; no
+        // importer inserts another importer's type, so fetch order is free.
+        if includeSyncMetadata {
+            try importSyncMetadata(snapshot, context: context, onlyInsertMissing: onlyInsertMissing)
+        }
+        let wordsByID = try importWords(snapshot, context: context, onlyInsertMissing: onlyInsertMissing)
+        try importDailySets(snapshot, wordsByID: wordsByID, context: context, onlyInsertMissing: onlyInsertMissing)
+        try importTestSessions(snapshot, context: context, onlyInsertMissing: onlyInsertMissing)
+        try importAttempts(snapshot, wordsByID: wordsByID, context: context, onlyInsertMissing: onlyInsertMissing)
+        try importAnonymousAggregates(snapshot, context: context, onlyInsertMissing: onlyInsertMissing)
+        try importMemoryAidCaches(snapshot, context: context, onlyInsertMissing: onlyInsertMissing)
+        try importTombstones(snapshot, context: context, onlyInsertMissing: onlyInsertMissing)
+    }
 
-        let existingWords = indexByID(try context.fetch(FetchDescriptor<WordRecord>()), id: \.id)
-        let existingMeanings = indexByID(try context.fetch(FetchDescriptor<MeaningRecord>()), id: \.id)
-        let existingSets = indexByID(try context.fetch(FetchDescriptor<DailySetRecord>()), id: \.id)
-        let existingItems = indexByID(try context.fetch(FetchDescriptor<DailySetItemRecord>()), id: \.id)
-        let existingSessions = indexByID(try context.fetch(FetchDescriptor<TestSessionRecord>()), id: \.id)
-        let existingAttempts = indexByID(try context.fetch(FetchDescriptor<AttemptRecord>()), id: \.id)
-        let existingAggregates = indexByID(try context.fetch(FetchDescriptor<AnonymousAggregateRecord>()), id: \.id)
-        let existingCaches = indexByID(try context.fetch(FetchDescriptor<MemoryAidCacheRecord>()), id: \.id)
-        let existingTombstones = indexByID(try context.fetch(FetchDescriptor<RecordTombstone>()), id: \.id)
-
-        if includeSyncMetadata, let payload = snapshot.syncMetadata {
+    nonisolated private static func importSyncMetadata(
+        _ snapshot: VocabSyncSnapshot,
+        context: ModelContext,
+        onlyInsertMissing: Bool
+    ) throws {
+        if let payload = snapshot.syncMetadata {
             let existingMetadata = try context.fetch(FetchDescriptor<CloudBootstrapRecord>())
                 .first { $0.bootstrapUUID == payload.bootstrapUUID }
             let metadata = existingMetadata ?? CloudBootstrapRecord(
@@ -144,7 +152,17 @@ enum VocabSyncSnapshotService {
             }
             if existingMetadata == nil { context.insert(metadata) }
         }
+    }
 
+    /// Imports words with their meanings and review states; returns every
+    /// imported word by ID for the importers that link to words.
+    nonisolated private static func importWords(
+        _ snapshot: VocabSyncSnapshot,
+        context: ModelContext,
+        onlyInsertMissing: Bool
+    ) throws -> [UUID: WordRecord] {
+        let existingWords = indexByID(try context.fetch(FetchDescriptor<WordRecord>()), id: \.id)
+        let existingMeanings = indexByID(try context.fetch(FetchDescriptor<MeaningRecord>()), id: \.id)
         var wordsByID: [UUID: WordRecord] = [:]
         for payload in snapshot.words {
             let existingWord = existingWords[payload.id]
@@ -209,7 +227,17 @@ enum VocabSyncSnapshotService {
             if existingWord == nil { context.insert(word) }
             wordsByID[word.id] = word
         }
+        return wordsByID
+    }
 
+    nonisolated private static func importDailySets(
+        _ snapshot: VocabSyncSnapshot,
+        wordsByID: [UUID: WordRecord],
+        context: ModelContext,
+        onlyInsertMissing: Bool
+    ) throws {
+        let existingSets = indexByID(try context.fetch(FetchDescriptor<DailySetRecord>()), id: \.id)
+        let existingItems = indexByID(try context.fetch(FetchDescriptor<DailySetItemRecord>()), id: \.id)
         for payload in snapshot.dailySets {
             let existingSet = existingSets[payload.id]
             let set = existingSet ?? DailySetRecord(seoulDay: payload.seoulDay, createdAt: payload.createdAt)
@@ -246,7 +274,14 @@ enum VocabSyncSnapshotService {
 
             if existingSet == nil { context.insert(set) }
         }
+    }
 
+    nonisolated private static func importTestSessions(
+        _ snapshot: VocabSyncSnapshot,
+        context: ModelContext,
+        onlyInsertMissing: Bool
+    ) throws {
+        let existingSessions = indexByID(try context.fetch(FetchDescriptor<TestSessionRecord>()), id: \.id)
         for payload in snapshot.testSessions {
             let existingSession = existingSessions[payload.id]
             let session = existingSession ?? TestSessionRecord(
@@ -274,7 +309,15 @@ enum VocabSyncSnapshotService {
             }
             if existingSession == nil { context.insert(session) }
         }
+    }
 
+    nonisolated private static func importAttempts(
+        _ snapshot: VocabSyncSnapshot,
+        wordsByID: [UUID: WordRecord],
+        context: ModelContext,
+        onlyInsertMissing: Bool
+    ) throws {
+        let existingAttempts = indexByID(try context.fetch(FetchDescriptor<AttemptRecord>()), id: \.id)
         for payload in snapshot.attempts {
             let existingAttempt = existingAttempts[payload.id]
             let attempt = existingAttempt ?? AttemptRecord(
@@ -317,7 +360,14 @@ enum VocabSyncSnapshotService {
             }
             if existingAttempt == nil { context.insert(attempt) }
         }
+    }
 
+    nonisolated private static func importAnonymousAggregates(
+        _ snapshot: VocabSyncSnapshot,
+        context: ModelContext,
+        onlyInsertMissing: Bool
+    ) throws {
+        let existingAggregates = indexByID(try context.fetch(FetchDescriptor<AnonymousAggregateRecord>()), id: \.id)
         for payload in snapshot.anonymousAggregates {
             let existingAggregate = existingAggregates[payload.id]
             let aggregate = existingAggregate ?? AnonymousAggregateRecord(seoulDay: payload.seoulDay, modeRaw: payload.modeRaw)
@@ -335,7 +385,14 @@ enum VocabSyncSnapshotService {
             }
             if existingAggregate == nil { context.insert(aggregate) }
         }
+    }
 
+    nonisolated private static func importMemoryAidCaches(
+        _ snapshot: VocabSyncSnapshot,
+        context: ModelContext,
+        onlyInsertMissing: Bool
+    ) throws {
+        let existingCaches = indexByID(try context.fetch(FetchDescriptor<MemoryAidCacheRecord>()), id: \.id)
         for payload in snapshot.memoryAidCaches {
             let existingCache = existingCaches[payload.id]
             let cache = existingCache ?? MemoryAidCacheRecord(
@@ -360,6 +417,14 @@ enum VocabSyncSnapshotService {
             }
             if existingCache == nil { context.insert(cache) }
         }
+    }
+
+    nonisolated private static func importTombstones(
+        _ snapshot: VocabSyncSnapshot,
+        context: ModelContext,
+        onlyInsertMissing: Bool
+    ) throws {
+        let existingTombstones = indexByID(try context.fetch(FetchDescriptor<RecordTombstone>()), id: \.id)
         for payload in snapshot.tombstones {
             let existingTombstone = existingTombstones[payload.id]
             let tombstone = existingTombstone ?? RecordTombstone(
