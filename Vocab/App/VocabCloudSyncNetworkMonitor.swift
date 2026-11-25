@@ -49,7 +49,10 @@ enum VocabCloudSyncNetworkMonitor {
     /// stays due and is retried on the next lifecycle trigger.
     /// Local work never reads network fields, so this skips starting an
     /// `NWPathMonitor` on every lifecycle trigger.
-    static func deferral(forLocalWork work: VocabSyncWork) async -> VocabSyncDeferral? {
+    static func deferral(
+        forLocalWork work: VocabSyncWork,
+        isUserInitiated: Bool = false
+    ) async -> VocabSyncDeferral? {
         let battery = await currentBattery()
         return VocabSyncWorkPolicy.deferral(
             for: work,
@@ -57,7 +60,8 @@ enum VocabCloudSyncNetworkMonitor {
                 thermalState: ProcessInfo.processInfo.thermalState,
                 isLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
                 batteryLevel: battery.level,
-                isCharging: battery.isCharging
+                isCharging: battery.isCharging,
+                isUserInitiated: isUserInitiated
             )
         )
     }
