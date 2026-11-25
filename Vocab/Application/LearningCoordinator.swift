@@ -458,6 +458,8 @@ struct VocabMutationLease: Codable, Equatable, Sendable {
 
 struct VocabMutationLeaseStore {
     private static let key = "vocabSyncRuntime.mutationLease.v1"
+    /// Receipt files that could not be deleted on invalidation.
+    private static let revokedReceiptsKey = "vocabSyncRuntime.revokedAuditReceipts.v1"
     private let defaults: UserDefaults
 
     init(defaults: UserDefaults = Self.defaultDefaults()) {
@@ -472,11 +474,14 @@ struct VocabMutationLeaseStore {
         return UserDefaults(suiteName: suiteName) ?? .standard
     }
 
+    /// An unreadable lease is no lease: authority fails closed to the audit
+    /// receipt or a fresh audit.
     func load() -> VocabMutationLease? {
         guard let data = defaults.data(forKey: Self.key) else { return nil }
         return try? JSONDecoder().decode(VocabMutationLease.self, from: data)
     }
 
+    /// An unsaved lease only costs the next launch a receipt check or audit.
     func save(_ lease: VocabMutationLease) {
         guard let data = try? JSONEncoder().encode(lease) else { return }
         defaults.set(data, forKey: Self.key)
@@ -484,6 +489,30 @@ struct VocabMutationLeaseStore {
 
     func invalidate() {
         defaults.removeObject(forKey: Self.key)
+    }
+
+    func revokeReceipt(at url: URL) {
+        var paths = revokedReceiptPaths()
+        paths.insert(Self.receiptPath(url))
+        defaults.set(paths.sorted(), forKey: Self.revokedReceiptsKey)
+    }
+
+    func isReceiptRevoked(at url: URL) -> Bool {
+        revokedReceiptPaths().contains(Self.receiptPath(url))
+    }
+
+    func clearReceiptRevocation(at url: URL) {
+        var paths = revokedReceiptPaths()
+        guard paths.remove(Self.receiptPath(url)) != nil else { return }
+        defaults.set(paths.sorted(), forKey: Self.revokedReceiptsKey)
+    }
+
+    private func revokedReceiptPaths() -> Set<String> {
+        Set(defaults.stringArray(forKey: Self.revokedReceiptsKey) ?? [])
+    }
+
+    private static func receiptPath(_ url: URL) -> String {
+        url.standardizedFileURL.resolvingSymlinksInPath().path
     }
 
     static func activeMetadata(context: ModelContext) throws -> CloudBootstrapRecord? {
@@ -2862,8 +2891,13 @@ enum VocabFullAuditReceiptStore {
         return root.appendingPathComponent("full-audit-receipt-v1.json")
     }
 
+    /// Revocations live in the lease store's defaults, which cannot fail to
+    /// write, so a receipt file that survives invalidation stays unusable.
+    private static let revocations = VocabMutationLeaseStore()
+
     static func load(from url: URL) throws -> VocabFullAuditReceipt? {
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
+        guard FileManager.default.fileExists(atPath: url.path),
+              !revocations.isReceiptRevoked(at: url) else { return nil }
         return try JSONDecoder.vocabSnapshotDecoder.decode(
             VocabFullAuditReceipt.self,
             from: Data(contentsOf: url)
@@ -2873,15 +2907,26 @@ enum VocabFullAuditReceiptStore {
     static func save(_ receipt: VocabFullAuditReceipt, to url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try JSONEncoder.vocabSnapshotEncoder.encode(receipt).write(to: url, options: .atomic)
+        revocations.clearReceiptRevocation(at: url)
     }
 
     static func invalidateDefault() {
+        // Without Application Support no receipt can be loaded either:
+        // restoration resolves the same URL and fails closed.
         guard let url = try? defaultURL() else { return }
         invalidate(at: url)
     }
 
+    /// A receipt alone reauthorizes mutations at cold launch, so one that
+    /// cannot be deleted is revoked instead of silently left valid.
     static func invalidate(at url: URL) {
-        try? FileManager.default.removeItem(at: url)
+        do {
+            try FileManager.default.removeItem(at: url)
+        } catch let error as CocoaError where error.code == .fileNoSuchFile {
+            return
+        } catch {
+            revocations.revokeReceipt(at: url)
+        }
     }
 }
 

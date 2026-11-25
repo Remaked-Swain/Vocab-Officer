@@ -670,6 +670,89 @@ final class VocabCloudReconciliationTests: XCTestCase {
         ))
     }
 
+    func testReceiptThatCannotBeDeletedIsRevokedUntilANewAuditWritesOne() async throws {
+        let context = try makeContext()
+        let metadata = readyMetadata()
+        metadata.schemaVersion = VocabCloudReconciler.metadataSchemaVersion + 1
+        context.insert(metadata)
+        try context.save()
+
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabUndeletableReceipt-\(UUID().uuidString)", isDirectory: true)
+        let receiptDirectory = root.appendingPathComponent("SyncRuntime", isDirectory: true)
+        try FileManager.default.createDirectory(at: receiptDirectory, withIntermediateDirectories: true)
+        let receiptURL = receiptDirectory.appendingPathComponent("receipt.json")
+        let staleReceipt = VocabFullAuditReceipt(
+            formatVersion: VocabFullAuditReceipt.currentFormatVersion,
+            storeIdentity: VocabFullAuditReceipt.storeIdentity(for: context.container),
+            bootstrapUUID: metadata.bootstrapUUID,
+            schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
+            importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
+            canonicalFingerprint: "stale",
+            auditedAt: .now
+        )
+        try VocabFullAuditReceiptStore.save(staleReceipt, to: receiptURL)
+        // A read-only directory makes the receipt's deletion fail.
+        try FileManager.default.setAttributes([.posixPermissions: 0o500], ofItemAtPath: receiptDirectory.path)
+        addTeardownBlock {
+            try? FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: receiptDirectory.path)
+            try? FileManager.default.removeItem(at: root)
+        }
+
+        let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: context.container)
+        do {
+            _ = try await worker.auditAll(
+                syncMode: .cloudKitPrivate,
+                indexURL: root.appendingPathComponent("index.json"),
+                auditReceiptURL: receiptURL
+            )
+            XCTFail("Expected unsupported schema to fail the maintenance audit")
+        } catch {
+            XCTAssertNotNil(error as? VocabCloudReconciliationError)
+        }
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: receiptURL.path))
+        XCTAssertNil(try VocabFullAuditReceiptStore.load(from: receiptURL))
+        VocabMutationAuthorityRuntime.beginLaunchValidationEpoch()
+        XCTAssertFalse(VocabMutationAuthorityRuntime.restorePersistedAuthorization(
+            container: context.container,
+            context: context,
+            receiptURL: receiptURL
+        ))
+
+        // A receipt written by a later successful audit is usable again.
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: receiptDirectory.path)
+        try VocabFullAuditReceiptStore.save(staleReceipt, to: receiptURL)
+        let reloaded = try XCTUnwrap(VocabFullAuditReceiptStore.load(from: receiptURL))
+        XCTAssertEqual(reloaded.bootstrapUUID, staleReceipt.bootstrapUUID)
+        XCTAssertEqual(reloaded.canonicalFingerprint, staleReceipt.canonicalFingerprint)
+    }
+
+    func testInvalidatingAMissingReceiptRevokesNothing() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VocabMissingReceipt-\(UUID().uuidString)", isDirectory: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        let receiptURL = root.appendingPathComponent("receipt.json")
+
+        VocabFullAuditReceiptStore.invalidate(at: receiptURL)
+
+        // Written directly, bypassing `save`, which would clear a revocation.
+        let receipt = VocabFullAuditReceipt(
+            formatVersion: VocabFullAuditReceipt.currentFormatVersion,
+            storeIdentity: "store",
+            bootstrapUUID: UUID(),
+            schemaVersion: VocabCloudReconciler.metadataSchemaVersion,
+            reconciliationVersion: VocabFullAuditReceipt.reconciliationVersion,
+            importIndexFormatVersion: VocabImportedChangeIndex.currentFormatVersion,
+            canonicalFingerprint: "fresh",
+            auditedAt: .now
+        )
+        try JSONEncoder.vocabSnapshotEncoder.encode(receipt).write(to: receiptURL)
+        XCTAssertNotNil(try VocabFullAuditReceiptStore.load(from: receiptURL))
+    }
+
     func testTransientMaintenanceReceiptWriteFailurePreservesAuthority() async throws {
         let context = try makeContext()
         let metadata = readyMetadata()

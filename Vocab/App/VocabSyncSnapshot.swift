@@ -1272,6 +1272,7 @@ enum VocabStoreMigrationService {
             requestID: claimRequest.requestID,
             fingerprint: sourceFingerprint,
             receiptMatches: { boundary in
+                // A failed fetch is "no match yet": never proof of export.
                 let receipts = try? mirroredContext.fetch(FetchDescriptor<BootstrapExportReceipt>())
                 return receipts?.filter {
                     $0.requestID == boundary.requestID

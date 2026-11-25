@@ -1055,6 +1055,7 @@ enum VocabBootstrapActivationService {
             requestID: claim.request.requestID,
             fingerprint: claim.request.sourceFingerprint,
             receiptMatches: { boundary in
+                // A failed fetch is "no match yet": never proof of export.
                 let receipts = try? mirroredContext.fetch(FetchDescriptor<BootstrapExportReceipt>())
                 return receipts?.contains {
                     $0.requestID == boundary.requestID

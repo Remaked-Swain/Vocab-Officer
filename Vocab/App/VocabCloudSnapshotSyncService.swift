@@ -90,11 +90,14 @@ struct VocabCloudBatchSyncUserDefaultsStore: VocabCloudBatchSyncStateStoring {
         self.defaults = defaults
     }
 
+    /// An unreadable cursor is no baseline: differing snapshots then plan a
+    /// `.conflict`, never a download or upload.
     func loadCursor() -> VocabCloudBatchSyncCursor? {
         guard let data = defaults.data(forKey: Self.cursorKey) else { return nil }
         return try? JSONDecoder.vocabSnapshotDecoder.decode(VocabCloudBatchSyncCursor.self, from: data)
     }
 
+    /// A stale cursor makes later diverging changes a `.conflict`.
     func saveCursor(_ cursor: VocabCloudBatchSyncCursor) {
         guard let data = try? JSONEncoder.vocabSnapshotEncoder.encode(cursor) else { return }
         defaults.set(data, forKey: Self.cursorKey)
