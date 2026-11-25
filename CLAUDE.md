@@ -47,11 +47,17 @@ its area rule under `## Pitfalls` as one line with the commit hash.
 
 ## Git
 
+- One work unit maps 1:1:1 to an issue, a branch and a PR. Smaller pieces of
+  the same unit are separate commits on that branch, never separate or
+  stacked branches and PRs.
 - Commits: `type(scope): imperative summary` (`feat`, `fix`, `refactor`,
   `docs`, `chore`, `test`); the body states why. Audited commits end with
   `Audit: approved`. One logical change per commit.
-- PRs target `develop`; the description lists changed areas, verification
-  run and residual risk. Issues state observed vs expected behavior.
+- PRs target `develop`; the description lists changed areas, the
+  improvement achieved (measured before/after where possible), its limits
+  and residual risk, the reason behind each design decision (including
+  alternatives considered and rejected), and the verification run. Issues
+  state observed vs expected behavior.
 
 ## Agents And Tools
 
