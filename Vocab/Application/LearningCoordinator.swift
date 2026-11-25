@@ -5,7 +5,8 @@ import SwiftData
 import Synchronization
 
 extension Notification.Name {
-    static let vocabLearningStoreDidChange = Notification.Name("vocabLearningStoreDidChange")
+    /// Consumed by `VocabStoreChangeMonitor`; store changes themselves are
+    /// observed through `ModelContext.didSave`.
     static let vocabMasteryCleanupRequested = Notification.Name("vocabMasteryCleanupRequested")
 }
 
@@ -698,8 +699,8 @@ final class LearningCoordinator {
     }
 
     private func saveAndNotifyChange() throws {
+        // Observers learn of the save from `ModelContext.didSave`.
         try context.save()
-        NotificationCenter.default.post(name: .vocabLearningStoreDidChange, object: nil)
     }
 
     @discardableResult

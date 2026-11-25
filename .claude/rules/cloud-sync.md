@@ -83,6 +83,10 @@ paths:
   values. Tombstones apply after imports and deleted attempts are excluded
   from replay so older peers cannot resurrect retired content.
 - XCTest mutation-lease `UserDefaults` use process-scoped suites.
+- Root views receive store notifications only through
+  `VocabStoreChangeMonitor`: observers run on the posting thread (a save's
+  IDs are resolved on its own context) and yield `Sendable` events the views
+  handle on the main actor; never `.onReceive` a store notification.
 
 ## Status UI
 
@@ -97,6 +101,10 @@ detail-area banner is not copied to iPhone.
   edit, tombstones before destructive deletes). Real CloudKit open/close is
   opt-in via `VOCAB_RUN_CLOUDKIT_INTEGRATION=1`. Keep `localOnly` the default
   until signing, schema compatibility and first-device migration pass.
+- Known defect, pending a separate sync fix: `VocabModelContextChangeEvent`
+  reads `ModelContext.didSave` IDs as `Set<PersistentIdentifier>`, but
+  SwiftData delivers `[PersistentIdentifier]`, so every local save yields an
+  empty batch and `VocabImportedIdentifierBuffer` never receives save IDs.
 - Undecided: array fields (`successDays`, aliases, `wordIDs`) under
   concurrent edits; whether memory-aid caches and anonymous aggregates stay
   mirrored; in-process container rebuild vs restart on store switch.
