@@ -61,6 +61,13 @@ paths:
   `NSPersistentStoreRemoteChange` does not revoke authority. Explicit
   invalidation and real integrity failures revoke authority and the audit
   receipt; cancellation and transient filesystem errors preserve it.
+  Revocation fails closed: a receipt file that cannot be deleted is
+  recorded as revoked in the lease defaults and never loads until a new
+  audit writes a receipt at that path.
+- `try?` in sync and persistence code is allowed only where `nil` takes the
+  fail-closed path (no authority, no baseline, a conflict, a full audit, or
+  "not exported yet") or for best-effort cleanup of temporary files. Each
+  non-obvious site says which in a comment.
 - Cold launch reauthorizes from matching lease/receipt metadata without
   scanning vocabulary; mutation checks during that window return blocked
   without deleting the lease.
@@ -84,11 +91,13 @@ paths:
     writes costs one pass with no writes.
   - No cursor, a cursor from another store, pruned history, a hard delete,
     an unknown model, an unresolvable record or more than 2,000 changed
-    records request a deferred full audit. The cursor is read before a pass or audit writes
-  anything and saved only after it succeeds. Full audits run only while
-  inactive/backgrounded; returning active cancels cooperative maintenance.
-  Indexes, receipts and the cursor are written only after success.
-  Maintenance tasks use generation ownership.
+    records request a deferred full audit.
+  - The cursor is read before a pass or audit writes anything and saved
+    only after it succeeds; indexes and receipts are likewise written only
+    after success.
+  - Full audits run only while inactive/backgrounded; returning active
+    cancels cooperative maintenance. Maintenance tasks use generation
+    ownership.
 - macOS remote-change handling is debounced and single-flight; iOS bootstrap
   polling is foreground-only at 5/10/20/40/60 s and stops at
   ready/failed/cancel/background.
