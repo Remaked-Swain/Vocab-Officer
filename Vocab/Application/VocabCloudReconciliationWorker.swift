@@ -218,16 +218,14 @@ actor VocabCloudReconciliationWorker {
         _ type: T.Type,
         body: ([T]) throws -> Void
     ) async throws {
-        var offset = 0
-        while true {
-            var descriptor = FetchDescriptor<T>()
-            descriptor.sortBy = [SortDescriptor(\T.id, order: .forward)]
-            descriptor.fetchLimit = auditBatchSize
-            descriptor.fetchOffset = offset
-            let batch = try modelContext.fetch(descriptor)
-            guard !batch.isEmpty else { return }
-            try body(batch)
-            offset += batch.count
+        // One unsorted fetch, processed in chunks. A sorted `fetchOffset` page
+        // is evaluated in memory whenever the context holds unsaved changes,
+        // which made each page re-sort the whole table (#25). No caller
+        // depends on order: results go into dictionaries or replay, which
+        // sorts by its own key.
+        let records = try modelContext.fetch(FetchDescriptor<T>())
+        for start in stride(from: 0, to: records.count, by: auditBatchSize) {
+            try body(Array(records[start..<min(start + auditBatchSize, records.count)]))
             try Task.checkCancellation()
             await Task.yield()
         }

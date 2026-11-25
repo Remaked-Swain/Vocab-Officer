@@ -1070,6 +1070,32 @@ final class VocabCloudReconciliationTests: XCTestCase {
         ))
     }
 
+    /// Re-scrubbing an already scrubbed record must not dirty it: unsaved
+    /// no-op changes made every later sorted, offset-paged audit fetch run
+    /// in memory, so a real library's audit never finished (#25).
+    func testScrubbingAlreadyScrubbedRecordsLeavesTheContextClean() throws {
+        let context = try makeContext()
+        let word = WordRecord(term: "retired")
+        let meaning = MeaningRecord(text: "은퇴")
+        meaning.word = word
+        word.appendMeaning(meaning)
+        let state = ReviewStateRecord()
+        state.failureCheck = 1
+        state.word = word
+        word.reviewState = state
+        let attempt = makeAttempt(word: word, result: .correct, answeredAt: .now)
+        word.appendAttempt(attempt)
+        let aid = MemoryAidCacheRecord(wordID: word.id, modelRaw: "m", promptVersion: 1, contentSignature: "s", markdown: "aid")
+        for model in [word, meaning, state, attempt, aid] as [any PersistentModel] { context.insert(model) }
+        let records: [any VocabSoftDeletableRecord] = [word, meaning, state, attempt, aid]
+        for record in records { XCTAssertTrue(record.scrubDeletedContent()) }
+        try context.save()
+
+        for record in records { XCTAssertFalse(record.scrubDeletedContent()) }
+
+        XCTAssertFalse(context.hasChanges)
+    }
+
     func testWorkerIsCreatedOffMainAndRoutineHydrationPollingKeepsMainActorHeartbeatBelow100Milliseconds() async throws {
         let fixtureCount = 1_000
         let container = try makeHeartbeatFixtureContainer(count: fixtureCount)
