@@ -27,6 +27,7 @@ extension WordRecord: VocabSoftDeletableRecord {
             || !englishAliases.isEmpty
             || createdAt != .distantPast
             || statusRaw != VocabularyLearningStatus.active.rawValue
+        guard changed else { return false }
         term = ""
         normalizedTerm = ""
         englishAliases = []
@@ -40,6 +41,7 @@ extension MeaningRecord: VocabSoftDeletableRecord {
     @discardableResult
     func scrubDeletedContent() -> Bool {
         let changed = !text.isEmpty || !normalizedText.isEmpty || !aliases.isEmpty || !successDays.isEmpty
+        guard changed else { return false }
         text = ""
         normalizedText = ""
         aliases = []
@@ -65,6 +67,7 @@ extension AttemptRecord: VocabSoftDeletableRecord {
             || !questionFormatRaw.isEmpty
             || matchedMeaningID != nil
             || answeredAt != .distantPast
+        guard changed else { return false }
         directionRaw = ""
         modeRaw = ""
         questionIndex = -1
@@ -94,6 +97,7 @@ extension ReviewStateRecord: VocabSoftDeletableRecord {
             || lastTestedAt != nil
             || presentationCount != 0
             || lastPresentedAt != nil
+        guard changed else { return false }
         failureCheck = 0
         activePriority = 0
         enToKoStreak = 0
@@ -115,6 +119,7 @@ extension MemoryAidCacheRecord: VocabSoftDeletableRecord {
     @discardableResult
     func scrubDeletedContent() -> Bool {
         let changed = !modelRaw.isEmpty || !contentSignature.isEmpty || !markdown.isEmpty
+        guard changed else { return false }
         modelRaw = ""
         contentSignature = ""
         markdown = ""
