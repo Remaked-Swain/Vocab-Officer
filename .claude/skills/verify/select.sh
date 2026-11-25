@@ -55,6 +55,15 @@ for file in "${files[@]}"; do
       add_test StudyPoliciesTests ;;
     Vocab/Data/*|Vocab/Presentation/MasteredView.swift|Vocab.xcodeproj/*|Vocab/Infrastructure/*)
       full=true ;;
+    Vocab/Application/VocabMutationAuthority.swift|Vocab/Application/VocabHydrationStatus.swift|\
+    Vocab/Application/VocabBootstrapTokenStore.swift|Vocab/Application/VocabImportedChanges.swift|\
+    Vocab/Application/VocabImportHistory.swift|Vocab/Application/VocabFullAuditReceipt.swift|\
+    Vocab/Application/VocabCloudReconciler.swift|Vocab/Application/VocabCloudReconciliationWorker.swift)
+      # Sync code under Application/ is covered by the sync test classes.
+      add_test VocabCloudReconciliationTests; add_test VocabImportHistoryTests
+      add_test AuthoringCapabilityTests ;;
+    Vocab/Application/VocabRecordScrubbing.swift)
+      add_test LearningCoordinatorTests; add_test VocabCloudReconciliationTests ;;
     Vocab/Application/*)
       add_test StudyPoliciesTests; add_test LearningCoordinatorTests ;;
     VocabTests/Application/*)
