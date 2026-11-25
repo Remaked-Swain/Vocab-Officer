@@ -1,66 +1,45 @@
 import CloudKit
 import Foundation
 
-final class VocabAsyncResultGate<Value>: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Value, Never>?
-    private var timeoutTask: Task<Void, Never>?
-
-    init(continuation: CheckedContinuation<Value, Never>) {
-        self.continuation = continuation
-    }
-
-    func installTimeoutTask(_ task: Task<Void, Never>) {
-        lock.lock()
-        guard continuation != nil else {
-            lock.unlock()
-            task.cancel()
-            return
-        }
-        timeoutTask = task
-        lock.unlock()
-    }
-
-    @discardableResult
-    func resume(returning value: Value) -> Bool {
-        lock.lock()
-        guard let continuation else {
-            lock.unlock()
-            return false
-        }
-        self.continuation = nil
-        let timeoutTask = self.timeoutTask
-        self.timeoutTask = nil
-        lock.unlock()
-
-        timeoutTask?.cancel()
-        continuation.resume(returning: value)
-        return true
-    }
-}
-
+/// Returns an operation's value, or a fallback once a deadline passes.
+///
+/// CloudKit and `NWPathMonitor` calls do not always honour cancellation, so
+/// the deadline must return while the operation may still be running. A task
+/// group cannot: it waits for every child before returning. The operation and
+/// the timer instead race to yield into a one-element stream; the first value
+/// wins and both tasks are cancelled. Cancelling the caller ends the wait
+/// with the fallback.
 enum VocabAsyncDeadline {
-    static func value<Value>(
-        timeoutNanoseconds: UInt64,
+    /// Shortest deadline honoured, so a zero timeout still lets a ready
+    /// operation answer.
+    static let minimumTimeout: Duration = .milliseconds(1)
+
+    static func value<Value: Sendable>(
+        timeout: Duration,
         timeoutValue: Value,
         operation: @escaping @Sendable () async -> Value
     ) async -> Value {
-        await withCheckedContinuation { continuation in
-            let gate = VocabAsyncResultGate(continuation: continuation)
-            let operationTask = Task {
-                gate.resume(returning: await operation())
-            }
-            let timeoutTask = Task {
-                do {
-                    try await Task.sleep(nanoseconds: max(timeoutNanoseconds, 1_000_000))
-                } catch {
-                    return
-                }
-                guard gate.resume(returning: timeoutValue) else { return }
-                operationTask.cancel()
-            }
-            gate.installTimeoutTask(timeoutTask)
+        let (results, sink) = AsyncStream.makeStream(of: Value.self, bufferingPolicy: .bufferingOldest(1))
+        let operationTask = Task {
+            sink.yield(await operation())
         }
+        let timeoutTask = Task {
+            do {
+                try await Task.sleep(for: max(timeout, minimumTimeout))
+            } catch {
+                return
+            }
+            sink.yield(timeoutValue)
+        }
+        defer {
+            operationTask.cancel()
+            timeoutTask.cancel()
+            sink.finish()
+        }
+        for await first in results {
+            return first
+        }
+        return timeoutValue
     }
 }
 
@@ -119,28 +98,28 @@ protocol VocabCloudKitAccountStatusChecking {
 }
 
 struct VocabCloudKitStatusService: VocabCloudKitAccountStatusChecking {
-    private let timeoutNanoseconds: UInt64
+    private let timeout: Duration
     private let accountStatusLoader: @Sendable () async throws -> CKAccountStatus
 
     init(
         container: CKContainer = CKContainer(identifier: VocabSyncMode.cloudKitContainerIdentifier),
-        timeout: TimeInterval = 15
+        timeout: Duration = .seconds(15)
     ) {
-        timeoutNanoseconds = UInt64(max(timeout, 0.001) * 1_000_000_000)
+        self.timeout = timeout
         accountStatusLoader = { try await container.accountStatus() }
     }
 
     init(
-        timeout: TimeInterval,
+        timeout: Duration,
         accountStatusLoader: @escaping @Sendable () async throws -> CKAccountStatus
     ) {
-        timeoutNanoseconds = UInt64(max(timeout, 0.001) * 1_000_000_000)
+        self.timeout = timeout
         self.accountStatusLoader = accountStatusLoader
     }
 
     func accountStatus() async -> VocabCloudKitAccountState {
         await VocabAsyncDeadline.value(
-            timeoutNanoseconds: timeoutNanoseconds,
+            timeout: timeout,
             timeoutValue: .temporarilyUnavailable(
                 "iCloud 상태 확인 시간이 초과되었습니다. 네트워크와 iCloud 상태를 확인한 뒤 다시 시도하세요."
             )
