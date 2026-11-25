@@ -310,6 +310,44 @@ final class VocabRecoveryReplicaTests: XCTestCase {
         XCTAssertNotNil(boundary.launch)
     }
 
+    /// The app scene swaps its container when `launch` changes, so recovery
+    /// must publish the change through Observation.
+    func testExplicitRecoveryPublishesLaunchChangesThroughObservation() async throws {
+        let root = try temporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let generation = try await publishGeneration(root: root, term: "observed")
+        let localStore = root.appendingPathComponent("Active/Vocab.store")
+        try writeLocalStore(url: localStore, term: "before-observation")
+        let boundary = try makeApplicationBoundary(storeURL: localStore)
+        let launchChanged = expectation(description: "launch change observed")
+        withObservationTracking {
+            _ = boundary.launch
+        } onChange: {
+            launchChanged.fulfill()
+        }
+
+        _ = try await boundary.performConfirmedRecovery(
+            request: VocabExplicitRecoveryRequest(generationID: generation.id),
+            userConfirmed: true,
+            recoveryRoot: root,
+            localStoreURL: localStore,
+            checkpointRoot: root.appendingPathComponent("Checkpoints", isDirectory: true)
+        )
+
+        await fulfillment(of: [launchChanged], timeout: 5)
+        XCTAssertNotNil(boundary.launch)
+    }
+
+    func testReplicaWorkerRunsOffTheMainThread() async throws {
+        let worker = await VocabRecoveryReplicaWorkerFactory.make(
+            modelContainer: try VocabModelContainerFactory.makeInMemoryContainer()
+        )
+
+        let runsOnMainThread = await worker.runsOnMainThread()
+
+        XCTAssertFalse(runsOnMainThread)
+    }
+
     func testExplicitRecoveryStagingFailureNeverWritesTarget() async throws {
         let root = try temporaryRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -933,5 +971,12 @@ private func XCTAssertThrowsErrorAsync(
         XCTFail("Expected an error", file: file, line: line)
     } catch {
         // Expected.
+    }
+}
+
+extension VocabRecoveryReplicaWorker {
+    /// Runs on the actor's executor, so it reports where replica work runs.
+    func runsOnMainThread() -> Bool {
+        Thread.isMainThread
     }
 }
