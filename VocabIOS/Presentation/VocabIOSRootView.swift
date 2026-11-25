@@ -40,6 +40,7 @@ struct VocabIOSRootView: View {
     @State private var refreshQueue = VocabHydrationRefreshQueue()
     @State private var localContentIsUsable = VocabSyncRuntimeStateStore.persistedLocalContentIsUsable()
     @State private var maintenanceAuditTask: Task<Void, Never>?
+    @State private var authorityRecoveryTask: Task<Void, Never>?
     @State private var maintenanceAuditSlot = VocabMaintenanceTaskSlot()
     @State private var masteryCleanupTask: Task<Void, Never>?
     @State private var masteryCleanupRetryTask: Task<Void, Never>?
@@ -83,8 +84,7 @@ struct VocabIOSRootView: View {
                     container: modelContext.container,
                     context: modelContext
                 ) {
-                    hydrationMessage = "저장된 검증 정보가 없어 다음 유휴 시점에 무결성을 확인합니다."
-                    await VocabSyncRuntimeStateStore.shared.requestFullAudit()
+                    startAuthorityRecoveryAudit()
                 }
             } else {
                 await requestConnectionRefresh(reason: .initial)
@@ -370,10 +370,41 @@ struct VocabIOSRootView: View {
         return worker
     }
 
+    /// Same recovery as macOS (#27): blocked writes cannot wait for idle,
+    /// so the re-authorizing audit runs now on the background worker and is
+    /// deferred only by thermal pressure.
+    @MainActor
+    private func startAuthorityRecoveryAudit() {
+        guard authorityRecoveryTask == nil else { return }
+        hydrationMessage = "저장된 검증 정보를 다시 확인하고 있습니다. 확인이 끝나면 학습 기록을 저장할 수 있습니다."
+        let container = modelContext.container
+        authorityRecoveryTask = Task { @MainActor in
+            defer { authorityRecoveryTask = nil }
+            await VocabSyncRuntimeStateStore.shared.requestFullAudit()
+            if let deferral = await VocabCloudSyncNetworkMonitor.deferral(forLocalWork: .fullAudit, isUserInitiated: true) {
+                hydrationMessage = deferral.userFacingReason
+                return
+            }
+            do {
+                let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: container)
+                let result = try await worker.auditAll(syncMode: .cloudKitPrivate)
+                hydrationState = result.state
+                hydrationMessage = result.message
+                await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted()
+                if result.state == .ready, masteryCleanupPending {
+                    scheduleMasteryCleanupIfEligible()
+                }
+            } catch {
+                hydrationMessage = "무결성 확인을 마치지 못했습니다. 다음 유휴 시점에 다시 확인합니다."
+            }
+        }
+    }
+
     @MainActor
     private func scheduleMaintenanceAuditIfEligible() {
         guard localContentIsUsable,
               maintenanceAuditTask == nil,
+              authorityRecoveryTask == nil,
               let generation = maintenanceAuditSlot.begin() else { return }
         let container = modelContext.container
         maintenanceAuditTask = Task { @MainActor in

@@ -83,6 +83,7 @@ struct RootView: View {
     @State private var localContentIsUsable = false
     @State private var recoveryReplicaTask: Task<Void, Never>?
     @State private var maintenanceAuditTask: Task<Void, Never>?
+    @State private var authorityRecoveryTask: Task<Void, Never>?
     @State private var maintenanceAuditSlot = VocabMaintenanceTaskSlot()
     @State private var masteryCleanupTask: Task<Void, Never>?
     @State private var masteryCleanupRetryTask: Task<Void, Never>?
@@ -188,8 +189,7 @@ struct RootView: View {
                     container: modelContext.container,
                     context: modelContext
                    ) {
-                    hydrationMessage = "저장된 검증 정보가 없어 다음 유휴 시점에 무결성을 확인합니다."
-                    await VocabSyncRuntimeStateStore.shared.requestFullAudit()
+                    startAuthorityRecoveryAudit()
                 }
             } else {
                 scheduleHydrationRefresh(reason: .initial)
@@ -394,11 +394,44 @@ struct RootView: View {
         }
     }
 
+    /// Without restorable authority every write is blocked, so the audit that
+    /// re-authorizes runs now on the background worker instead of waiting
+    /// for idle, and returning active does not cancel it (unlike periodic
+    /// maintenance). Only thermal pressure defers it; it then stays requested
+    /// for the next idle audit.
+    @MainActor
+    private func startAuthorityRecoveryAudit() {
+        guard authorityRecoveryTask == nil else { return }
+        hydrationMessage = "저장된 검증 정보를 다시 확인하고 있습니다. 확인이 끝나면 단어를 변경할 수 있습니다."
+        let container = modelContext.container
+        authorityRecoveryTask = Task { @MainActor in
+            defer { authorityRecoveryTask = nil }
+            await VocabSyncRuntimeStateStore.shared.requestFullAudit()
+            if let deferral = await VocabCloudSyncNetworkMonitor.deferral(forLocalWork: .fullAudit, isUserInitiated: true) {
+                hydrationMessage = deferral.userFacingReason
+                return
+            }
+            do {
+                let worker = await VocabCloudReconciliationWorkerFactory.make(modelContainer: container)
+                let result = try await worker.auditAll(syncMode: syncMode)
+                hydrationState = result.state
+                hydrationMessage = result.message
+                await VocabSyncRuntimeStateStore.shared.markFullAuditCompleted()
+                if result.state == .ready, masteryCleanupPending {
+                    scheduleMasteryCleanupIfEligible()
+                }
+            } catch {
+                hydrationMessage = "무결성 확인을 마치지 못했습니다. 다음 유휴 시점에 다시 확인합니다."
+            }
+        }
+    }
+
     @MainActor
     private func scheduleMaintenanceAuditIfEligible() {
         guard syncMode == .cloudKitPrivate,
               localContentIsUsable,
               maintenanceAuditTask == nil,
+              authorityRecoveryTask == nil,
               let generation = maintenanceAuditSlot.begin() else { return }
         let container = modelContext.container
         maintenanceAuditTask = Task { @MainActor in
@@ -737,8 +770,9 @@ struct SettingsView: View {
         .task {
             memoryAidModel = MemoryAidModel.resolve(storedRawValue: memoryAidModel).rawValue
             await loadAPIKey()
-            await refreshHydrationStatus(runFullAudit: false)
-            refreshRecoveryReplicaDescription()
+            // Opening Settings shows the real account and first-sync state
+            // instead of the unchecked defaults; only the button may audit.
+            await checkCloudKitStatus(allowsFullAudit: false)
         }
         .confirmationDialog(
             "현재 Mac 단어장을 iCloud에 업로드할까요?",
@@ -840,7 +874,9 @@ struct SettingsView: View {
             && !isMigratingToMirroredStore
     }
 
-    private func checkCloudKitStatus() async {
+    /// `allowsFullAudit` is false when Settings merely opens, so an unasked
+    /// full audit never starts outside the sync work policy.
+    private func checkCloudKitStatus(allowsFullAudit: Bool = true) async {
         guard !isCheckingCloudKit else { return }
         isCheckingCloudKit = true
         defer { isCheckingCloudKit = false }
@@ -863,7 +899,7 @@ struct SettingsView: View {
             firstUploadWaitReason = nil
         }
         await refreshHydrationStatus(
-            runFullAudit: VocabSettingsHydrationRefreshPolicy.shouldRunFullAudit(
+            runFullAudit: allowsFullAudit && VocabSettingsHydrationRefreshPolicy.shouldRunFullAudit(
                 syncMode: mode,
                 localContentIsUsable: VocabSyncRuntimeStateStore.persistedLocalContentIsUsable()
             )

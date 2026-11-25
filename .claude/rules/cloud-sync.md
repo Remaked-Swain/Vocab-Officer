@@ -129,7 +129,11 @@ paths:
     after success.
   - Full audits run only while inactive/backgrounded; returning active
     cancels cooperative maintenance. Maintenance tasks use generation
-    ownership.
+    ownership. Exception: when launch cannot restore mutation authority
+    (writes are blocked), both platforms start a single-flight recovery
+    audit at once on the background worker; returning active does not
+    cancel it and only thermal pressure defers it (#27). Opening Settings
+    checks account and claim status but never starts a full audit.
 - macOS remote-change handling is debounced and single-flight; iOS bootstrap
   polling is foreground-only at 5/10/20/40/60 s and stops at
   ready/failed/cancel/background.
