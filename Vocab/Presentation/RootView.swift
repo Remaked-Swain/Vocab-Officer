@@ -202,36 +202,41 @@ struct RootView: View {
                 break
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .NSPersistentStoreRemoteChange)) { _ in
-            Task { @MainActor in storeRevision &+= 1 }
-            Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: ModelContext.didSave)) { notification in
-            guard let source = notification.object as? ModelContext,
-                  source.container === modelContext.container else { return }
-            let changes = VocabModelContextChangeEvent.changes(from: notification, context: source)
-            Task { @MainActor in storeRevision &+= 1 }
-            Task {
-                await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
-                await VocabImportedIdentifierBuffer.shared.capture(
-                    changes.records,
-                    requiresFullAudit: changes.requiresFullAudit
-                )
+        .task(id: ObjectIdentifier(modelContext.container)) {
+            // Iterated on the main actor; see VocabStoreChangeMonitor.
+            for await event in VocabStoreChangeMonitor.events(for: modelContext.container) {
+                handle(event)
             }
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSPersistentCloudKitContainer.eventChangedNotification)) { notification in
-            guard VocabHydrationDiagnosticPolicy.isSuccessfulImportEvent(notification) else { return }
-            Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
-            scheduleHydrationRefresh(reason: .successfulImport)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .vocabMasteryCleanupRequested)) { _ in
-            scheduleMasteryCleanupIfEligible()
         }
         .alert("iCloud 전환 완료", isPresented: $showBootstrapRestart) {
             Button("지금 다시 시작") { relaunchApplication() }
             Button("나중에", role: .cancel) {}
         } message: {
             Text(bootstrapRecoveryMessage)
+        }
+    }
+
+    @MainActor
+    private func handle(_ event: VocabStoreChangeEvent) {
+        switch event {
+        case .storeChanged(let changes):
+            storeRevision &+= 1
+            // Fire-and-forget, as before: neither waits for the other or for
+            // the next event.
+            Task {
+                await VocabSyncWorkBarrier.shared.notePotentialStoreChange()
+                if let changes {
+                    await VocabImportedIdentifierBuffer.shared.capture(
+                        changes.records,
+                        requiresFullAudit: changes.requiresFullAudit
+                    )
+                }
+            }
+        case .successfulImport:
+            Task { await VocabSyncWorkBarrier.shared.notePotentialStoreChange() }
+            scheduleHydrationRefresh(reason: .successfulImport)
+        case .masteryCleanupRequested:
+            scheduleMasteryCleanupIfEligible()
         }
     }
 
