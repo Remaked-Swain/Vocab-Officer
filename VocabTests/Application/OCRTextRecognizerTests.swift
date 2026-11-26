@@ -167,6 +167,27 @@ final class OCRTextRecognizerTests: XCTestCase {
         assertNoPronunciationOrDMisread(lines, page: page)
     }
 
+    // MARK: Read failures
+
+    /// A file that cannot be opened and one that is not an image get
+    /// different, actionable errors instead of one vague message (#30).
+    func testUnopenableAndNonImageFilesReportDistinctErrors() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("OCRErrors-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
+        let missing = directory.appendingPathComponent("missing.png")
+        let notImage = directory.appendingPathComponent("notes.png")
+        try Data("not an image".utf8).write(to: notImage)
+
+        XCTAssertThrowsError(try OCRTextRecognizer.recognizeTokens(from: missing)) {
+            XCTAssertEqual($0 as? OCRError, .inaccessibleImage(fileName: "missing.png"))
+        }
+        XCTAssertThrowsError(try OCRTextRecognizer.recognizeTokens(from: notImage)) {
+            XCTAssertEqual($0 as? OCRError, .unreadableImage(fileName: "notes.png"))
+        }
+    }
+
     // MARK: Helpers
 
     private func recognizedLines(of page: OCRSyntheticPage) throws -> [String] {

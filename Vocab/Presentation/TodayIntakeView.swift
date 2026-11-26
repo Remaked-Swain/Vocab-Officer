@@ -343,6 +343,13 @@ struct TodayIntakeView: View {
                         message = error.localizedDescription
                         isError = true
                         isRecognizingText = false
+                        // An empty editor shows the OCR outcome instead of the
+                        // paste prompt (which read as if typing were the
+                        // problem); existing text keeps its own analysis so
+                        // it stays reviewable and saveable.
+                        if pastedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            pasteAnalysis = .ocrFailed
+                        }
                     }
                 }
             }
@@ -378,6 +385,11 @@ struct TodayIntakeView: View {
 
 private struct PasteAnalysis {
     static let empty = PasteAnalysis(drafts: [], status: "단어를 한 개 이상 붙여넣으세요.", isReady: false)
+    static let ocrFailed = PasteAnalysis(
+        drafts: [],
+        status: "이미지에서 단어를 가져오지 못했습니다. 위 안내를 확인한 뒤 이미지를 다시 선택하거나 직접 붙여넣으세요.",
+        isReady: false
+    )
 
     let drafts: [WordDraft]
     let status: String

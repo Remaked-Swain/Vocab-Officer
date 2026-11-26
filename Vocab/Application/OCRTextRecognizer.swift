@@ -6,8 +6,15 @@ import Vision
 /// must be called off the main actor.
 enum OCRTextRecognizer {
     static func recognizeTokens(from url: URL) throws -> [OCRTextToken] {
+        // A picked file in the macOS sandbox is readable only while its
+        // security scope is open; plain file URLs (tests, iOS) return false
+        // and need nothing.
+        let isAccessingScope = url.startAccessingSecurityScopedResource()
+        defer { if isAccessingScope { url.stopAccessingSecurityScopedResource() } }
         guard let cgImage = downsampledCGImage(from: url) else {
-            throw OCRError.unreadableImage
+            throw FileManager.default.isReadableFile(atPath: url.path)
+                ? OCRError.unreadableImage(fileName: url.lastPathComponent)
+                : OCRError.inaccessibleImage(fileName: url.lastPathComponent)
         }
         let fullPage = try recognizeRegion(OCRRecognitionPlan.fullPage, in: cgImage)
         guard OCRRecognitionPlan.needsTiledRecognition(fullPage) else {
@@ -360,16 +367,21 @@ enum OCRRecognitionMerger {
     }
 }
 
-enum OCRError: LocalizedError {
-    case unreadableImage
+enum OCRError: LocalizedError, Equatable {
+    /// The file could not be opened: no sandbox access, or it moved.
+    case inaccessibleImage(fileName: String)
+    /// The file opened but is not an image the system can decode.
+    case unreadableImage(fileName: String)
     case noText
 
     var errorDescription: String? {
         switch self {
-        case .unreadableImage:
-            "이미지를 읽을 수 없습니다."
+        case .inaccessibleImage(let fileName):
+            "'\(fileName)' 파일을 열 수 없습니다. 파일이 이동·삭제되었거나 접근 권한이 없습니다. 이미지를 다시 선택하세요."
+        case .unreadableImage(let fileName):
+            "'\(fileName)'을(를) 이미지로 읽을 수 없습니다. JPEG, PNG, HEIC 같은 이미지 파일인지 확인하세요."
         case .noText:
-            "이미지에서 텍스트를 찾지 못했습니다."
+            "선택한 이미지에서 글자를 찾지 못했습니다. 단어가 선명하게 보이는 이미지를 선택하세요."
         }
     }
 }
