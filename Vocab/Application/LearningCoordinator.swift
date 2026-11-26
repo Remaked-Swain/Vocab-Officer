@@ -330,6 +330,10 @@ final class LearningCoordinator {
     ) throws -> VocabularyRegistrationResult {
         try requireLearningFactWriting()
         try requireVocabularyAuthoring()
+        // Fixed-size intake tables pass their untouched rows; a row with
+        // neither headword nor meanings is not input. A half-filled row still
+        // fails below with the missing field.
+        let drafts = drafts.filter { !$0.isBlank }
         guard !drafts.isEmpty else { throw LearningError.termRequired }
         let prepared = try drafts.map { draft -> (term: String, normalizedTerm: String, meanings: [String]) in
             let term = draft.term.trimmingCharacters(in: .whitespacesAndNewlines)

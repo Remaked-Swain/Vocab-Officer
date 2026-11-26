@@ -25,6 +25,9 @@ paths:
   duplicates are no-ops; new meanings are unioned. A new meaning on a
   consolidating word returns it to `active`. Deleted words are excluded from
   merge lookup; re-registration creates a new UUID.
+- Registration skips drafts with neither headword nor meanings (untouched
+  rows of fixed-size intake tables); a draft missing only one of them fails
+  with that field's error.
 - IDs are app-managed UUIDs (no `@Attribute(.unique)`). `createdAt` is the
   immutable first registration; grouping compares its `Asia/Seoul` day.
 - Meaning trackability uses the parenthesis-aware `MeaningTextSplitter`: a

@@ -17,6 +17,24 @@ final class LearningCoordinatorTests: XCTestCase {
         XCTAssertEqual(MeaningTextSplitter.split("(수학, 화학) 공식, 방식"), ["(수학, 화학) 공식", "방식"])
     }
 
+    func testRegistrationIgnoresUntouchedRowsOfTheIntakeTable() throws {
+        let context = try makeContext()
+        let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
+        var rows = (0..<20).map { _ in WordDraft() }
+        rows[3] = WordDraft(term: "single", meanings: "하나의")
+        rows[7] = WordDraft(term: "  ", meanings: " ")
+
+        let result = try coordinator.registerWordsWithSummary(rows, date: testDate)
+
+        XCTAssertEqual(result.words.map(\.term), ["single"])
+        XCTAssertThrowsError(try coordinator.registerWordsWithSummary([WordDraft()], date: testDate)) {
+            guard case LearningError.termRequired = $0 else { return XCTFail("unexpected \($0)") }
+        }
+        XCTAssertThrowsError(try coordinator.registerWordsWithSummary([WordDraft(term: "", meanings: "뜻만")], date: testDate)) {
+            guard case LearningError.termRequired = $0 else { return XCTFail("unexpected \($0)") }
+        }
+    }
+
     func testDailySetPreservesParenthesizedCommaMeaning() throws {
         let context = try makeContext()
         let coordinator = LearningCoordinator(context: context, syncMode: .localOnly)
