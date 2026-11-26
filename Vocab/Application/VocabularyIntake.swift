@@ -4,6 +4,12 @@ struct WordDraft: Identifiable {
     let id = UUID()
     var term = ""
     var meanings = ""
+
+    /// Neither a headword nor meanings, ignoring whitespace.
+    var isBlank: Bool {
+        term.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && meanings.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
 }
 
 struct VocabularyRegistrationResult {
