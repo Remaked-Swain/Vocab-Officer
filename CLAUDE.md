@@ -58,6 +58,9 @@ its area rule under `## Pitfalls` as one line with the commit hash.
   and residual risk, the reason behind each design decision (including
   alternatives considered and rejected), and the verification run. Issues
   state observed vs expected behavior.
+- Issue and PR titles and bodies are written in Korean for the Korean user;
+  keep code identifiers, commands, paths and quoted output as they are.
+  Commit messages keep the English format above.
 
 ## Agents And Tools
 
