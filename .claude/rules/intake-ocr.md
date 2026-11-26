@@ -26,7 +26,10 @@ paths:
   lines cut by its inner edges so fragments never out-vote whole lines. Small
   text is lost by its height relative to the page, not by pixels: the
   2,400 px downsample, `minimumTextHeight` and orientation hints do not
-  change recall, and one tiling alone loses lines at its own edges. Pure
+  change recall, and one tiling alone loses lines at its own edges. A picked
+  file is read only inside its security scope (the macOS sandbox, #30), and a
+  failure says whether the file could not be opened or is not an image;
+  never show the paste prompt for an OCR failure. Pure
   merge and plan rules stay testable apart from Vision. Vision and
   downsampling run off the main actor; tiling stops on task cancellation.
 - OCR formatting preserves selected page order, infers columns from
